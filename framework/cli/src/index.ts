@@ -1,6 +1,11 @@
 export { Command } from "./command.js";
 export type { CommandClass } from "./command.js";
 
+// Re-exported so an application can type `configure(program)` without
+// taking a direct dependency on Commander, which is an implementation
+// detail of this package.
+export type { Command as CommanderCommand } from "commander";
+
 export { ConsoleKernel, renderConsoleError } from "./console-kernel.js";
 export type { ConsoleKernelOptions } from "./console-kernel.js";
 
