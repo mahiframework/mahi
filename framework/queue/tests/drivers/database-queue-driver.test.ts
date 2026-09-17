@@ -409,6 +409,71 @@ describe("DatabaseQueueDriver", () => {
     });
   });
 
+  /**
+   * `available_at` is truncated to whole seconds, so it cannot order a
+   * burst dispatched inside one — `id` is the only thing that can, and
+   * that is what makes push order survive.
+   */
+  describe("ordering", () => {
+    it("pops a burst in the order it was pushed", async () => {
+      const driver = await freshDriver();
+
+      const pushed = Array.from({ length: 200 }, (_, n) => n);
+
+      for (const n of pushed) {
+        await driver.push("send-email", { n });
+      }
+
+      const popped: number[] = [];
+
+      for (let i = 0; i < pushed.length; i += 1) {
+        const job = await driver.pop();
+
+        popped.push((job!.state as { n: number }).n);
+        await driver.delete(job!);
+      }
+
+      expect(popped).toEqual(pushed);
+    });
+
+    it("pushes ids that ascend, so the tiebreak is push order", async () => {
+      const { db, driver } = await freshDatabase();
+
+      for (let n = 0; n < 50; n += 1) {
+        await driver.push("send-email", { n });
+      }
+
+      // Sorted by payload, not by id: `id` is the primary key, so reading
+      // the table back in id order proves nothing on its own. This asks
+      // whether the ids ascend *with the push sequence*.
+      const rows = (await db.selectFrom("jobs").select(["id", "payload_json"]).execute()) as {
+        id: string;
+        payload_json: string;
+      }[];
+
+      const ids = rows
+        .sort(
+          (a, b) =>
+            (JSON.parse(a.payload_json) as { n: number }).n -
+            (JSON.parse(b.payload_json) as { n: number }).n,
+        )
+        .map((row) => row.id);
+
+      expect([...ids].sort()).toEqual(ids);
+    });
+
+    it("runs a job due sooner before one pushed earlier but delayed", async () => {
+      const driver = await freshDriver();
+
+      await driver.push("send-email", { n: "delayed" }, { delaySeconds: 60 });
+      await driver.push("send-email", { n: "immediate" });
+
+      const job = await driver.pop();
+
+      expect((job?.state as { n: string }).n).toBe("immediate");
+    });
+  });
+
   describe("named queues", () => {
     it("pop() only returns jobs from the queue it was asked for", async () => {
       const driver = await freshDriver();

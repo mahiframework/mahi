@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type { Kysely } from "kysely";
 import {
   afterCommitOn,
@@ -10,6 +9,7 @@ import type { Dialect } from "@mahiframework/database";
 import type { QueueDriver, QueuedJob, PushOptions, ChainedJob } from "../queue-driver.js";
 import type { JobState } from "../job-serialization.js";
 import type { FailedJobRepository, FailedJobRecord } from "../failed-job-repository.js";
+import { monotonicUuid } from "../monotonic-id.js";
 
 interface JobRow {
   id: string;
@@ -114,6 +114,17 @@ export interface DatabaseQueueDriverOptions {
  * job that repeatedly kills its worker eventually lands in `failed_jobs`
  * instead of looping forever.
  *
+ * ## Ordering
+ *
+ * Jobs due at the same time run in the order they were pushed. That
+ * falls out of `id` being a UUIDv7 (see `monotonicUuid()`), since
+ * `available_at` is only second-precision and cannot separate a burst on
+ * its own.
+ *
+ * It is not a guarantee across *workers*: several workers pop in order
+ * but finish whenever they finish. Order of execution is only order of
+ * dispatch when a single worker is draining the queue.
+ *
  * ## Transactions
  *
  * Every statement resolves its connection at call time via
@@ -165,7 +176,7 @@ export class DatabaseQueueDriver implements QueueDriver, FailedJobRepository {
     await this.db
       .insertInto("jobs")
       .values({
-        id: randomUUID(),
+        id: monotonicUuid(),
         queue: options.queue ?? this.queue,
         job_class: jobClass,
         payload_json: JSON.stringify(state ?? null),
@@ -284,11 +295,16 @@ export class DatabaseQueueDriver implements QueueDriver, FailedJobRepository {
    * due, on this queue, and either unreserved or reserved so long ago the
    * worker holding it is presumed dead.
    *
-   * Ordered by `available_at` so the queue is FIFO by due time, with
-   * `id` as a deterministic tiebreak, without it two rows sharing a
-   * timestamp (very common: a burst dispatched in one request) come back
-   * in whatever order the engine feels like, which makes concurrent
-   * workers collide on the same row far more often than they need to.
+   * Ordered by `available_at` so the queue is FIFO by due time, then by
+   * `id`. Without a tiebreak, two rows sharing a timestamp come back in
+   * whatever order the engine feels like, which makes concurrent workers
+   * collide on the same row far more often than they need to.
+   *
+   * `id` is the tiebreak specifically because `monotonicUuid()` makes it
+   * sort by push order. `available_at` is truncated to whole seconds, so
+   * a burst dispatched in one request ties on it and `id` alone decides
+   * the order — with a random id that made the burst run shuffled, which
+   * is not what FIFO promises.
    */
   private eligible(db: Kysely<any>, queue: string) {
     const now = this.timestamp(Date.now());
@@ -424,7 +440,7 @@ export class DatabaseQueueDriver implements QueueDriver, FailedJobRepository {
       await trx
         .insertInto("jobs")
         .values({
-          id: randomUUID(),
+          id: monotonicUuid(),
           queue: row.queue ?? this.queue,
           job_class: row.job_class,
           payload_json: row.payload_json,

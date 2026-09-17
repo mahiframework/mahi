@@ -736,6 +736,24 @@ second-precision, and Postgres *rounds* rather than truncates, so a job
 pushed with no delay was stored up to half a second in the *future* and
 `available_at <= now` was false. The queue looked permanently empty.
 
+#### Ordering
+
+Jobs that are due at the same time are popped in the order they were
+pushed. That is what the `id` half of `ORDER BY available_at, id` is for:
+`available_at` only has second precision, so a fan-out dispatched inside
+one second ties on it, and `id` is the only thing left to break the tie.
+
+So `jobs.id` is a **UUIDv7** — a millisecond timestamp followed by a
+counter — which sorts by creation time as a plain string. A random v4
+would make a burst run in an arbitrary order, which is not what a queue
+described as FIFO should do.
+
+This orders the *popping*, not the finishing. Several workers pop in
+order and then run concurrently, so they complete in whatever order they
+complete. Dispatch order is execution order only when a single worker is
+draining the queue; if a sequence genuinely has to hold, use
+[chaining](#chaining).
+
 #### Transactions
 
 Every statement resolves its connection at call time, `getActiveTransaction()
