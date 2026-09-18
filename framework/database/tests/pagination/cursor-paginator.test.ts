@@ -149,6 +149,78 @@ describe("cursorPaginate()", () => {
   });
 
   /**
+   * The cursor column is usually the primary key, which is 64-bit and so
+   * reads back as a `bigint`. `JSON.stringify` throws on one, so before
+   * the cursor tagged it this was a 500 on the *first* page of any
+   * endpoint paginating by id — the most common case there is.
+   */
+  describe("64-bit cursor columns", () => {
+    interface ThingAttributes {
+      id: bigint;
+      name: string;
+    }
+
+    class Thing extends Model<ThingAttributes>()({
+      table: "things",
+      primaryKey: "id",
+      timestamps: false,
+    }) {}
+
+    beforeEach(async () => {
+      const manager = app.make<DatabaseManager>(DATABASE_TOKEN);
+
+      await manager
+        .driver()
+        .kysely.schema.createTable("things")
+        .addColumn("id", "bigint", (col) => col.primaryKey())
+        .addColumn("name", "text", (col) => col.notNull())
+        .execute();
+
+      // Past Number.MAX_SAFE_INTEGER, so a round trip through a double
+      // would land on a different row.
+      for (let i = 0n; i < 4n; i++) {
+        await Thing.create({ id: 9007199254740993n + i, name: `Thing ${i}` });
+      }
+    });
+
+    it("paginates by a bigint column without throwing on encode", async () => {
+      const first = await cursorPaginate(Thing.query(), { column: "id", perPage: 2 });
+
+      expect(first.data.toArray().map((r) => r.id)).toEqual([9007199254740993n, 9007199254740994n]);
+      expect(first.nextCursor).not.toBeNull();
+
+      const second = await cursorPaginate(Thing.query(), {
+        column: "id",
+        perPage: 2,
+        cursor: first.nextCursor!,
+      });
+
+      // The exact next rows: a cursor narrowed to a double would have
+      // resumed from ...992 and repeated a row.
+      expect(second.data.toArray().map((r) => r.id)).toEqual([
+        9007199254740995n,
+        9007199254740996n,
+      ]);
+    });
+
+    it("walks back to the first page through a bigint cursor", async () => {
+      const first = await cursorPaginate(Thing.query(), { column: "id", perPage: 2 });
+      const second = await cursorPaginate(Thing.query(), {
+        column: "id",
+        perPage: 2,
+        cursor: first.nextCursor!,
+      });
+      const back = await cursorPaginate(Thing.query(), {
+        column: "id",
+        perPage: 2,
+        cursor: second.prevCursor!,
+      });
+
+      expect(back.data.toArray().map((r) => r.id)).toEqual([9007199254740993n, 9007199254740994n]);
+    });
+  });
+
+  /**
    * Cursors come straight off a query string, so every one of these is
    * reachable by anyone typing a URL. None may throw: an unparseable
    * cursor that let a `SyntaxError` out of `JSON.parse()` escape would

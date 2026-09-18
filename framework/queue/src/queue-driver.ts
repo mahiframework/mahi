@@ -11,7 +11,12 @@ export interface ChainedJob {
 }
 
 export interface QueuedJob {
-  id: string;
+  /**
+   * The driver's handle for this job, opaque to callers and passed back
+   * to `ack()`/`retry()` as-is. A `bigint` snowflake on the database
+   * driver, a string elsewhere.
+   */
+  id: string | bigint;
   jobClass: string;
   /** The serialized job-instance fields, rebuilt into a live job via `decodeJob()`. */
   state: JobState;

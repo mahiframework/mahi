@@ -24,6 +24,20 @@ export interface ModelReference {
 }
 
 /**
+ * The on-the-wire shape of a bare `bigint` in a job payload — a 64-bit
+ * id carried as data rather than as a model instance.
+ *
+ * JSON has no 64-bit integer type and `JSON.stringify` throws on a
+ * `bigint`, so it travels as text. Tagged rather than written as a plain
+ * string so it can be restored to a `bigint`: a job declaring
+ * `readonly ids: bigint[]` must not receive strings after a round trip
+ * through the queue table, or `whereIn("id", ids)` would match nothing.
+ */
+export interface BigintReference {
+  __bigint: string;
+}
+
+/**
  * Thrown by `decodeModels()` when a referenced model no longer resolves
  * *and* that model opted into `static deleteWhenMissingModels = true`.
  * Caught by `runJobThroughMiddleware()`, which treats it as "skip this
@@ -50,6 +64,14 @@ function isModelReference(value: unknown): value is ModelReference {
     value !== null &&
     typeof (value as ModelReference).__model === "string" &&
     "__id" in value
+  );
+}
+
+function isBigintReference(value: unknown): value is BigintReference {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as BigintReference).__bigint === "string"
   );
 }
 
@@ -110,6 +132,15 @@ function encodeValue(value: unknown, registry: ModelRegistry, seen: WeakSet<obje
     return value.map((item) => encodeValue(item, registry, seen));
   }
 
+  // A bare `bigint` in a payload — an id the caller passed as data
+  // rather than as a model — would otherwise make the driver's
+  // `JSON.stringify` throw at dispatch. Tagged so `decodeModels()` can
+  // restore it as a `bigint` rather than silently handing `handle()` a
+  // string where it declared one.
+  if (typeof value === "bigint") {
+    return { __bigint: value.toString() } satisfies BigintReference;
+  }
+
   if (isPlainObject(value)) {
     if (seen.has(value)) {
       return value;
@@ -157,8 +188,11 @@ export async function decodeModels(payload: unknown, registry: ModelRegistry): P
   const idsByModel = new Map<string, Set<string | number>>();
   collectReferences(payload, idsByModel);
 
+  // Still walked when there are no models: a payload can carry tagged
+  // `bigint`s on their own, and returning here would hand `handle()` a
+  // `{ __bigint }` object where it declared a `bigint`.
   if (idsByModel.size === 0) {
-    return payload;
+    return rehydrateValue(payload, new Map());
   }
 
   // Pass 2: batch-load each model type, keyed by stringified id.
@@ -247,6 +281,10 @@ function rehydrateValue(value: unknown, loaded: Map<string, Map<string, Model>>)
   if (isModelReference(value)) {
     // Presence already validated in decodeModels; non-null assertion is safe.
     return loaded.get(value.__model)!.get(String(value.__id))!;
+  }
+
+  if (isBigintReference(value)) {
+    return BigInt(value.__bigint);
   }
 
   if (Array.isArray(value)) {

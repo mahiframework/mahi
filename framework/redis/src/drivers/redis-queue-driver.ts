@@ -221,7 +221,9 @@ export class RedisQueueDriver implements QueueDriver, FailedJobRepository {
     const raw = (job as ReservedJob)[RESERVED_RAW];
 
     const envelope: JobEnvelope = {
-      id: job.id,
+      // Redis ids are strings of this driver's own making; the wider
+      // `QueuedJob.id` exists for the database driver's snowflakes.
+      id: String(job.id),
       jobClass: job.jobClass,
       state: job.state ?? null,
       attempts: job.attempts + 1,
@@ -261,7 +263,7 @@ export class RedisQueueDriver implements QueueDriver, FailedJobRepository {
     const raw = (job as ReservedJob)[RESERVED_RAW];
 
     const record: FailedEnvelope = {
-      id: job.id,
+      id: String(job.id),
       jobClass: job.jobClass,
       queue: name,
       state: job.state ?? null,
@@ -276,7 +278,7 @@ export class RedisQueueDriver implements QueueDriver, FailedJobRepository {
     await this.evalScript(
       FAIL_LUA,
       [this.reserved(name), this.failedKey(name)],
-      [raw ?? "", job.id, JSON.stringify(record)],
+      [raw ?? "", String(job.id), JSON.stringify(record)],
     );
   }
 

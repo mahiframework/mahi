@@ -188,6 +188,37 @@ export class Message extends Model<MessageAttributes>()({
 }) {}
 ```
 
+### 64-bit keys are `bigint`
+
+A snowflake is a 64-bit integer, which does not fit a JS `number`:
+`440463260157395208` rounds to `...200` as a double. So ids are
+`bigint`, the attribute is declared `id: bigint`, and the column is
+`bigInteger()`. The same applies to an auto-increment key, which is
+64-bit on every supported engine (`bigserial`, `BIGINT AUTO_INCREMENT`,
+a SQLite rowid).
+
+```ts
+interface MessageAttributes {
+  id: bigint;      // not string, not number
+  body: string;
+}
+```
+
+`JSON.stringify` throws on a `bigint` rather than rounding it, so the
+framework converts at each boundary that leaves the process, always to a
+**decimal string** (a 19-digit JSON number would lose precision in any
+client that parses it as a double):
+
+| Boundary | Becomes |
+|---|---|
+| a JSON response | `"440463260157395208"` |
+| a queue payload | restored to a `bigint` before `handle()` runs |
+| a pagination cursor | restored to a `bigint` when decoded |
+| a broadcast frame | `"440463260157395208"` |
+
+Inside your own code an id stays a `bigint`, so compare with `===`
+against another `bigint` (`id === 42n`), not against a number.
+
 This replaces the old `static incrementing = false` + `HasSnowflake`
 mixin pair: one key now says both *whether* the database generates the
 key and *what* generates it instead. (`Model.incrementing` still exists

@@ -210,7 +210,7 @@ describe.skipIf(REDIS_UNAVAILABLE)("RedisQueueDriver (integration)", () => {
       const failed = await d.listFailed();
       expect(failed).toHaveLength(1);
       expect(failed[0]).toMatchObject({ id: job!.id, jobClass: "Job", connection: "redis" });
-      expect(await d.findFailed(job!.id)).toBeDefined();
+      expect(await d.findFailed(String(job!.id))).toBeDefined();
     });
 
     it("stores the full stack trace, not just the message", async () => {
@@ -232,8 +232,8 @@ describe.skipIf(REDIS_UNAVAILABLE)("RedisQueueDriver (integration)", () => {
       const job = await d.pop();
       await d.fail(job!, new Error("boom"));
 
-      expect(await d.retry(job!.id)).toBe(true);
-      expect(await d.findFailed(job!.id)).toBeUndefined();
+      expect(await d.retry(String(job!.id))).toBe(true);
+      expect(await d.findFailed(String(job!.id))).toBeUndefined();
 
       const requeued = await d.pop();
       expect(requeued?.attempts).toBe(0);
@@ -251,8 +251,8 @@ describe.skipIf(REDIS_UNAVAILABLE)("RedisQueueDriver (integration)", () => {
       const job = await d.pop();
       await d.fail(job!, new Error("boom"));
 
-      expect(await d.forget(job!.id)).toBe(true);
-      expect(await d.forget(job!.id)).toBe(false);
+      expect(await d.forget(String(job!.id))).toBe(true);
+      expect(await d.forget(String(job!.id))).toBe(false);
       expect(await d.listFailed()).toEqual([]);
     });
 
@@ -282,11 +282,11 @@ describe.skipIf(REDIS_UNAVAILABLE)("RedisQueueDriver (integration)", () => {
       // Visible to list/find despite being on "emails", not the default.
       const failed = await d.listFailed();
       expect(failed.map((r) => r.id)).toContain(job!.id);
-      expect(await d.findFailed(job!.id)).toBeDefined();
+      expect(await d.findFailed(String(job!.id))).toBeDefined();
 
       // retry() locates it across queues and re-enqueues on "emails".
-      expect(await d.retry(job!.id)).toBe(true);
-      expect(await d.findFailed(job!.id)).toBeUndefined();
+      expect(await d.retry(String(job!.id))).toBe(true);
+      expect(await d.findFailed(String(job!.id))).toBeUndefined();
       const requeued = await d.pop("emails");
       expect(requeued?.jobClass).toBe("Job");
     });
@@ -297,7 +297,7 @@ describe.skipIf(REDIS_UNAVAILABLE)("RedisQueueDriver (integration)", () => {
       const job = await d.pop("reports");
       await d.fail(job!, new Error("boom"));
 
-      expect(await d.forget(job!.id)).toBe(true);
+      expect(await d.forget(String(job!.id))).toBe(true);
       expect(await d.listFailed()).toEqual([]);
 
       // And flush() sweeps them too.

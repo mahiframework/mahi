@@ -120,8 +120,34 @@ export async function cursorPaginate<
   return { data: Collection.make(data), nextCursor, prevCursor };
 }
 
+/**
+ * A cursor value that is a `bigint` is written as `{ "$bigint": "42" }`.
+ *
+ * The cursor column is very often the primary key, which is now 64-bit,
+ * and `JSON.stringify` throws on a `bigint` outright — so without this
+ * every paginated endpoint keyed on `id` returns a 500. A plain decimal
+ * string would round-trip as a string and then be compared against a
+ * `bigInteger` column, so the tag records what to restore it to.
+ */
+interface TaggedBigint {
+  $bigint: string;
+}
+
+function isTaggedBigint(value: unknown): value is TaggedBigint {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as TaggedBigint).$bigint === "string"
+  );
+}
+
 function encodeCursor(payload: CursorPayload): string {
-  return Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const value =
+    typeof payload.value === "bigint"
+      ? ({ $bigint: payload.value.toString() } satisfies TaggedBigint)
+      : payload.value;
+
+  return Buffer.from(JSON.stringify({ ...payload, value })).toString("base64url");
 }
 
 /**
@@ -162,6 +188,16 @@ function decodeCursor(cursor: string): CursorPayload | undefined {
 
   if (value === undefined || value === null) {
     return undefined;
+  }
+
+  // Restored before the generic object rejection below, which exists to
+  // refuse a structured value as a cursor.
+  if (isTaggedBigint(value)) {
+    try {
+      return { value: BigInt(value.$bigint), op };
+    } catch {
+      return undefined;
+    }
   }
 
   if (typeof value === "object") {

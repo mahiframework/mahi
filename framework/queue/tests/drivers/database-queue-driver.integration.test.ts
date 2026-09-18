@@ -276,7 +276,7 @@ for (const engine of engines) {
         const job = await driver.pop("emails");
         await driver.fail(job!, new Error("boom"));
 
-        expect(await driver.retry(job!.id)).toBe(true);
+        expect(await driver.retry(String(job!.id))).toBe(true);
 
         expect(await driver.pop("default")).toBeUndefined();
         const requeued = await driver.pop("emails");

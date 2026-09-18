@@ -116,6 +116,37 @@ describe("encodeModels", () => {
   });
 });
 
+/**
+ * A job can carry a 64-bit id as plain data rather than as a model —
+ * `new PublishJob(metaIds)` rather than `new PublishJob(metas)`. JSON
+ * has no bigint, so without tagging this throws at dispatch, and
+ * without restoring it `handle()` gets strings where it declared
+ * `bigint[]` and every `whereIn("id", ids)` silently matches nothing.
+ */
+describe("bare bigints in a payload", () => {
+  it("survives a JSON round trip as a bigint", async () => {
+    const payload = { metaIds: [9007199254740993n, 2n], nested: { cursor: 42n }, name: "x" };
+    const encoded = encodeModels(payload, registry);
+
+    // The step that used to throw: what a durable driver does.
+    const wire = JSON.parse(JSON.stringify(encoded));
+    const decoded = (await decodeModels(wire, registry)) as typeof payload;
+
+    expect(decoded.metaIds).toEqual([9007199254740993n, 2n]);
+    expect(decoded.nested.cursor).toBe(42n);
+    expect(decoded.name).toBe("x");
+  });
+
+  it("restores them even when the payload references no models at all", async () => {
+    const encoded = encodeModels({ id: 7n }, registry);
+    const decoded = (await decodeModels(JSON.parse(JSON.stringify(encoded)), registry)) as {
+      id: bigint;
+    };
+
+    expect(decoded.id).toBe(7n);
+  });
+});
+
 describe("decodeModels", () => {
   it("round-trips a single model back to a live instance", async () => {
     const user = await seedUser("u1", "Ada");

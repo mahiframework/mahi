@@ -77,7 +77,11 @@ export class DatabaseChannel implements NotificationChannel {
         type: notification.databaseType(),
         notifiable_type: notifiableType,
         notifiable_id: notifiable.routeNotificationFor("database") as string,
-        data: JSON.stringify(notification.toDatabase(notifiable)),
+        // A notification's data routinely carries a model id, which is
+        // 64-bit and so a `bigint` that `JSON.stringify` throws on.
+        data: JSON.stringify(notification.toDatabase(notifiable), (_key, value: unknown) =>
+          typeof value === "bigint" ? value.toString() : value,
+        ),
         read_at: null,
         created_at: now,
         updated_at: now,

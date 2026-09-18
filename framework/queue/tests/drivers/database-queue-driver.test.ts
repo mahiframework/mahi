@@ -42,7 +42,11 @@ async function freshDriver(options: DatabaseQueueDriverOptions = {}) {
 }
 
 /** Backdate a job's reservation so it looks abandoned `secondsAgo` seconds ago. */
-async function backdateReservation(db: Kysely<any>, id: string, secondsAgo: number): Promise<void> {
+async function backdateReservation(
+  db: Kysely<any>,
+  id: string | bigint,
+  secondsAgo: number,
+): Promise<void> {
   await db
     .updateTable("jobs")
     .set({ reserved_at: new Date(Date.now() - secondsAgo * 1000).toISOString() })
@@ -220,7 +224,9 @@ describe("DatabaseQueueDriver", () => {
       const job = await driver.pop();
       await driver.fail(job!, new Error("smtp down"));
 
-      return job!;
+      // The failed-job API is keyed by string (ids reach it from a
+      // command line), while the driver handle is a snowflake.
+      return { ...job!, id: String(job!.id) };
     }
 
     it("fail() stores the full stack trace in the error column", async () => {
@@ -544,11 +550,13 @@ describe("DatabaseQueueDriver", () => {
         }),
       );
 
-      await expect(new DatabaseQueueDriver(broken).retry(job!.id)).rejects.toThrow("disk full");
+      await expect(new DatabaseQueueDriver(broken).retry(String(job!.id))).rejects.toThrow(
+        "disk full",
+      );
 
       // The failed record survived, so the job is recoverable rather than
       // deleted-but-never-requeued.
-      expect(await driver.findFailed(job!.id)).toBeDefined();
+      expect(await driver.findFailed(String(job!.id))).toBeDefined();
       expect(await driver.pop()).toBeUndefined();
     });
   });
@@ -580,12 +588,12 @@ describe("DatabaseQueueDriver", () => {
       const job = await driver.pop();
       await driver.fail(job!, new Error("boom"));
 
-      expect((await driver.findFailed(job!.id))?.chain).toEqual([
+      expect((await driver.findFailed(String(job!.id)))?.chain).toEqual([
         { jobClass: "step", state: { step: "b" } },
         { jobClass: "step", state: { step: "c" } },
       ]);
 
-      await driver.retry(job!.id);
+      await driver.retry(String(job!.id));
 
       // The links queued behind it still run.
       expect((await driver.pop())?.chain).toEqual([
@@ -600,7 +608,7 @@ describe("DatabaseQueueDriver", () => {
       const job = await driver.pop("emails");
       await driver.fail(job!, new Error("boom"));
 
-      await driver.retry(job!.id);
+      await driver.retry(String(job!.id));
 
       expect(await driver.pop("default")).toBeUndefined();
       expect(await driver.pop("emails")).toBeDefined();

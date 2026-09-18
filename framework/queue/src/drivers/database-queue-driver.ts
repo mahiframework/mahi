@@ -12,7 +12,7 @@ import type { FailedJobRepository, FailedJobRecord } from "../failed-job-reposit
 import { Snowflake } from "@mahiframework/snowflake";
 
 interface JobRow {
-  id: string;
+  id: bigint;
   queue: string;
   job_class: string;
   payload_json: string;
@@ -24,7 +24,7 @@ interface JobRow {
 }
 
 interface FailedJobRow {
-  id: string;
+  id: bigint;
   connection: string | null;
   queue: string | null;
   job_class: string;
@@ -408,7 +408,7 @@ export class DatabaseQueueDriver implements QueueDriver, FailedJobRepository {
     const row = (await this.db
       .selectFrom("failed_jobs")
       .selectAll()
-      .where("id", "=", id)
+      .where("id", "=", failedJobKey(id))
       .executeTakeFirst()) as FailedJobRow | undefined;
 
     return row ? this.toFailedRecord(row) : undefined;
@@ -429,7 +429,7 @@ export class DatabaseQueueDriver implements QueueDriver, FailedJobRepository {
       const row = (await trx
         .selectFrom("failed_jobs")
         .selectAll()
-        .where("id", "=", id)
+        .where("id", "=", failedJobKey(id))
         .executeTakeFirst()) as FailedJobRow | undefined;
 
       if (!row) {
@@ -452,14 +452,17 @@ export class DatabaseQueueDriver implements QueueDriver, FailedJobRepository {
         })
         .execute();
 
-      await trx.deleteFrom("failed_jobs").where("id", "=", id).execute();
+      await trx.deleteFrom("failed_jobs").where("id", "=", failedJobKey(id)).execute();
 
       return true;
     });
   }
 
   async forget(id: string): Promise<boolean> {
-    const result = await this.db.deleteFrom("failed_jobs").where("id", "=", id).executeTakeFirst();
+    const result = await this.db
+      .deleteFrom("failed_jobs")
+      .where("id", "=", failedJobKey(id))
+      .executeTakeFirst();
 
     return Number(result?.numDeletedRows ?? 0) > 0;
   }
@@ -518,7 +521,9 @@ export class DatabaseQueueDriver implements QueueDriver, FailedJobRepository {
     const chain = row.chain_json ? (JSON.parse(row.chain_json) as ChainedJob[]) : undefined;
 
     return {
-      id: row.id,
+      // `id` is a snowflake in the column and a string in the public
+      // record, which is what `queue:retry <id>` echoes and takes back.
+      id: String(row.id),
       jobClass: row.job_class,
       payloadJson: row.payload_json,
       error: row.error,
@@ -545,4 +550,21 @@ export class DatabaseQueueDriver implements QueueDriver, FailedJobRepository {
 
 function encodeChain(chain: ChainedJob[] | undefined): string | null {
   return chain && chain.length > 0 ? JSON.stringify(chain) : null;
+}
+
+/**
+ * Coerce a failed-job id to the `bigint` its column holds.
+ *
+ * The repository API takes a `string` because these ids come off a
+ * command line (`queue:forget <id>`), but `failed_jobs.id` is a
+ * snowflake. Postgres rejects a non-numeric string against a `bigint`
+ * with a hard error rather than simply not matching, so a typo'd id
+ * would surface as a database exception instead of "no such job".
+ *
+ * Anything that isn't a decimal integer is passed through untouched: it
+ * cannot match a snowflake, and the caller gets the same
+ * `undefined`/`false` it would have got before.
+ */
+function failedJobKey(id: string): string | bigint {
+  return /^-?\d+$/.test(id) ? BigInt(id) : id;
 }

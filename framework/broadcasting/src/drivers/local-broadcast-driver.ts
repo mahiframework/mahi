@@ -275,11 +275,18 @@ export class LocalBroadcastDriver implements BroadcastDriver {
   }
 
   async broadcast(message: BroadcastMessage): Promise<void> {
-    const frame = JSON.stringify({
-      channel: message.channel,
-      event: message.event,
-      payload: message.payload,
-    });
+    const frame = JSON.stringify(
+      {
+        channel: message.channel,
+        event: message.event,
+        payload: message.payload,
+      },
+      // A payload defaults to the event instance, which routinely holds
+      // a model id — 64-bit, and so a `bigint` that `JSON.stringify`
+      // throws on. A decimal string for the same reason the HTTP layer
+      // uses one: a 19-digit JSON number loses precision in the browser.
+      (_key, value: unknown) => (typeof value === "bigint" ? value.toString() : value),
+    );
     await this.fanoutFrame(message.channel, frame);
   }
 

@@ -633,7 +633,7 @@ No new infrastructure.
 
 ```
 jobs
-  id            string  primary
+  id            bigint  primary  (snowflake)
   queue         string  default 'default'
   job_class     string
   payload_json  text
@@ -648,7 +648,7 @@ jobs
 
 ```
 failed_jobs
-  id            string  primary
+  id            bigint  primary  (snowflake)
   connection    string  nullable
   queue         string  nullable
   job_class     string
@@ -743,9 +743,9 @@ pushed. That is what the `id` half of `ORDER BY available_at, id` is for:
 `available_at` only has second precision, so a fan-out dispatched inside
 one second ties on it, and `id` is the only thing left to break the tie.
 
-So `jobs.id` is a **UUIDv7** — a millisecond timestamp followed by a
-counter — which sorts by creation time as a plain string. A random v4
-would make a burst run in an arbitrary order, which is not what a queue
+So `jobs.id` is a **snowflake** — a microsecond timestamp followed by a
+counter — which sorts by the time it was minted. A random UUID would
+make a burst run in an arbitrary order, which is not what a queue
 described as FIFO should do.
 
 This orders the *popping*, not the finishing. Several workers pop in

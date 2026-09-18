@@ -159,7 +159,7 @@ type Bindable = string | number | boolean | null | DateTime | Date | bigint | Mo
 |---|---|
 | `DateTime` | ISO text, **always converted to UTC** (MySQL gets its space-separated spelling) |
 | `Date` | the same |
-| `bigint` | a number when lossless, else a decimal string |
+| `bigint` | itself — every driver binds one, and it is what a 64-bit column reads back as |
 | a model instance | its primary key (`getKey()`) |
 
 So the datetime spelling is just the value:
