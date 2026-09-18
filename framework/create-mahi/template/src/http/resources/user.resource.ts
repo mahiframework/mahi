@@ -2,6 +2,7 @@ import { Resource } from "@mahiframework/http";
 import type { User } from "../../models/user.model.js";
 
 export interface UserJson {
+  /** A string, not a number: a 64-bit id loses precision as JSON. */
   id: string;
   name: string;
   email: string;
@@ -20,7 +21,7 @@ export interface UserJson {
 export class UserResource extends Resource<User, UserJson> {
   toJson(): UserJson {
     return {
-      id: this.model.id,
+      id: String(this.model.id),
       name: this.model.name,
       email: this.model.email,
       // `created_at` is a `DateTime` here, not a string: the model casts

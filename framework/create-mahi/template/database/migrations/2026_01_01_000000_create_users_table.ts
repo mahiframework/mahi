@@ -13,7 +13,8 @@ import { Schema, type Migration, type Blueprint } from "@mahiframework/database"
 const migration: Migration = {
   async up(): Promise<void> {
     await Schema.create("users", (table: Blueprint) => {
-      table.string("id").primary();
+      // Snowflakes are 64-bit, see `keyType` on the `User` model.
+      table.bigInteger("id").primary();
       table.string("name");
       table.string("email").unique();
       table.string("password");

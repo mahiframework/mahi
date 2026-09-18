@@ -18,6 +18,10 @@ import { Schema, type Migration, type Blueprint } from "@mahiframework/database"
  * This replaces the app's former bespoke single-purpose notifications table
  * (single `user_id` FK, closed-union `type` column) with a shape reusable
  * across any notifiable model, not just `User`.
+ *
+ * `notifiable_id` is text because this is a morph column: it holds the
+ * key of *any* notifiable model, and two models in one app can key
+ * differently (a UUID `User`, a snowflake `Team`). Only text holds both.
  */
 const migration: Migration = {
   async up(): Promise<void> {
@@ -25,7 +29,7 @@ const migration: Migration = {
       table.string("id").primary();
       table.string("type");
       table.string("notifiable_type");
-      table.bigInteger("notifiable_id");
+      table.string("notifiable_id");
       table.text("data");
       table.timestamp("read_at").nullable();
       table.timestamp("created_at");

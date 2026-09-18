@@ -50,7 +50,7 @@ describe("Email verification API", () => {
     it("leaves the new user unverified", async () => {
       const user = await registerUser(testApp);
 
-      expect((await User.find(user.id))?.email_verified_at).toBeNull();
+      expect((await User.find(BigInt(user.id)))?.email_verified_at).toBeNull();
     });
 
     it("still returns 201 and a usable token", async () => {
@@ -71,7 +71,7 @@ describe("Email verification API", () => {
       const response = await testApp.request(url);
 
       expect(response.status).toBe(200);
-      expect((await User.find(user.id))?.email_verified_at).not.toBeNull();
+      expect((await User.find(BigInt(user.id)))?.email_verified_at).not.toBeNull();
     });
 
     it("needs no authentication. The signature is the credential", async () => {
@@ -89,12 +89,12 @@ describe("Email verification API", () => {
       const url = sentVerificationUrl();
 
       await testApp.request(url);
-      const first = (await User.find(user.id))?.email_verified_at;
+      const first = (await User.find(BigInt(user.id)))?.email_verified_at;
 
       const second = await testApp.request(url);
 
       expect(second.status).toBe(200);
-      expect((await User.find(user.id))?.email_verified_at?.toISOString()).toBe(
+      expect((await User.find(BigInt(user.id)))?.email_verified_at?.toISOString()).toBe(
         first?.toISOString(),
       );
     });
@@ -111,7 +111,7 @@ describe("Email verification API", () => {
 
       // validateSignature() rejects before the handler ever runs.
       expect(response.status).toBe(403);
-      expect((await User.find(victim.id))?.email_verified_at).toBeNull();
+      expect((await User.find(BigInt(victim.id)))?.email_verified_at).toBeNull();
     });
 
     it("rejects a missing signature with 403", async () => {
@@ -122,7 +122,7 @@ describe("Email verification API", () => {
       const response = await testApp.request(`${url.pathname}${url.search}`);
 
       expect(response.status).toBe(403);
-      expect((await User.find(user.id))?.email_verified_at).toBeNull();
+      expect((await User.find(BigInt(user.id)))?.email_verified_at).toBeNull();
     });
 
     it("rejects a link whose address changed after it was issued", async () => {
@@ -131,12 +131,12 @@ describe("Email verification API", () => {
       const user = await registerUser(testApp);
       const url = sentVerificationUrl();
 
-      await User.update(user.id, { email: `changed-${user.id}@example.com` });
+      await User.update(BigInt(user.id), { email: `changed-${user.id}@example.com` });
 
       const response = await testApp.request(url);
 
       expect(response.status).toBe(422);
-      expect((await User.find(user.id))?.email_verified_at).toBeNull();
+      expect((await User.find(BigInt(user.id)))?.email_verified_at).toBeNull();
     });
   });
 
@@ -165,7 +165,7 @@ describe("Email verification API", () => {
       const response = await testApp.request(sentVerificationUrl());
 
       expect(response.status).toBe(200);
-      expect((await User.find(user.id))?.email_verified_at).not.toBeNull();
+      expect((await User.find(BigInt(user.id)))?.email_verified_at).not.toBeNull();
     });
 
     it("sends nothing once the address is verified", async () => {

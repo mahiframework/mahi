@@ -128,7 +128,7 @@ describe("bare bigints in a payload", () => {
     const payload = { metaIds: [9007199254740993n, 2n], nested: { cursor: 42n }, name: "x" };
     const encoded = encodeModels(payload, registry);
 
-    // The step that used to throw: what a durable driver does.
+    // What a durable driver does to the payload.
     const wire = JSON.parse(JSON.stringify(encoded));
     const decoded = (await decodeModels(wire, registry)) as typeof payload;
 

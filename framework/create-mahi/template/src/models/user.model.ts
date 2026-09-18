@@ -17,7 +17,8 @@ import { UserResource } from "../http/resources/user.resource.js";
  * code.
  */
 export interface UserAttributes {
-  id: string;
+  /** A snowflake, hence `bigint`: a 64-bit id does not fit a `number`. */
+  id: bigint;
   name: string;
   email: string;
   /** argon2 hash, never the plaintext, and never serialised (see UserResource). */

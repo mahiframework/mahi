@@ -22,7 +22,7 @@ export class ResendVerificationController extends Controller {
   async handle() {
     const user = Auth.user<User>();
 
-    const result = await Auth.verificationBroker().sendVerificationLink(user.id);
+    const result = await Auth.verificationBroker().sendVerificationLink(String(user.id));
 
     if (result.status === "already-verified") {
       return HttpResponse.json({ message: "Your email address is already verified." });

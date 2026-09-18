@@ -562,8 +562,7 @@ function encodeChain(chain: ChainedJob[] | undefined): string | null {
  * would surface as a database exception instead of "no such job".
  *
  * Anything that isn't a decimal integer is passed through untouched: it
- * cannot match a snowflake, and the caller gets the same
- * `undefined`/`false` it would have got before.
+ * cannot match a snowflake, so the caller gets `undefined`/`false`.
  */
 function failedJobKey(id: string): string | bigint {
   return /^-?\d+$/.test(id) ? BigInt(id) : id;

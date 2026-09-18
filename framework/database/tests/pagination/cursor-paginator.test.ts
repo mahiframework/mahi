@@ -150,9 +150,8 @@ describe("cursorPaginate()", () => {
 
   /**
    * The cursor column is usually the primary key, which is 64-bit and so
-   * reads back as a `bigint`. `JSON.stringify` throws on one, so before
-   * the cursor tagged it this was a 500 on the *first* page of any
-   * endpoint paginating by id — the most common case there is.
+   * reads back as a `bigint`. `JSON.stringify` throws on one, so the
+   * cursor carries it tagged.
    */
   describe("64-bit cursor columns", () => {
     interface ThingAttributes {
@@ -195,8 +194,8 @@ describe("cursorPaginate()", () => {
         cursor: first.nextCursor!,
       });
 
-      // The exact next rows: a cursor narrowed to a double would have
-      // resumed from ...992 and repeated a row.
+      // The exact next rows: a cursor narrowed to a double resumes from
+      // ...992 and repeats a row.
       expect(second.data.toArray().map((r) => r.id)).toEqual([
         9007199254740995n,
         9007199254740996n,

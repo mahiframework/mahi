@@ -30,7 +30,7 @@ export class LoginController extends Controller<LoginRequest> {
     }
 
     const guard = Auth.guard("token") as TokenGuard<User>;
-    const { token } = await guard.createToken(user.id, "login");
+    const { token } = await guard.createToken(String(user.id), "login");
 
     return HttpResponse.json({ user: new UserResource(user).toJson(), token });
   }

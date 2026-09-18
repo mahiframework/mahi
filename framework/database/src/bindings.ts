@@ -65,7 +65,7 @@ function hasKey(value: unknown): value is { getKey(): SqlBinding } {
  *   formatting path rather than two.
  * - **`bigint` → itself.** All three drivers bind one natively
  *   (better-sqlite3 directly, `pg` and `mysql2` by stringifying it
- *   losslessly), and it is what a 64-bit column now reads back as, so
+ *   losslessly), and it is what a 64-bit column reads back as, so
  *   `where("id", row.id)` has to round-trip unchanged. Converting to a
  *   `number` here would round any id past `MAX_SAFE_INTEGER` into a
  *   query for a different row.

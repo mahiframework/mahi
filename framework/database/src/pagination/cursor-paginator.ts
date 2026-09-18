@@ -123,7 +123,7 @@ export async function cursorPaginate<
 /**
  * A cursor value that is a `bigint` is written as `{ "$bigint": "42" }`.
  *
- * The cursor column is very often the primary key, which is now 64-bit,
+ * The cursor column is very often the primary key, which is 64-bit,
  * and `JSON.stringify` throws on a `bigint` outright — so without this
  * every paginated endpoint keyed on `id` returns a 500. A plain decimal
  * string would round-trip as a string and then be compared against a

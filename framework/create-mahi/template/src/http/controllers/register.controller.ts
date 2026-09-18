@@ -28,7 +28,7 @@ export class RegisterController extends Controller<RegisterRequest> {
     await this.sendVerificationEmail(user);
 
     const guard = Auth.guard("token") as TokenGuard<User>;
-    const { token } = await guard.createToken(user.id, "registration");
+    const { token } = await guard.createToken(String(user.id), "registration");
 
     return HttpResponse.json({ user: new UserResource(user).toJson(), token }, 201);
   }
@@ -52,7 +52,7 @@ export class RegisterController extends Controller<RegisterRequest> {
     }
 
     try {
-      const result = await Auth.verificationBroker().sendVerificationLink(user.id);
+      const result = await Auth.verificationBroker().sendVerificationLink(String(user.id));
 
       if (result.status === "sent") {
         const expiresInMinutes = app().config.get<number>("auth.verification.expiresInMinutes", 60);

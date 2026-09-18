@@ -189,7 +189,7 @@ export class HttpResponse {
  * Render a `bigint` as a decimal string during serialization.
  *
  * `JSON.stringify` throws on a `bigint` outright ("Do not know how to
- * serialize a BigInt"), and 64-bit ids are now `bigint`, so without this
+ * serialize a BigInt"), and 64-bit ids are `bigint`, so without this
  * every response carrying a model id would be a 500.
  *
  * A string rather than a number because the whole reason these are

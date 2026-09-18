@@ -3729,7 +3729,7 @@ export async function insertAndReadGeneratedId(
 
     if (result?.insertId !== undefined) {
       // Kept as the `bigint` MySQL reports, matching what a SELECT of
-      // this column now yields on every engine. Narrowing it to a
+      // this column yields on every engine. Narrowing it to a
       // number or a string here would make the id returned by `create()`
       // a different type from the same id read back by `find()`.
       row[key] = result.insertId;
