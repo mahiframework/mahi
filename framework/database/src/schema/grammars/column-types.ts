@@ -41,7 +41,19 @@ function resolveTypeString(def: ColumnDefinition, dialect: Dialect): string {
 
 // SQLite has storage classes, not real types, width/precision are ignored.
 // This preserves the affinities the previous `LARAVEL_TO_SQLITE` map used.
-
+//
+// `bigInteger` and friends declare `bigint` rather than `integer`. Both
+// take SQLite's INTEGER affinity (any declared type containing "INT"
+// does) and store identically, so this changes no bytes on disk — but
+// SQLite records the declared spelling verbatim, and it is the only
+// signal a driver has that a column is 64-bit. `SqliteDriver` reads it
+// back to decide which columns must stay `bigint` in JS rather than
+// being narrowed to a lossy `number`. See `bigintColumns()` there.
+//
+// The auto-incrementing types must NOT follow: only the exact type
+// `INTEGER PRIMARY KEY` is a rowid alias, and
+// `bigint primary key autoincrement` is rejected outright by SQLite
+// ("AUTOINCREMENT is only allowed on an INTEGER PRIMARY KEY").
 const SQLITE_AFFINITY: Record<string, string> = {
   id: "integer",
   increments: "integer",
@@ -60,12 +72,12 @@ const SQLITE_AFFINITY: Record<string, string> = {
   tinyInteger: "integer",
   smallInteger: "integer",
   mediumInteger: "integer",
-  bigInteger: "integer",
+  bigInteger: "bigint",
   unsignedInteger: "integer",
   unsignedTinyInteger: "integer",
   unsignedSmallInteger: "integer",
   unsignedMediumInteger: "integer",
-  unsignedBigInteger: "integer",
+  unsignedBigInteger: "bigint",
   boolean: "integer",
   float: "real",
   double: "real",
@@ -84,7 +96,7 @@ const SQLITE_AFFINITY: Record<string, string> = {
   ulid: "text",
   binary: "blob",
   enum: "text",
-  foreignId: "integer",
+  foreignId: "bigint",
   ipAddress: "text",
   macAddress: "text",
   rememberToken: "text",

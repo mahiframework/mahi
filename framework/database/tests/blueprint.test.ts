@@ -147,7 +147,10 @@ describe("Blueprint create-mode column types", () => {
     expect(affinity(byName.created_at.dataType)).toBe("text");
     expect(byName.deleted_at.isNullable).toBe(true);
     expect(affinity(byName.commentable_type.dataType)).toBe("text");
-    expect(affinity(byName.commentable_id.dataType)).toBe("integer");
+    // `morphs()` builds the id as `unsignedBigInteger`, declared `bigint`
+    // so the driver can tell a 64-bit column from a rowid. Same INTEGER
+    // affinity either way, so nothing about storage changes.
+    expect(affinity(byName.commentable_id.dataType)).toBe("bigint");
     expect(byName.remember_token.isNullable).toBe(true);
 
     const indexes = await sql<{ name: string }>`PRAGMA index_list("posts")`.execute(db);
