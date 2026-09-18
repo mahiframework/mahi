@@ -228,8 +228,11 @@ for (const engine of ENGINES) {
 
       const result = await (post as any).relations.tags().toggle([red.id, blue.id]);
 
-      expect(result.detached.map(Number)).toEqual([red.id]);
-      expect(result.attached.map(Number)).toEqual([blue.id]);
+      // Both sides through `Number`: an auto-increment key is a `bigint`
+      // (it is 64-bit on every engine), and `toggle()` echoes back the
+      // ids it was handed, so this compares values rather than types.
+      expect(result.detached.map(Number)).toEqual([red.id].map(Number));
+      expect(result.attached.map(Number)).toEqual([blue.id].map(Number));
       expect((await (video as any).relations.tags().get()).toArray()).toHaveLength(1);
     });
 

@@ -63,7 +63,9 @@ describe("key strategies (keyType)", () => {
   it('keyType "increment" (default): create() returns the row with the DB-generated PK merged in', async () => {
     const created = await AutoWidget.create({ name: "Sprocket" });
 
-    expect(typeof created.id).toBe("number");
+    // A rowid alias is 64-bit, and so reads back as a `bigint` — the
+    // same type `bigserial`/`BIGINT AUTO_INCREMENT` yield elsewhere.
+    expect(typeof created.id).toBe("bigint");
     expect(created.id).toBeGreaterThan(0);
 
     const found = await AutoWidget.find(created.id);

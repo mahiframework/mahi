@@ -296,9 +296,11 @@ for (const engine of ENGINES) {
 
       expect(post.id).toBeDefined();
       expect(post.id).not.toBeNull();
-      // Same representation on every engine, PG's int8 would otherwise
-      // hand back the string "1".
-      expect(typeof post.id).toBe("number");
+      // Same representation on every engine. An auto-increment key is
+      // 64-bit everywhere (`bigserial` on PG, `BIGINT AUTO_INCREMENT` on
+      // MySQL, a rowid on SQLite), so it reads back as a `bigint` rather
+      // than PG's raw string "1" or a lossily-rounded number.
+      expect(typeof post.id).toBe("bigint");
 
       // The key is real: a follow-up save() targets this row, not NULL.
       post.title = "Updated";

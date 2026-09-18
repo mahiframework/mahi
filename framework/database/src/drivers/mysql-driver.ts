@@ -1,4 +1,4 @@
-import { createPool, type Pool } from "mysql2";
+import { createPool, type Pool, type TypeCastField } from "mysql2";
 import { Kysely, MysqlDialect, sql } from "kysely";
 import type { Dialect } from "../schema/dialect.js";
 import type { DatabaseDriver } from "./driver.js";
@@ -50,14 +50,42 @@ export interface MysqlConnectionConfig {
  *   in local time.
  * - `supportBigNumbers`/`bigNumberStrings`, without these, a `BIGINT`
  *   beyond 2^53 is silently rounded on the way out
- *   (`9007199254740993` → `9007199254740992`). `bigNumberStrings:
- *   false` keeps ordinary ids as numbers and only widens to a string
- *   when the value genuinely does not fit, so the common case is
- *   unchanged.
+ *   (`9007199254740993` → `9007199254740992`).
+ * - `typeCast`, which reads `BIGINT` **columns** as `bigint` (see
+ *   `bigintTypeCast`). mysql2 has no option for this: it offers a
+ *   rounded `number` or a `string`, neither of which is the column's
+ *   actual type.
  *
  * All of them can still be overridden through `options`, which is merged
  * last.
  */
+
+/**
+ * Read `BIGINT` columns as `bigint`, leaving everything else to mysql2.
+ *
+ * mysql2 reports `LONGLONG` for both a real `BIGINT` column and for
+ * `count(*)`, so the type alone is not enough — `field.table` separates
+ * them. It holds the table a column was selected from, and is empty for
+ * a computed value, which is exactly the distinction wanted: a stored
+ * 64-bit column stays `bigint`, while an aggregate narrows and
+ * `count(*) === 2` keeps working.
+ *
+ * The `trim()` matters: MySQL pads fixed-width numerics, so the wire
+ * value for `42` arrives as `"  42"`, and `BigInt("  42")` throws
+ * `SyntaxError: Cannot convert   42 to a BigInt`.
+ *
+ * Mirrors SQLite, where the declared column type decides and a computed
+ * column has none. See `narrowByColumnType` in `sqlite-driver.ts`.
+ */
+function bigintTypeCast(field: TypeCastField, next: () => unknown): unknown {
+  if (field.type !== "LONGLONG" || field.table === "") {
+    return next();
+  }
+
+  const raw = field.string();
+
+  return raw === null ? null : BigInt(raw.trim());
+}
 export class MysqlDriver<DB = any> implements DatabaseDriver<DB> {
   readonly dialect: Dialect = "mysql";
   readonly kysely: Kysely<DB>;
@@ -73,13 +101,17 @@ export class MysqlDriver<DB = any> implements DatabaseDriver<DB> {
       ...(config.socketPath ? { socketPath: config.socketPath } : {}),
       ...(config.charset ? { charset: config.charset } : {}),
       ...(config.connectionLimit ? { connectionLimit: config.connectionLimit } : {}),
-      // See the class docstring. These three keep dates and big
-      // integers round-tripping the way the rest of the framework
-      // expects, rather than mysql2's local-timezone/lossy defaults.
+      // See the class docstring. These keep dates and big integers
+      // round-tripping the way the rest of the framework expects,
+      // rather than mysql2's local-timezone/lossy defaults.
       dateStrings: true,
       timezone: "Z",
       supportBigNumbers: true,
-      bigNumberStrings: false,
+      // `typeCast` reads through `field.string()`, so the raw wire text
+      // has to survive that far: `false` would hand back an
+      // already-rounded number for anything past 2^53.
+      bigNumberStrings: true,
+      typeCast: bigintTypeCast,
       ...(config.options ?? {}),
     });
 

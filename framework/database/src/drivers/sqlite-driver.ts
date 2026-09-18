@@ -15,11 +15,9 @@ import { errorTranslatingDialect } from "./error-translating-dialect.js";
  * schema grammar writes `bigint` for `bigInteger`/`unsignedBigInteger`/
  * `foreignId` precisely so it can be read back here.
  *
- * Deliberately excludes plain `INTEGER`, which is what an
- * auto-incrementing primary key must be declared as (only the exact
- * type `INTEGER PRIMARY KEY` is a rowid alias, and SQLite rejects
- * `bigint primary key autoincrement`). A rowid is assigned by the engine
- * and cannot reach 2^53 in any real database, so narrowing it is safe.
+ * Plain `INTEGER` is not enough on its own, because an auto-incrementing
+ * primary key is also 64-bit but *must* be declared `INTEGER` to be a
+ * rowid alias. Those are caught separately by `isRowidKey()`.
  */
 function isBigintColumn(declared: string | null): boolean {
   if (declared === null) {
@@ -32,28 +30,97 @@ function isBigintColumn(declared: string | null): boolean {
 }
 
 /**
+ * Whether `column` is the single `INTEGER PRIMARY KEY` of `table` — a
+ * rowid alias, which SQLite stores as a 64-bit signed integer.
+ *
+ * This is what `bigIncrements()`/`id()` compiles to. It cannot be
+ * declared `bigint`, because only the exact type `INTEGER PRIMARY KEY`
+ * aliases the rowid and SQLite rejects
+ * `bigint primary key autoincrement` outright. So the declared type
+ * cannot distinguish it from an ordinary 32-bit column, and the table's
+ * primary key has to be consulted instead.
+ *
+ * Without this an auto-increment key would be a `number` here and a
+ * `bigint` on MySQL (`BIGINT AUTO_INCREMENT`) and Postgres (`bigserial`),
+ * so the same model's `id` would change type with the engine underneath
+ * it.
+ *
+ * Composite primary keys are excluded: `primary key(x, y)` is not a
+ * rowid alias, and neither column is implicitly 64-bit.
+ */
+function isRowidKey(db: BetterSqlite3.Database, table: string, column: string): boolean {
+  const info = db.prepare(`pragma table_info(${quoteIdentifier(table)})`).all() as {
+    name: string;
+    type: string;
+    pk: number;
+  }[];
+
+  const keys = info.filter((entry) => entry.pk > 0);
+
+  return keys.length === 1 && keys[0]!.name === column && keys[0]!.type.toLowerCase() === "integer";
+}
+
+/** Double-quote an identifier for interpolation, escaping any quotes in it. */
+function quoteIdentifier(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
+/** A column as `better-sqlite3` describes it, via `Statement.columns()`. */
+interface ColumnMetadata {
+  name: string;
+  type: string | null;
+  table: string | null;
+  column: string | null;
+}
+
+/**
+ * Which result columns are 64-bit, by name.
+ *
+ * `columns()` reports the originating table and column even through an
+ * alias or a join (`select a.id as aid` still says `t`.`id`), which is
+ * what makes the rowid lookup possible on anything but a bare select.
+ *
+ * Everything not backed by a real column — `count(*)`, `id + 1`, a
+ * literal — reports `null` for all three, and is left to narrow. Those
+ * are computed values rather than 64-bit storage, which is what keeps
+ * `count(*)` a `number`.
+ */
+function wideColumns(db: BetterSqlite3.Database, columns: ColumnMetadata[]): Set<string> {
+  const wide = new Set<string>();
+
+  for (const column of columns) {
+    if (isBigintColumn(column.type)) {
+      wide.add(column.name);
+
+      continue;
+    }
+
+    // `INTEGER` is only 64-bit when it is the table's rowid alias, which
+    // needs the table's primary key to decide.
+    if (
+      column.type?.toLowerCase() === "integer" &&
+      column.table !== null &&
+      column.column !== null &&
+      isRowidKey(db, column.table, column.column)
+    ) {
+      wide.add(column.name);
+    }
+  }
+
+  return wide;
+}
+
+/**
  * Narrow every `bigint` the driver produced back to a `number`, except
- * in the columns actually declared 64-bit.
+ * in the columns that are actually 64-bit.
  *
  * The decision is **by column type, never by value**: a `bigint` column
  * holding `5` still comes back as `5n`. Deciding per value would make a
  * column's JS type depend on its contents — `number` in a test with
  * small fixtures, `bigint` in production with real snowflakes — which is
  * the kind of difference that passes CI and fails live.
- *
- * `columns()` reports `null` for anything that is not a plain column
- * read (`count(*)`, `id + 1`, a literal). Those are computed values, not
- * 64-bit storage, so they narrow — which is what keeps `count(*)` a
- * `number` and every existing `toBe(5)` assertion working.
  */
-function narrowByColumnType(
-  rows: unknown[],
-  columns: { name: string; type: string | null }[],
-): void {
-  const wide = new Set(
-    columns.filter((column) => isBigintColumn(column.type)).map((column) => column.name),
-  );
-
+function narrowByColumnType(rows: unknown[], wide: Set<string>): void {
   for (const row of rows) {
     if (row === null || typeof row !== "object") {
       continue;
@@ -108,12 +175,23 @@ function narrowingHandle(db: BetterSqlite3.Database): BetterSqlite3.Database {
           return statement;
         }
 
+        // Resolved once per statement and reused across executions: the
+        // shape of a prepared statement's result cannot change, and
+        // `isRowidKey()` reads a pragma per candidate column.
+        let wide: Set<string> | undefined;
+
+        const wideFor = (stmt: BetterSqlite3.Statement): Set<string> => {
+          wide ??= wideColumns(target, stmt.columns() as ColumnMetadata[]);
+
+          return wide;
+        };
+
         return new Proxy(statement, {
           get(stmt, key, self) {
             if (key === "all") {
               return (...params: unknown[]) => {
                 const rows = stmt.all(...params) as unknown[];
-                narrowByColumnType(rows, stmt.columns());
+                narrowByColumnType(rows, wideFor(stmt));
 
                 return rows;
               };
@@ -124,7 +202,7 @@ function narrowingHandle(db: BetterSqlite3.Database): BetterSqlite3.Database {
                 const row = stmt.get(...params);
 
                 if (row !== undefined) {
-                  narrowByColumnType([row], stmt.columns());
+                  narrowByColumnType([row], wideFor(stmt));
                 }
 
                 return row;
@@ -133,7 +211,7 @@ function narrowingHandle(db: BetterSqlite3.Database): BetterSqlite3.Database {
 
             if (key === "iterate") {
               return function* (...params: unknown[]) {
-                const columns = stmt.columns();
+                const columns = wideFor(stmt);
 
                 for (const row of stmt.iterate(...params)) {
                   narrowByColumnType([row], columns);

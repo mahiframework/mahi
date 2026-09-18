@@ -1,5 +1,4 @@
 import type { Kysely } from "kysely";
-import { narrowKey } from "./key-identity.js";
 import { Collection, app } from "@mahiframework/core";
 import { AbstractEvent } from "@mahiframework/events";
 import { EloquentBuilder } from "./eloquent-builder.js";
@@ -3729,7 +3728,11 @@ export async function insertAndReadGeneratedId(
     const row = { ...values };
 
     if (result?.insertId !== undefined) {
-      row[key] = narrowKey(result.insertId);
+      // Kept as the `bigint` MySQL reports, matching what a SELECT of
+      // this column now yields on every engine. Narrowing it to a
+      // number or a string here would make the id returned by `create()`
+      // a different type from the same id read back by `find()`.
+      row[key] = result.insertId;
     }
 
     return row;

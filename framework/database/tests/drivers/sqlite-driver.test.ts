@@ -210,6 +210,62 @@ describe("SqliteDriver", () => {
       expect(row.total).toBe(1);
     });
 
+    /**
+     * An auto-increment key cannot be *declared* 64-bit on SQLite — only
+     * the exact type `INTEGER PRIMARY KEY` aliases the rowid, and
+     * `bigint primary key autoincrement` is rejected. It is a 64-bit
+     * value regardless, and is `bigserial`/`BIGINT AUTO_INCREMENT` on
+     * the other engines, so it has to read back as a `bigint` here too
+     * or a model's id would change type with the database under it.
+     */
+    it("treats a rowid primary key as 64-bit despite its INTEGER declaration", async () => {
+      const driver = new SqliteDriver({ filename: ":memory:" });
+
+      await new SchemaBuilder(driver.kysely).create("notes", (table: Blueprint) => {
+        table.id();
+        table.integer("count");
+      });
+
+      await driver.kysely
+        .insertInto("notes" as any)
+        .values({ count: 3 })
+        .execute();
+
+      const row = (await driver.kysely
+        .selectFrom("notes" as any)
+        .selectAll()
+        .executeTakeFirst()) as { id: bigint; count: number };
+
+      expect(row.id).toBe(1n);
+      expect(row.count).toBe(3);
+    });
+
+    /**
+     * A composite primary key is not a rowid alias, so its columns are
+     * ordinary 32-bit integers and must not be caught by the rowid rule.
+     */
+    it("leaves a composite primary key's columns narrowed", async () => {
+      const driver = new SqliteDriver({ filename: ":memory:" });
+
+      await new SchemaBuilder(driver.kysely).create("pivots", (table: Blueprint) => {
+        table.integer("left_id");
+        table.integer("right_id");
+        table.primary(["left_id", "right_id"]);
+      });
+
+      await driver.kysely
+        .insertInto("pivots" as any)
+        .values({ left_id: 1, right_id: 2 })
+        .execute();
+
+      const row = (await driver.kysely
+        .selectFrom("pivots" as any)
+        .selectAll()
+        .executeTakeFirst()) as { left_id: number };
+
+      expect(row.left_id).toBe(1);
+    });
+
     /** Streaming reads the same statement, so it must narrow the same way. */
     it("narrows the same way when streaming", async () => {
       const driver = await widgets();

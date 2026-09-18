@@ -1,7 +1,6 @@
 import pg from "pg";
 import { Kysely, PostgresDialect, sql } from "kysely";
 import type { Dialect } from "../schema/dialect.js";
-import { narrowKey } from "../key-identity.js";
 import type { DatabaseDriver } from "./driver.js";
 import { errorTranslatingDialect } from "./error-translating-dialect.js";
 
@@ -69,17 +68,18 @@ function normalizeTimestamp(value: string): string {
 
 /**
  * The `types` config handed to the pool: keeps date/time columns as
- * normalised ISO strings and stops `bigint` from being returned as a
- * string for values that fit a JS number.
+ * normalised ISO strings, and reads `int8` as a `bigint`.
  *
- * The `int8` case matters for primary keys. Postgres's `bigserial` is
- * `int8`, which node-postgres returns as a **string** (`'1'`) to avoid
- * silently truncating values past 2^53, so `post.id` would be `"1"` on
- * Postgres but `1` on SQLite/MySQL, and `find(post.id)` comparisons
- * would differ per engine. Narrowing to a number when it is exactly
- * representable, and leaving the string when it is not, makes the
- * common case agree across engines without reintroducing the precision
- * loss for genuinely large ids.
+ * node-postgres returns `int8` as a **string** by default, precisely
+ * because it does not fit a JS number. `BigInt()` on that text is exact,
+ * where `Number()` would round `440463260157395208` to `...200` — a
+ * different row, silently.
+ *
+ * Matches SQLite, where a column declared 64-bit reads back as a
+ * `bigint` regardless of how small the value in it happens to be. The
+ * type is a property of the column, not of the row, so a `bigserial`
+ * holding `1` is still `1n`; anything else would make a model's id type
+ * depend on how many rows had been inserted before it.
  */
 function typeParsers(): pg.CustomTypesConfig {
   return {
@@ -91,7 +91,7 @@ function typeParsers(): pg.CustomTypesConfig {
       }
 
       if (oid === OID.int8) {
-        return (value: string) => (value === null ? value : narrowKey(value));
+        return (value: string) => (value === null ? value : BigInt(value));
       }
 
       return (pg.types.getTypeParser as any)(oid, format);
