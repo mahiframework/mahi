@@ -17,12 +17,16 @@ export type WhereOperator = "=" | "!=" | ">" | ">=" | "<" | "<=" | "like" | "is"
  * normalisation. Callers are not held to it: a `where()` comparand, a
  * `whereRaw()` binding and a write payload all accept the wider
  * `Bindable` (see `bindings.ts`), which additionally admits `DateTime`,
- * `Date`, `bigint` and model instances. `normalizeBinding()` reduces
- * those to this set during compilation, so everything below that point,
- * Kysely, `pg`/`mysql2`/`better-sqlite3`, only ever sees a value it
- * can bind.
+ * `Date` and model instances. `normalizeBinding()` reduces those to this
+ * set during compilation, so everything below that point, Kysely,
+ * `pg`/`mysql2`/`better-sqlite3`, only ever sees a value it can bind.
+ *
+ * `bigint` is in the set rather than normalised away: it is what a
+ * 64-bit column reads back as, all three drivers bind it natively, and
+ * narrowing it to a `number` would round any id past
+ * `Number.MAX_SAFE_INTEGER` into a query for a different row.
  */
-export type SqlBinding = string | number | boolean | null;
+export type SqlBinding = string | number | boolean | bigint | null;
 
 /**
  * The trailing arguments of a `where(column, ...)`-shaped method once the

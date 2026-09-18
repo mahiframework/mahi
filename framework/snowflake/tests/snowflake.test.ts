@@ -5,13 +5,14 @@ beforeEach(() => Snowflake.reset());
 afterEach(() => Snowflake.reset());
 
 describe("Snowflake", () => {
-  it("generates a numeric decimal string", async () => {
+  it("generates a 64-bit integer", async () => {
     const id = await Snowflake.id();
-    expect(id).toMatch(/^\d{18,19}$/);
+    expect(typeof id).toBe("bigint");
+    expect(String(id)).toMatch(/^\d{18,19}$/);
   });
 
   it("ids are unique and ordered", async () => {
-    const all: string[] = [];
+    const all: bigint[] = [];
 
     for (let i = 0; i < 100; i++) {
       all.push(await Snowflake.id());
@@ -20,7 +21,7 @@ describe("Snowflake", () => {
     const unique = new Set(all);
     expect(unique.size).toBe(all.length);
 
-    const sorted = [...all].sort((a, b) => (BigInt(a) < BigInt(b) ? -1 : 1));
+    const sorted = [...all].sort((a, b) => (a < b ? -1 : 1));
     expect(sorted).toEqual(all);
   });
 
@@ -29,14 +30,14 @@ describe("Snowflake", () => {
     await delay(2);
 
     Snowflake.configure(now, 1, 1);
-    const recent = BigInt(await Snowflake.id());
+    const recent = await Snowflake.id();
     expect(recent).toBeGreaterThan(100n);
     expect(recent).toBeLessThan(10_000_000_000n);
 
     const lastYear = formatShifted(-1);
     Snowflake.configure(lastYear, 2, 3);
     const id = await Snowflake.id();
-    expect(id).toMatch(/^\d{18}$/);
+    expect(String(id)).toMatch(/^\d{18}$/);
 
     const data = Snowflake.parse(id);
     expect(data.worker).toBe(3);
@@ -49,7 +50,7 @@ describe("Snowflake", () => {
 
     for (const years of [10, 20, 30, 35]) {
       Snowflake.configure(formatShifted(-years), 1, 1);
-      expect(await Snowflake.id()).toMatch(/^\d{19}$/);
+      expect(String(await Snowflake.id())).toMatch(/^\d{19}$/);
     }
 
     Snowflake.configure(formatShifted(-35), 1, 1);
@@ -61,7 +62,7 @@ describe("Snowflake", () => {
     });
 
     Snowflake.configure(formatShifted(-36), 1, 1);
-    expect(await Snowflake.id()).toMatch(/^-\d{19}$/);
+    expect(String(await Snowflake.id())).toMatch(/^-\d{19}$/);
   });
 
   it("parse round-trips cluster, worker, and sequence", async () => {

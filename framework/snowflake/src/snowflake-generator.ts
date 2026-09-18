@@ -19,7 +19,7 @@ export class SnowflakeGenerator {
 
   constructor(protected app: Application) {}
 
-  async id(group: string): Promise<string> {
+  async id(group: string): Promise<bigint> {
     this.boot();
 
     return Snowflake.id(group);

@@ -12,7 +12,7 @@ import { Snowflake } from "../src/snowflake.js";
 import { SnowflakeServiceProvider } from "../src/snowflake-service-provider.js";
 
 interface WidgetAttributes {
-  id: string;
+  id: bigint;
   name: string;
 }
 
@@ -21,8 +21,8 @@ type WidgetTable = WidgetAttributes;
 class Widget extends Model<WidgetAttributes>()({
   table: "widgets",
   primaryKey: "id",
-  // The snowflake `KeyStrategy` assigns a 19-digit string id on create
-  // when one is missing (per-model sequence group = the class name).
+  // The snowflake `KeyStrategy` assigns a 64-bit id on create when one
+  // is missing (per-model sequence group = the class name).
   keyType: snowflake(),
   // This fixture is about the snowflake PRIMARY KEY, not timestamps, and
   // its table below has no created_at/updated_at columns, `Model
@@ -57,7 +57,7 @@ describe("HasSnowflake", () => {
     await manager
       .driver()
       .kysely.schema.createTable("widgets")
-      .addColumn("id", "text", (col) => col.primaryKey())
+      .addColumn("id", "bigint", (col) => col.primaryKey())
       .addColumn("name", "text", (col) => col.notNull())
       .execute();
   });
@@ -69,7 +69,8 @@ describe("HasSnowflake", () => {
 
   it("assigns a snowflake id on create when id is missing", async () => {
     const row = await Widget.create({ name: "Sprocket" } as WidgetTable);
-    expect(row.id).toMatch(/^\d{17,19}$/);
+    expect(typeof row.id).toBe("bigint");
+    expect(String(row.id)).toMatch(/^\d{17,19}$/);
     expect(row.name).toBe("Sprocket");
 
     const found = await Widget.find(row.id);
@@ -77,8 +78,8 @@ describe("HasSnowflake", () => {
   });
 
   it("leaves an explicit id alone", async () => {
-    const row = await Widget.create({ id: "custom-id", name: "Cog" });
-    expect(row.id).toBe("custom-id");
+    const row = await Widget.create({ id: 4242n, name: "Cog" });
+    expect(row.id).toBe(4242n);
   });
 
   it("sets incrementing to false so the DB is not asked for an insertId", async () => {
@@ -88,11 +89,12 @@ describe("HasSnowflake", () => {
 
   it("Factory.create() fills missing ids the same way", async () => {
     const [row] = await new WidgetFactory().create();
-    expect(row!.id).toMatch(/^\d{17,19}$/);
+    expect(String(row!.id)).toMatch(/^\d{17,19}$/);
   });
 
-  it("the snowflake() strategy's generate() returns a snowflake string", async () => {
+  it("the snowflake() strategy's generate() returns a 64-bit id", async () => {
     const id = await snowflake().generate({ modelName: "Widget" });
-    expect(id).toMatch(/^\d{17,19}$/);
+    expect(typeof id).toBe("bigint");
+    expect(String(id)).toMatch(/^\d{17,19}$/);
   });
 });

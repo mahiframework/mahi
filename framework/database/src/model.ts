@@ -299,7 +299,7 @@ export abstract class BaseModel {
    * `generate`) derived from `config.keyType`. Installed by the factory;
    * defaults to DB-generated increment on the base class.
    */
-  static keyStrategy: ResolvedKeyType = { incrementing: true };
+  static keyStrategy: ResolvedKeyType = { incrementing: true, type: "bigint" };
 
   /**
    * The named `DatabaseManager` connection this model reads and writes
@@ -454,7 +454,7 @@ export abstract class BaseModel {
    */
   static newUniqueId(
     this: typeof BaseModel,
-  ): string | number | undefined | Promise<string | number | undefined> {
+  ): string | number | bigint | undefined | Promise<string | number | bigint | undefined> {
     return this.keyStrategy.generate?.({ modelName: this.name });
   }
 
@@ -4036,16 +4036,24 @@ type SoftDeleteColumn<A, C> = C extends { softDeletes: infer S }
  */
 
 /**
- * `keyType` and the primary key's declared type must agree: `"uuid"` and
- * a `KeyStrategy` both assign strings, so `id: number` with
- * `keyType: "uuid"` is a guaranteed runtime type mismatch on insert.
+ * `keyType` and the primary key's declared type must agree: `"uuid"`
+ * assigns a string and `snowflake()` a bigint, so `id: number` with
+ * either is a guaranteed runtime type mismatch on insert.
+ *
+ * The strategy's own `type` decides which is expected, so a
+ * `KeyStrategy<bigint>` requires `id: bigint` and a `KeyStrategy<string>`
+ * requires `id: string`, rather than both being lumped in as strings.
  */
 type KeyTypeMismatch<A, C extends ModelConfig<A>> = C extends { keyType: infer KT }
   ? [KT] extends ["increment"]
     ? never
-    : [A[PrimaryKeyColumn<A, C>]] extends [string]
-      ? never
-      : PrimaryKeyColumn<A, C> & string
+    : [KT] extends [{ type: "bigint" }]
+      ? [A[PrimaryKeyColumn<A, C>]] extends [bigint]
+        ? never
+        : PrimaryKeyColumn<A, C> & string
+      : [A[PrimaryKeyColumn<A, C>]] extends [string]
+        ? never
+        : PrimaryKeyColumn<A, C> & string
   : never;
 
 /**
@@ -4116,7 +4124,7 @@ type ModelLint<A, C extends ModelConfig<A>> = Rule<
   Rule<ReservedCollisions<A>, "column collides with a reserved model member"> &
   Rule<
     KeyTypeMismatch<A, C>,
-    "keyType generates a string, so the primary key column must be typed string"
+    "the primary key column's type must match what keyType generates (string, or bigint for snowflake())"
   > &
   Rule<SoftDeleteColumnNotNullable<A, C>, "the soft-delete column must be nullable">;
 
@@ -4454,8 +4462,8 @@ function validateModelConfig(config: ModelConfig<A_ANY>): void {
       );
     }
 
-    if (keyType.type !== "string" && keyType.type !== "number") {
-      fail('`keyType.type` must be "string" or "number".');
+    if (keyType.type !== "string" && keyType.type !== "number" && keyType.type !== "bigint") {
+      fail('`keyType.type` must be "string", "number" or "bigint".');
     }
   }
 

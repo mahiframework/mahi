@@ -25,7 +25,7 @@ const migration: Migration = {
       table.string("id").primary();
       table.string("type");
       table.string("notifiable_type");
-      table.string("notifiable_id");
+      table.bigInteger("notifiable_id");
       table.text("data");
       table.timestamp("read_at").nullable();
       table.timestamp("created_at");

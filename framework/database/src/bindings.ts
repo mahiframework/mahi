@@ -1,6 +1,5 @@
 import { DateTime } from "@mahiframework/datetime";
 import { formatTimestamp } from "./timestamps.js";
-import { narrowKey } from "./key-identity.js";
 import type { SqlBinding } from "./query-builder.js";
 import type { Dialect } from "./schema/dialect.js";
 
@@ -64,11 +63,12 @@ function hasKey(value: unknown): value is { getKey(): SqlBinding } {
  *   ISO `Z`.
  * - **`Date` → the same**, routed through `DateTime` so there is one
  *   formatting path rather than two.
- * - **`bigint` → `narrowKey()`**, the framework's existing policy for a
- *   key crossing the DB/JS boundary (a number when lossless, a decimal
- *   string otherwise). `better-sqlite3` binds a `bigint` but the other
- *   two drivers do not, and `Number()` alone would corrupt ids past
- *   `MAX_SAFE_INTEGER`.
+ * - **`bigint` → itself.** All three drivers bind one natively
+ *   (better-sqlite3 directly, `pg` and `mysql2` by stringifying it
+ *   losslessly), and it is what a 64-bit column now reads back as, so
+ *   `where("id", row.id)` has to round-trip unchanged. Converting to a
+ *   `number` here would round any id past `MAX_SAFE_INTEGER` into a
+ *   query for a different row.
  * - **A model instance → its key.** `where("user_id", user)` is what
  *   the caller means; `getKey()` returns the already-DB-shaped raw
  *   attribute, so the result needs no further work.
@@ -92,10 +92,6 @@ export function normalizeBinding(dialect: Dialect, value: unknown): unknown {
 
   if (value instanceof Date) {
     return formatTimestamp(dialect, DateTime.fromISO(value.toISOString(), "UTC"));
-  }
-
-  if (typeof value === "bigint") {
-    return narrowKey(value);
   }
 
   if (hasKey(value)) {

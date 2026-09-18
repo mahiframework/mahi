@@ -77,10 +77,15 @@ describe("normalizeBinding()", () => {
     expect(normalizeBinding("sqlite", new Date(UTC_INSTANT))).toBe(UTC_INSTANT);
   });
 
-  it("narrows a bigint to a key", () => {
-    expect(normalizeBinding("sqlite", 42n)).toBe(42);
-    // Past MAX_SAFE_INTEGER, Number() would corrupt the id, so it stays text.
-    expect(normalizeBinding("sqlite", 9007199254740993n)).toBe("9007199254740993");
+  /**
+   * A `bigint` binds as-is. Every driver accepts one, and it is what a
+   * 64-bit column reads back as, so `where("id", row.id)` has to make
+   * the round trip unchanged — narrowing to a number would round any id
+   * past MAX_SAFE_INTEGER into a query for a different row.
+   */
+  it("passes a bigint through unchanged", () => {
+    expect(normalizeBinding("sqlite", 42n)).toBe(42n);
+    expect(normalizeBinding("sqlite", 9007199254740993n)).toBe(9007199254740993n);
   });
 
   it("reduces a model instance to its key", () => {

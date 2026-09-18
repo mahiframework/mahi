@@ -26,6 +26,7 @@
     "@mahiframework/facades": "workspace:*",
     "@mahiframework/mail": "workspace:*",
     "@mahiframework/pipeline": "workspace:*",
+    "@mahiframework/snowflake": "workspace:*",
     "@mahiframework/tui": "workspace:*",
     "commander": "^12.1.0",
     "kysely": "^0.29.5"

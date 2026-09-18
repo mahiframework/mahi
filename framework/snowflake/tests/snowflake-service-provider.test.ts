@@ -26,7 +26,7 @@ describe("SnowflakeServiceProvider", () => {
     expect(generator).toBeInstanceOf(SnowflakeGenerator);
 
     const id = await generator.id("Widget");
-    expect(id).toMatch(/^\d{17,19}$/);
+    expect(String(id)).toMatch(/^\d{17,19}$/);
     expect(Snowflake.parse(id).cluster).toBe(1);
     expect(Snowflake.parse(id).worker).toBe(1);
   });
@@ -39,9 +39,9 @@ describe("SnowflakeServiceProvider", () => {
     setCurrentApp(app);
 
     const generator = app.make<SnowflakeGenerator>(SNOWFLAKE_TOKEN);
-    expect(await generator.id("User")).toBe("9000000000000000001");
-    expect(await generator.id("User")).toBe("9000000000000000002");
-    expect(await generator.id("Post")).toBe("9000000000000000001");
+    expect(await generator.id("User")).toBe(9000000000000000001n);
+    expect(await generator.id("User")).toBe(9000000000000000002n);
+    expect(await generator.id("Post")).toBe(9000000000000000001n);
   });
 
   it("leaves the memory sequence resolver when sequencing.resolver is null", async () => {
@@ -52,7 +52,7 @@ describe("SnowflakeServiceProvider", () => {
     setCurrentApp(app);
 
     await app.make<SnowflakeGenerator>(SNOWFLAKE_TOKEN).id("User");
-    expect(await Snowflake.id()).toMatch(/^\d+$/);
+    expect(String(await Snowflake.id())).toMatch(/^\d+$/);
   });
 
   it("auto-registers a CacheSequenceResolver when sequencing.resolver is cache", async () => {

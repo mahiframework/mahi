@@ -80,7 +80,7 @@ describe("Snowflake signature", () => {
   });
 
   it("default memory sequence resolver produces unique ids in-process", async () => {
-    const ids: string[] = [];
+    const ids: bigint[] = [];
 
     for (let i = 0; i < 1000; i++) {
       ids.push(await Snowflake.id());
@@ -92,6 +92,6 @@ describe("Snowflake signature", () => {
 
   it("memory sequence resolver can be set explicitly", async () => {
     Snowflake.sequenceResolver(new MemorySequenceResolver());
-    expect(await Snowflake.id()).toMatch(/^\d+$/);
+    expect(String(await Snowflake.id())).toMatch(/^\d+$/);
   });
 });

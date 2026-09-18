@@ -17,7 +17,7 @@ const migration: Migration = {
   async up(): Promise<void> {
     await Schema.create("personal_access_tokens", (table: Blueprint) => {
       table.string("id").primary();
-      table.string("user_id").index();
+      table.bigInteger("user_id").index();
       table.string("name");
       table.string("token");
       table.timestamp("last_used_at").nullable();

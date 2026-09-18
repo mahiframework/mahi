@@ -38,14 +38,18 @@ type IdentifierResolverInput = IdentifierResolver | IdentifierResolverFn | null;
  * | sequence (3) ]`. Sequence bits are always derived as
  * `13 - workerIdBits - clusterIdBits` and must remain ≥ 3.
  *
- * IDs are returned as decimal strings. They exceed
- * `Number.MAX_SAFE_INTEGER`, so JSON and JS number arithmetic would
- * round them. Use `parse()` to unpack the fields, and `BigInt(id)` when
- * you need numeric comparison/sorting.
+ * IDs are returned as `bigint`. They exceed `Number.MAX_SAFE_INTEGER`,
+ * so a `number` would round them into a different id, and they belong in
+ * a `bigInteger` column. Use `parse()` to unpack the fields.
+ *
+ * `JSON.stringify` throws on a `bigint`, which is deliberate rather than
+ * unfortunate: it means an id cannot be serialised without a decision
+ * being made about it. The framework's own serialisers make that
+ * decision (a decimal string) — see `Resource` and `Model.toJSON()`.
  *
  * ```ts
  * Snowflake.configure("2025-01-01 00:00:00", 1, 1);
- * const id = await Snowflake.id(); // "9048372019229466888"
+ * const id = await Snowflake.id(); // 9048372019229466888n
  * ```
  */
 export class Snowflake {
@@ -181,8 +185,8 @@ export class Snowflake {
     return this.sequenceResolverValue.sequence(time);
   }
 
-  static async id(group: string | null = null): Promise<string> {
-    return String(await this.generate(group));
+  static async id(group: string | null = null): Promise<bigint> {
+    return this.generate(group);
   }
 
   /**

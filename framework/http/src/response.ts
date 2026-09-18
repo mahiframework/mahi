@@ -186,9 +186,26 @@ export class HttpResponse {
 }
 
 /**
+ * Render a `bigint` as a decimal string during serialization.
+ *
+ * `JSON.stringify` throws on a `bigint` outright ("Do not know how to
+ * serialize a BigInt"), and 64-bit ids are now `bigint`, so without this
+ * every response carrying a model id would be a 500.
+ *
+ * A string rather than a number because the whole reason these are
+ * `bigint` is that they do not fit a double: `JSON.parse` on the client
+ * would round `440463260157395208` to `...200`, which is precisely the
+ * corruption this type exists to prevent. Every language's JSON parser
+ * handles a string faithfully; none handle a 19-digit number.
+ */
+function replaceBigints(_key: string, value: unknown): unknown {
+  return typeof value === "bigint" ? value.toString() : value;
+}
+
+/**
  * JSON response. Holds the un-serialized payload (Laravel's
  * `JsonResponse::getData()`), so `getJson()` returns the object rather than
- * a string. `toWeb()` serializes via `globalThis.Response.json`, matching
+ * a string. `toWeb()` serializes via `JSON.stringify`, matching
  * the legacy `json()` helper byte-for-byte.
  */
 export class JsonResponse extends HttpResponse {
@@ -210,7 +227,12 @@ export class JsonResponse extends HttpResponse {
   }
 
   override toWeb(): WebResponse {
-    const res = WebResponse.json(this.data, { status: this.statusCode });
+    // `WebResponse.json()` would be equivalent, but it offers no way to
+    // pass a replacer, and a `bigint` anywhere in the payload throws.
+    const res = new WebResponse(JSON.stringify(this.data, replaceBigints), {
+      status: this.statusCode,
+      headers: { "content-type": "application/json" },
+    });
 
     // Merge any custom/middleware-set headers over the JSON defaults.
     // `Set-Cookie` is appended, not set: it's the one header that

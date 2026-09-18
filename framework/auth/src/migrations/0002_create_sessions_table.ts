@@ -14,7 +14,7 @@ const migration: Migration = {
   async up(): Promise<void> {
     await Schema.create("sessions", (table: Blueprint) => {
       table.string("id").primary();
-      table.string("user_id").index();
+      table.bigInteger("user_id").index();
       table.timestamp("expires_at").index();
       table.timestamp("created_at");
       table.timestamp("last_active_at");

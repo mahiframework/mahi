@@ -8,7 +8,7 @@ import { SNOWFLAKE_TOKEN } from "./tokens.js";
  * key is missing, the redesign replacement for the old `HasSnowflake`
  * `Model.use()` extension. Pass it as a model's `keyType`:
  *
- *   interface WidgetAttributes { id: string; name: string; }
+ *   interface WidgetAttributes { id: bigint; name: string; }
  *
  *   class Widget extends Model<WidgetAttributes>()({
  *     table: "widgets",
@@ -17,23 +17,26 @@ import { SNOWFLAKE_TOKEN } from "./tokens.js";
  *   }) {}
  *
  *   const row = await Widget.create({ name: "Sprocket" });
- *   row.id; // "9348975348573485734"
+ *   row.id; // 9348975348573485734n
  *
- * The key is a 19-digit string, so the column must be a `text` (or
- * `bigint`-as-text) primary key, never an auto-increment integer. An
- * explicit `id` on the insert payload always wins. The per-model sequence
- * group is the model's class name (`context.modelName`), matching the old
- * `newUniqueId()`'s `this.name`.
+ * The key is a 64-bit integer, so the column must be a `bigInteger()`
+ * primary key, never an auto-increment one. Declare the attribute as
+ * `bigint` to match; the model config rejects a `string` or `number`
+ * primary key against this strategy.
+ *
+ * An explicit `id` on the insert payload always wins. The per-model
+ * sequence group is the model's class name (`context.modelName`),
+ * matching the old `newUniqueId()`'s `this.name`.
  */
-export function snowflake(): KeyStrategy<string> {
+export function snowflake(): KeyStrategy<bigint> {
   return {
-    type: "string",
-    generate(context: KeyStrategyContext): Promise<string> {
+    type: "bigint",
+    generate(context: KeyStrategyContext): Promise<bigint> {
       return nextSnowflakeId(context.modelName);
     },
   };
 }
 
-async function nextSnowflakeId(group: string): Promise<string> {
+async function nextSnowflakeId(group: string): Promise<bigint> {
   return app().make<SnowflakeGenerator>(SNOWFLAKE_TOKEN).id(group);
 }

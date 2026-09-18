@@ -10,6 +10,13 @@ import {
  * The on-the-wire shape a serialized model reference takes inside a job
  * payload. Deliberately verbose keys (`__model`/`__id`) so a plain data
  * object a user happens to put in a payload is very unlikely to collide.
+ *
+ * `__id` carries a 64-bit key as a **decimal string**. A payload is
+ * `JSON.stringify`d by every driver, which throws on a `bigint`
+ * outright, and a JSON number would round a 19-digit id into a
+ * different one. `decodeModels()` reads it back through
+ * `modelClass.keyStrategy`, so the model is looked up with the type its
+ * column actually uses.
  */
 export interface ModelReference {
   __model: string;
@@ -87,7 +94,12 @@ function encodeValue(value: unknown, registry: ModelRegistry, seen: WeakSet<obje
       );
     }
 
-    return { __model: morphName, __id: id as string | number } satisfies ModelReference;
+    // A `bigint` key goes over the wire as a string: `JSON.stringify`
+    // throws on one, and a JSON number could not hold it exactly.
+    return {
+      __model: morphName,
+      __id: typeof id === "bigint" ? id.toString() : (id as string | number),
+    } satisfies ModelReference;
   }
 
   if (value instanceof Collection) {
@@ -154,7 +166,19 @@ export async function decodeModels(payload: unknown, registry: ModelRegistry): P
 
   for (const [morphName, ids] of idsByModel) {
     const modelClass = registry.resolve(morphName);
-    const collection = await modelClass.findMany([...ids]);
+    // A 64-bit key travelled as a decimal string (JSON has no bigint),
+    // so it has to be widened back or the lookup would compare text
+    // against a `bigInteger` column and match nothing.
+    //
+    // Guarded by the spelling rather than by `keyStrategy.type` alone:
+    // the default strategy reports `"bigint"` because an auto-increment
+    // column is 64-bit, but a model is free to declare a `string` key
+    // and assign it by hand, and `BigInt("u1")` throws.
+    const collection = await modelClass.findMany(
+      [...ids].map((id) =>
+        modelClass.keyStrategy.type === "bigint" && isDecimalInteger(id) ? BigInt(id) : id,
+      ),
+    );
     const byId = new Map<string, Model>();
 
     for (const instance of collection.all()) {
@@ -177,6 +201,17 @@ export async function decodeModels(payload: unknown, registry: ModelRegistry): P
 
   // Pass 3: rebuild the payload, swapping references for instances.
   return rehydrateValue(payload, loaded);
+}
+
+/**
+ * Whether a serialized `__id` is a plain decimal integer, and so may
+ * have been a `bigint` before JSON flattened it to text.
+ *
+ * Anything else — a UUID, a slug, `"u1"` — is a genuine string key and
+ * must be left alone.
+ */
+function isDecimalInteger(id: string | number): boolean {
+  return typeof id === "string" && /^-?\d+$/.test(id);
 }
 
 function collectReferences(value: unknown, into: Map<string, Set<string | number>>): void {

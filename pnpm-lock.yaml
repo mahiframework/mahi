@@ -622,6 +622,9 @@ importers:
       '@mahiframework/pipeline':
         specifier: workspace:*
         version: link:../pipeline
+      '@mahiframework/snowflake':
+        specifier: workspace:*
+        version: link:../snowflake
       '@mahiframework/tui':
         specifier: workspace:*
         version: link:../tui

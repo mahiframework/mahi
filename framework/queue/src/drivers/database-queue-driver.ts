@@ -9,7 +9,7 @@ import type { Dialect } from "@mahiframework/database";
 import type { QueueDriver, QueuedJob, PushOptions, ChainedJob } from "../queue-driver.js";
 import type { JobState } from "../job-serialization.js";
 import type { FailedJobRepository, FailedJobRecord } from "../failed-job-repository.js";
-import { monotonicUuid } from "../monotonic-id.js";
+import { Snowflake } from "@mahiframework/snowflake";
 
 interface JobRow {
   id: string;
@@ -117,9 +117,9 @@ export interface DatabaseQueueDriverOptions {
  * ## Ordering
  *
  * Jobs due at the same time run in the order they were pushed. That
- * falls out of `id` being a UUIDv7 (see `monotonicUuid()`), since
- * `available_at` is only second-precision and cannot separate a burst on
- * its own.
+ * falls out of `id` being a snowflake — time-ordered by construction —
+ * since `available_at` is only second-precision and cannot separate a
+ * burst dispatched within one.
  *
  * It is not a guarantee across *workers*: several workers pop in order
  * but finish whenever they finish. Order of execution is only order of
@@ -176,7 +176,7 @@ export class DatabaseQueueDriver implements QueueDriver, FailedJobRepository {
     await this.db
       .insertInto("jobs")
       .values({
-        id: monotonicUuid(),
+        id: await Snowflake.id("job"),
         queue: options.queue ?? this.queue,
         job_class: jobClass,
         payload_json: JSON.stringify(state ?? null),
@@ -300,8 +300,8 @@ export class DatabaseQueueDriver implements QueueDriver, FailedJobRepository {
    * whatever order the engine feels like, which makes concurrent workers
    * collide on the same row far more often than they need to.
    *
-   * `id` is the tiebreak specifically because `monotonicUuid()` makes it
-   * sort by push order. `available_at` is truncated to whole seconds, so
+   * `id` is the tiebreak specifically because a snowflake sorts by the
+   * time it was minted. `available_at` is truncated to whole seconds, so
    * a burst dispatched in one request ties on it and `id` alone decides
    * the order — with a random id that made the burst run shuffled, which
    * is not what FIFO promises.
@@ -440,7 +440,7 @@ export class DatabaseQueueDriver implements QueueDriver, FailedJobRepository {
       await trx
         .insertInto("jobs")
         .values({
-          id: monotonicUuid(),
+          id: await Snowflake.id("job"),
           queue: row.queue ?? this.queue,
           job_class: row.job_class,
           payload_json: row.payload_json,

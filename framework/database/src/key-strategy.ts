@@ -28,12 +28,17 @@ export interface KeyStrategyContext {
 }
 
 /**
- * A client-side primary-key generator. `type` declares whether the key is
- * a string or a number (used to validate against the column type);
- * `generate` produces the value, sync or async.
+ * A client-side primary-key generator. `type` declares what the key is
+ * (used to validate against the column type); `generate` produces the
+ * value, sync or async.
+ *
+ * `"bigint"` is for a 64-bit key the application assigns, which is what
+ * `@mahiframework/snowflake`'s `snowflake()` returns. It needs its own
+ * arm because a snowflake exceeds `Number.MAX_SAFE_INTEGER`, so a
+ * `number` would round it into a different id.
  */
-export interface KeyStrategy<T extends string | number = string | number> {
-  type: T extends string ? "string" : "number";
+export interface KeyStrategy<T extends string | number | bigint = string | number | bigint> {
+  type: T extends string ? "string" : T extends bigint ? "bigint" : "number";
   generate(context: KeyStrategyContext): T | Promise<T>;
 }
 
@@ -43,6 +48,19 @@ export interface ResolvedKeyType {
   incrementing: boolean;
   /** Generates a client-side key when `incrementing` is false, or `undefined` for none. */
   generate?: KeyStrategy["generate"];
+  /**
+   * What type the key is, so a caller holding one as text can restore it.
+   *
+   * Needed wherever a key makes a round trip through a format with no
+   * 64-bit integer: a queue payload's `__id`, a pagination cursor, a
+   * route parameter. All of those carry a snowflake as a decimal string,
+   * and querying a `bigInteger` column with one would match nothing.
+   *
+   * `"bigint"` for an auto-increment key too — those are 64-bit on every
+   * engine (`bigserial`, `BIGINT AUTO_INCREMENT`, a SQLite rowid) and
+   * read back as `bigint`.
+   */
+  type: "string" | "number" | "bigint";
 }
 
 /** The built-in `"uuid"` strategy. */
@@ -64,12 +82,14 @@ export function resolveKeyType(
   keyType: "increment" | "uuid" | KeyStrategy | undefined,
 ): ResolvedKeyType {
   if (keyType === undefined || keyType === "increment") {
-    return { incrementing: true };
+    // An auto-increment key is 64-bit on every engine this framework
+    // supports, and reads back as a `bigint`.
+    return { incrementing: true, type: "bigint" };
   }
 
   if (keyType === "uuid") {
-    return { incrementing: false, generate: uuidKeyStrategy().generate };
+    return { incrementing: false, generate: uuidKeyStrategy().generate, type: "string" };
   }
 
-  return { incrementing: false, generate: keyType.generate };
+  return { incrementing: false, generate: keyType.generate, type: keyType.type };
 }

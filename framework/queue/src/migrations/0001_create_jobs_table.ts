@@ -18,7 +18,7 @@ import { Schema, type Migration, type Blueprint } from "@mahiframework/database"
 const migration: Migration = {
   async up(): Promise<void> {
     await Schema.create("jobs", (table: Blueprint) => {
-      table.string("id").primary();
+      table.bigInteger("id").primary();
       table.string("job_class");
       table.text("payload_json");
       table.integer("attempts").default(0);
@@ -31,7 +31,7 @@ const migration: Migration = {
     });
 
     await Schema.create("failed_jobs", (table: Blueprint) => {
-      table.string("id").primary();
+      table.bigInteger("id").primary();
       table.string("job_class");
       table.text("payload_json");
       table.text("error");

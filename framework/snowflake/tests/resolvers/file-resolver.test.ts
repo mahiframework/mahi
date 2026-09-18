@@ -39,7 +39,7 @@ describe("FileSequenceResolver", () => {
     Snowflake.timestampResolver(() => times.shift()!);
     Snowflake.sequenceResolver(new FileSequenceResolver(file));
 
-    const ids: string[] = [];
+    const ids: bigint[] = [];
 
     for (let i = 0; i < 8; i++) {
       ids.push(await Snowflake.id());
