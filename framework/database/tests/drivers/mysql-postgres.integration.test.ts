@@ -210,6 +210,117 @@ for (const engine of engines) {
         // the CHECK constraint the grammar adds beside the varchar.
         await expect(rows().insert({ status: "banana" } as any)).rejects.toThrow();
       });
+
+      it("a partial unique index permits many nulls but one non-null", async () => {
+        // MySQL has no partial indexes, so the migration below cannot
+        // run there at all. That contract has its own case further down,
+        // and is asserted without a server in `../schema-indexes.test.ts`;
+        // this one is about Postgres enforcing what it created.
+        if (engine.name !== "postgres") {
+          return;
+        }
+
+        await schema.create("partial_downloads", (t: Blueprint) => {
+          t.id();
+          t.unsignedBigInteger("torrent_id").nullable();
+          t.unique("torrent_id", { where: "torrent_id is not null" });
+        });
+
+        const rows = () => new QueryBuilder(() => driver.kysely, "partial_downloads");
+
+        await rows().insert({ torrent_id: null } as any);
+        await rows().insert({ torrent_id: null } as any);
+        expect(await rows().count()).toBe(2);
+
+        await rows().insert({ torrent_id: 10 } as any);
+        await expect(rows().insert({ torrent_id: 10 } as any)).rejects.toBeInstanceOf(
+          UniqueConstraintViolationException,
+        );
+      });
+
+      it("a GIN index on jsonb serves a containment query", async () => {
+        if (engine.name !== "postgres") {
+          return;
+        }
+
+        await schema.create("gin_profiles", (t: Blueprint) => {
+          t.id();
+          t.jsonb("criteria");
+          t.index("criteria", { using: "gin" });
+        });
+
+        const rows = () => new QueryBuilder(() => driver.kysely, "gin_profiles");
+        await rows().insert({ criteria: JSON.stringify({ tags: ["x", "y"] }) } as any);
+        await rows().insert({ criteria: JSON.stringify({ tags: ["z"] }) } as any);
+
+        // Correctness only: that the index exists and the containment
+        // query still returns the right rows. Not asserting the planner
+        // chose it, which would be testing Postgres rather than this.
+        const hasX = await rows().whereJsonContains("criteria->tags", "x").get();
+        expect(hasX).toHaveLength(1);
+      });
+
+      it("a GIN index can name a trigram operator class", async () => {
+        if (engine.name !== "postgres") {
+          return;
+        }
+
+        // The extension stays the application's own explicit statement:
+        // creating one is a privileged, database-wide side effect that a
+        // table blueprint should not perform implicitly. The framework
+        // only has to let the index *reference* the opclass.
+        await sql`CREATE EXTENSION IF NOT EXISTS pg_trgm`.execute(driver.kysely);
+
+        await schema.create("trgm_metas", (t: Blueprint) => {
+          t.id();
+          t.string("title");
+          t.index("title", { using: "gin", opclass: { title: "gin_trgm_ops" } });
+        });
+
+        const rows = () => new QueryBuilder(() => driver.kysely, "trgm_metas");
+        await rows().insert({ title: "Inception" } as any);
+
+        const found = await rows().whereLike("title", "%ncep%").get();
+        expect(found).toHaveLength(1);
+      });
+
+      it("nullsNotDistinct makes nulls collide", async () => {
+        if (engine.name !== "postgres") {
+          return;
+        }
+
+        // The exact inverse of the partial-unique case above: there two
+        // nulls were fine, here the second one is the violation.
+        await schema.create("strict_downloads", (t: Blueprint) => {
+          t.id();
+          t.unsignedBigInteger("torrent_id").nullable();
+          t.unique("torrent_id", { nullsNotDistinct: true });
+        });
+
+        const rows = () => new QueryBuilder(() => driver.kysely, "strict_downloads");
+        await rows().insert({ torrent_id: null } as any);
+
+        await expect(rows().insert({ torrent_id: null } as any)).rejects.toBeInstanceOf(
+          UniqueConstraintViolationException,
+        );
+      });
+
+      it("rejects a partial index on MySQL before any DDL runs", async () => {
+        if (engine.name !== "mysql") {
+          return;
+        }
+
+        await expect(
+          schema.create("mysql_partial", (t: Blueprint) => {
+            t.id();
+            t.unsignedBigInteger("torrent_id").nullable();
+            t.unique("torrent_id", { where: "torrent_id is not null" });
+          }),
+        ).rejects.toThrow(/Partial indexes .* are not supported on mysql/);
+
+        // Nothing was created: the throw happens before the CREATE TABLE.
+        expect(await schema.hasTable("mysql_partial")).toBe(false);
+      });
     });
   });
 }

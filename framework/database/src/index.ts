@@ -37,6 +37,7 @@ export { SchemaBuilder } from "./schema/schema-builder.js";
 export { Blueprint } from "./schema/blueprint.js";
 export { ColumnDefinition } from "./schema/column-definition.js";
 export { ForeignKeyDefinition } from "./schema/foreign-key-definition.js";
+export type { IndexOptions, IndexMethod } from "./schema/types.js";
 
 export {
   Model,

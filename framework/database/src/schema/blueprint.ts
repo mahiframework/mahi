@@ -4,7 +4,14 @@ import type { Dialect } from "./dialect.js";
 import { ForeignKeyDefinition } from "./foreign-key-definition.js";
 import { grammarFor } from "./grammars/index.js";
 import { createIndexName } from "./index-name.js";
-import { asColumnList, type BlueprintMode, type IndexCommand, type IndexKind } from "./types.js";
+import {
+  asColumnList,
+  asIndexOptions,
+  type BlueprintMode,
+  type IndexCommand,
+  type IndexKind,
+  type IndexOptions,
+} from "./types.js";
 
 /**
  * Fractional-second digits given to a `time`/`dateTime`/`timestamp`
@@ -321,24 +328,61 @@ export class Blueprint {
     this.index([`${name}_type`, `${name}_id`], indexName);
   }
 
+  /**
+   * Composite primary key constraint.
+   *
+   * Takes a name and nothing else, unlike `unique()`/`index()`: a
+   * `PRIMARY KEY` is a table constraint rather than a free-standing
+   * index, so it cannot be partial, cannot pick a method, and cannot
+   * carry an operator class. Accepting `IndexOptions` here would
+   * advertise capabilities that do not exist.
+   */
   primary(columns: string | string[], name?: string): this {
-    return this.indexCommand("primary", columns, name);
+    return this.indexCommand("primary", columns, { name });
   }
 
-  unique(columns: string | string[], name?: string): this {
-    return this.indexCommand("unique", columns, name);
+  /**
+   * Unique index over `columns`.
+   *
+   * The second argument is either the index name or an `IndexOptions`
+   * object, so the two spellings that make a *nullable* column unique
+   * are reachable:
+   *
+   *   // at most one non-null, unlimited nulls
+   *   table.unique("torrent_id", { where: "torrent_id is not null" });
+   *
+   *   // nulls collide like any other value (Postgres 15+)
+   *   table.unique("torrent_id", { nullsNotDistinct: true });
+   */
+  unique(columns: string | string[], options?: string | IndexOptions): this {
+    return this.indexCommand("unique", columns, asIndexOptions(options));
   }
 
-  index(columns: string | string[], name?: string): this {
-    return this.indexCommand("index", columns, name);
+  /**
+   * Non-unique index over `columns`.
+   *
+   *   table.index("criteria", { using: "gin" });
+   *   table.index("title", { using: "gin", opclass: { title: "gin_trgm_ops" } });
+   */
+  index(columns: string | string[], options?: string | IndexOptions): this {
+    return this.indexCommand("index", columns, asIndexOptions(options));
   }
 
+  /**
+   * MySQL `FULLTEXT` index. **Throws on SQLite and Postgres.**
+   *
+   * Deliberately MySQL-only rather than emulated: MySQL's is an index
+   * over existing columns, while Postgres full-text needs a stored
+   * `tsvector` column to index, so they are not the same concept. The
+   * Postgres spelling is a generated column plus a GIN index, see
+   * `storedAs()` and `index(..., { using: "gin" })`.
+   */
   fullText(columns: string | string[], name?: string): this {
-    return this.indexCommand("fullText", columns, name);
+    return this.indexCommand("fullText", columns, { name });
   }
 
   spatialIndex(columns: string | string[], name?: string): this {
-    return this.indexCommand("spatialIndex", columns, name);
+    return this.indexCommand("spatialIndex", columns, { name });
   }
 
   foreign(columns: string | string[], name?: string): ForeignKeyDefinition {
@@ -435,8 +479,8 @@ export class Blueprint {
     return def;
   }
 
-  private indexCommand(kind: IndexKind, columns: string | string[], name?: string): this {
-    this.indexes.push({ kind, columns: asColumnList(columns), name });
+  private indexCommand(kind: IndexKind, columns: string | string[], options: IndexOptions): this {
+    this.indexes.push({ ...options, kind, columns: asColumnList(columns) });
 
     return this;
   }

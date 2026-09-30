@@ -53,7 +53,16 @@ const { compileCreate, compileAlter } = makeNativeAlterGrammar({
       .execute();
   },
 
+  // MySQL is the only engine here with `FULLTEXT`, and the only one
+  // without partial indexes — there is no `CREATE INDEX ... WHERE`, and
+  // no expression that substitutes for one. `USING` exists but takes
+  // only `btree`/`hash`, which `assertSupportedIndexes()` enforces;
+  // operator classes and `NULLS NOT DISTINCT` are Postgres-only.
   supportsFullText: true,
+  supportsPartialIndexes: false,
+  supportsIndexMethods: true,
+  supportsOperatorClasses: false,
+  supportsNullsNotDistinct: false,
 });
 
 /**

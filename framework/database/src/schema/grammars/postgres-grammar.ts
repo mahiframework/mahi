@@ -59,7 +59,20 @@ const { compileCreate, compileAlter } = makeNativeAlterGrammar({
     }
   },
 
+  // Every optional index feature except `fullText`, whose method name is
+  // occupied by MySQL's `FULLTEXT` (an index over existing columns,
+  // where Postgres needs a stored `tsvector` column to index — not the
+  // same concept). Postgres full-text is spelled as a generated column
+  // plus `index(..., { using: "gin" })`.
+  //
+  // `supportsNullsNotDistinct` is true for the grammar, but the clause
+  // itself needs Postgres 15+; on 14 and older the server raises its own
+  // syntax error rather than this layer version-detecting.
   supportsFullText: false,
+  supportsPartialIndexes: true,
+  supportsIndexMethods: true,
+  supportsOperatorClasses: true,
+  supportsNullsNotDistinct: true,
 });
 
 /**

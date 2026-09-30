@@ -20,14 +20,25 @@ import {
 } from "./indexes.js";
 
 /**
- * What SQLite's indexes can do.
+ * What SQLite's indexes can do: partial ones, and nothing else optional.
  *
- * `fullText` is FTS5, a virtual table rather than an index on an
- * existing one, so it is not the same concept `fullText()` names.
+ * `fullText` is FTS5, a virtual table rather than an index over an
+ * existing one, so it is not the concept `fullText()` names. There is no
+ * `USING` clause at all (btree is the only structure), no operator
+ * classes, and no `NULLS NOT DISTINCT` (SQLite's unique indexes always
+ * treat nulls as distinct).
+ *
+ * Partial indexes it has had since 3.8.0, and they carry the same
+ * `WHERE` syntax Postgres uses, which is what lets a partial-unique
+ * migration run on both.
  */
 const SQLITE_INDEX_CAPS: IndexCapabilities = {
   dialect: "sqlite",
   supportsFullText: false,
+  supportsPartialIndexes: true,
+  supportsIndexMethods: false,
+  supportsOperatorClasses: false,
+  supportsNullsNotDistinct: false,
 };
 
 function normalizeDefault(value: unknown): unknown {

@@ -9,6 +9,7 @@ import { belongsTo, belongsToMany, hasMany, morphMany } from "../../src/relation
 import type { BelongsTo, BelongsToMany, HasMany, MorphMany } from "../../src/markers.js";
 import { transaction } from "../../src/transaction.js";
 import { getActiveTransaction } from "../../src/transaction-context.js";
+import { UniqueConstraintViolationException } from "../../src/exceptions.js";
 import type { Blueprint } from "../../src/schema/blueprint.js";
 
 /**
@@ -219,6 +220,27 @@ for (const engine of ENGINES) {
         t.json("meta").nullable();
         t.timestamp("published_at").nullable();
       });
+
+      // Partial unique index. The one table here that is NOT created on
+      // every engine: MySQL has no partial indexes, and the framework
+      // throws rather than creating a full one (see
+      // `assertSupportedIndexes()`), so the migration genuinely cannot
+      // run there.
+      //
+      // It is still worth having in this file. The point of a partial
+      // unique index is that it is reachable from an ordinary
+      // declarative migration, which therefore runs on SQLite — the
+      // engine this repo's own test harnesses use — as well as on the
+      // Postgres it was written for. That is exactly what a raw
+      // `CREATE UNIQUE INDEX ... WHERE` in a migration costs you, and
+      // one set of assertions across both engines is what proves it.
+      if (engine.name !== "mysql") {
+        await h.create("xd_downloads", (t: Blueprint) => {
+          t.id();
+          t.unsignedBigInteger("torrent_id").nullable();
+          t.unique("torrent_id", { where: "torrent_id is not null" });
+        });
+      }
     });
 
     afterEach(async () => {
@@ -1167,6 +1189,25 @@ for (const engine of ENGINES) {
         .orderBy("title")
         .get();
       expect(rows.map((r: any) => r.title)).toEqual(["A", "B"]);
+    });
+
+    it("a partial unique index behaves identically on sqlite and postgres", async () => {
+      // MySQL cannot create the table at all, see the `beforeAll`.
+      if (engine.name === "mysql") {
+        return;
+      }
+
+      // "At most one non-null, unlimited nulls" — the constraint that has
+      // no non-partial spelling. Both halves matter: the nulls prove it
+      // is not a plain unique(), the duplicate proves it is still one.
+      await table("xd_downloads").insert({ torrent_id: null } as never);
+      await table("xd_downloads").insert({ torrent_id: null } as never);
+      expect(await table("xd_downloads").count()).toBe(2);
+
+      await table("xd_downloads").insert({ torrent_id: 10 } as never);
+      await expect(
+        table("xd_downloads").insert({ torrent_id: 10 } as never),
+      ).rejects.toBeInstanceOf(UniqueConstraintViolationException);
     });
   });
 }
