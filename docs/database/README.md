@@ -223,6 +223,7 @@ handled for you; it is listed because the differences are observable.
 | Index method (`using`) | unsupported | `btree`/`hash` | supported |
 | Operator class (`opclass`) | unsupported | unsupported | supported |
 | `nullsNotDistinct` | unsupported | unsupported | supported (15+) |
+| Expression index | supported | supported | supported |
 
 ### Documented limitations
 
@@ -250,11 +251,14 @@ handled for you; it is listed because the differences are observable.
   creating a weaker index. `unique(cols, { where })` on MySQL, or
   `{ using: "gin" }` on SQLite, fails at compile time before any DDL
   runs. See [Migrations](../migrations/#blueprint-index-options).
-- **`fullText()` is MySQL-only by design, and Postgres full-text is not
-  yet reachable.** MySQL indexes existing columns; Postgres needs a
-  stored `tsvector` column, and `Blueprint` has no `tsvector` type. The
-  GIN index half works — the column type is the missing piece. Substring
-  search is served by a trigram index today.
+- **`fullText()` is MySQL-only by design.** MySQL's `FULLTEXT` indexes
+  existing columns, and one method should not mean two different things.
+  Postgres full-text is a GIN index over `to_tsvector(...)`, written as an
+  expression index. See
+  [Migrations](../migrations/#postgres-full-text-search).
+- **An index expression is emitted verbatim and cannot be
+  parameterised.** A bound value would compile to a `$1` placeholder that
+  DDL cannot fill. Never build one from request input.
 
 ## The DB facade
 

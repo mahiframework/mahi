@@ -4,7 +4,12 @@ import type { ColumnDefinition } from "../column-definition.js";
 import type { Dialect } from "../dialect.js";
 import { createIndexName } from "../index-name.js";
 import { quoteBacktick, quoteDoubleQuoted } from "../quote-identifier.js";
-import type { IndexCommand, IndexMethod } from "../types.js";
+import {
+  IndexExpression,
+  type IndexColumn,
+  type IndexCommand,
+  type IndexMethod,
+} from "../types.js";
 
 /**
  * Index compilation, shared by every grammar.
@@ -77,24 +82,81 @@ const OPERATOR_CLASS_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
  * `.unique()` records `true` (meaning "yes, but you name it") and
  * `.unique("my_name")` records the string. See `ColumnDefinition`.
  */
-export function namedUnique(table: string, columns: string[], name?: string | true): string {
-  return typeof name === "string" ? name : createIndexName(table, "unique", columns);
+export function namedUnique(table: string, columns: IndexColumn[], name?: string | true): string {
+  return typeof name === "string" ? name : conventionalName(table, "unique", columns);
 }
 
-export function namedIndex(table: string, columns: string[], name?: string | true): string {
-  return typeof name === "string" ? name : createIndexName(table, "index", columns);
+export function namedIndex(table: string, columns: IndexColumn[], name?: string | true): string {
+  return typeof name === "string" ? name : conventionalName(table, "index", columns);
 }
 
-export function namedFullText(table: string, columns: string[], name?: string): string {
-  return name ?? createIndexName(table, "fulltext", columns);
+/**
+ * The conventional name, which only exists when every entry is a real
+ * column.
+ *
+ * An expression has no name to contribute: feeding one through
+ * `createIndexName()` would yield
+ * `metas_to_tsvector('english', title)_index`, an identifier that is
+ * mangled, dialect-dependent, and impossible for a `down()` to
+ * reproduce. So a functional index must be named explicitly, and asking
+ * for one without a name is an error rather than a surprise later.
+ */
+function conventionalName(table: string, type: string, columns: IndexColumn[]): string {
+  const expression = columns.find((column) => column instanceof IndexExpression);
+
+  if (expression instanceof IndexExpression) {
+    throw new Error(
+      `An index on the expression \`${expression.sql}\` (on "${table}") needs an explicit name: ` +
+        `pass { name: "..." }, since the ${type} naming convention has only column names to work from.`,
+    );
+  }
+
+  return createIndexName(table, type, columns as string[]);
 }
 
-export function namedPrimary(table: string, columns: string[], name?: string): string {
-  return name ?? createIndexName(table, "primary", columns);
+export function namedFullText(table: string, columns: IndexColumn[], name?: string): string {
+  return name ?? conventionalName(table, "fulltext", columns);
+}
+
+export function namedPrimary(table: string, columns: IndexColumn[], name?: string): string {
+  // Narrowed first, so an expression here reports the reason it can
+  // never work rather than the generic "needs an explicit name" — a name
+  // would not help.
+  return name ?? createIndexName(table, "primary", primaryKeyColumns(table, columns));
+}
+
+/**
+ * The column names of a `primary()` command.
+ *
+ * `Blueprint.primary()` accepts only names, never an `IndexExpression`
+ * (a `PRIMARY KEY` is a table constraint, so there is nothing to put an
+ * expression on), but it shares `IndexCommand` with the index methods
+ * that do. This narrows the list back for the constraint builders, and
+ * throws rather than casting so a future caller that widens `primary()`
+ * finds out here instead of emitting `[object Object]` into DDL.
+ */
+export function primaryKeyColumns(table: string, columns: IndexColumn[]): string[] {
+  for (const column of columns) {
+    if (column instanceof IndexExpression) {
+      throw new Error(
+        `A primary key on "${table}" cannot be an expression (\`${column.sql}\`); ` +
+          `it is a table constraint, not an index.`,
+      );
+    }
+  }
+
+  return columns as string[];
 }
 
 export function namedForeign(table: string, columns: string[], name?: string): string {
   return name ?? createIndexName(table, "foreign", columns);
+}
+
+/** An index's columns, for an error message: expressions as their SQL, in backticks. */
+function describeColumns(columns: IndexColumn[]): string {
+  return columns
+    .map((column) => (column instanceof IndexExpression ? `\`${column.sql}\`` : column))
+    .join(", ");
 }
 
 /**
@@ -115,7 +177,7 @@ export function assertSupportedIndexes(indexes: IndexCommand[], caps: IndexCapab
       throw new Error(`spatialIndex is not supported on ${caps.dialect}.`);
     }
 
-    const on = `on ${idx.kind}(${idx.columns.join(", ")})`;
+    const on = `on ${idx.kind}(${describeColumns(idx.columns)})`;
 
     if (idx.where !== undefined && !caps.supportsPartialIndexes) {
       throw new Error(
@@ -148,9 +210,15 @@ export function assertSupportedIndexes(indexes: IndexCommand[], caps: IndexCapab
       for (const [column, opclass] of Object.entries(idx.opclass)) {
         // A key naming no indexed column would otherwise be dropped in
         // silence, and a typo there costs the index its whole point.
+        // Expressions are not addressable this way: an opclass for one
+        // belongs inside the expression itself, since there is no name
+        // to key it by.
         if (!idx.columns.includes(column)) {
           throw new Error(
-            `The "opclass" option ${on} names column "${column}", which is not part of the index.`,
+            `The "opclass" option ${on} names column "${column}", which is not part of the index.` +
+              (idx.columns.some((c) => c instanceof IndexExpression)
+                ? ` An expression's operator class goes inside the expression, not in "opclass".`
+                : ""),
           );
         }
 
@@ -184,7 +252,7 @@ export function assertSupportedIndexes(indexes: IndexCommand[], caps: IndexCapab
  */
 export interface PlainIndex {
   name: string;
-  columns: string[];
+  columns: IndexColumn[];
   unique: boolean;
   fullText?: boolean;
   where?: string;
@@ -263,25 +331,34 @@ export function collectIndexes(blueprint: Blueprint, columns: ColumnDefinition[]
 }
 
 /**
- * The index's columns as Kysely's `columns()` wants them: plain strings
- * normally, and a raw expression for any column carrying an operator
- * class, since `<column> <opclass>` is not a column reference Kysely can
- * build. `columns()` takes expressions alongside strings, so the two mix
- * freely.
+ * The index's columns as Kysely's `columns()` wants them.
  *
- * The column name is quoted; the operator class is validated instead
- * (see `OPERATOR_CLASS_PATTERN`), because in that position it is a bare
- * identifier rather than a quotable one.
+ * A plain name passes through as a string, which is what lets Kysely
+ * quote it per dialect. The two cases that cannot are handed over as raw
+ * expressions instead, because neither is a column reference Kysely can
+ * build:
+ *
+ * - an `IndexExpression`, emitted verbatim;
+ * - a column carrying an operator class, since `<column> <opclass>` is
+ *   two tokens.
+ *
+ * `columns()` accepts expressions alongside strings, so the three mix
+ * freely in one index.
+ *
+ * Note that a string is *never* reinterpreted as SQL here: Kysely parses
+ * each one as an ordered column name (`"age desc"`), so an expression
+ * smuggled in as a string fails to compile rather than being executed.
+ * That is why `IndexExpression` is a distinct type and not a convention.
  */
 function indexColumns(idx: PlainIndex): (string | Expression<any>)[] {
   const opclass = idx.opclass;
 
-  if (!opclass) {
-    return idx.columns;
-  }
-
   return idx.columns.map((column) => {
-    const operator = opclass[column];
+    if (column instanceof IndexExpression) {
+      return sql.raw(column.sql);
+    }
+
+    const operator = opclass?.[column];
 
     return operator === undefined ? column : sql.raw(`${quoteDoubleQuoted(column)} ${operator}`);
   });
@@ -291,7 +368,8 @@ function indexColumns(idx: PlainIndex): (string | Expression<any>)[] {
 export async function createIndex(db: Kysely<any>, table: string, idx: PlainIndex): Promise<void> {
   if (idx.fullText) {
     // Kysely has no cross-dialect fullText builder; emit raw (MySQL only).
-    const cols = idx.columns.map((c) => quoteBacktick(c)).join(", ");
+    // `fullText()` takes no expressions, so every entry is a name.
+    const cols = idx.columns.map((c) => quoteBacktick(c as string)).join(", ");
     await sql
       .raw(`CREATE FULLTEXT INDEX ${quoteBacktick(idx.name)} ON ${quoteBacktick(table)} (${cols})`)
       .execute(db);

@@ -686,6 +686,61 @@ violation. Unique indexes only (it throws on a non-unique one, as
 Postgres would) and Postgres 15+ only — on 14 and older the server raises
 its own syntax error rather than this layer version-detecting.
 
+## Blueprint: expression indexes
+
+An entry in the column list may be an `indexExpression()` instead of a
+column name, making it a *functional* index — one over a computed value
+rather than a stored one. Every engine supports these.
+
+```ts
+import { indexExpression } from "@mahiframework/database";
+
+await Schema.create("users", (table) => {
+  table.id();
+  table.string("email");
+  table.unique([indexExpression(`lower("email")`)], {
+    name: "users_email_lower_unique",
+  });
+});
+```
+
+That is case-insensitive uniqueness: `A@example.com` and
+`a@EXAMPLE.com` collide, which a plain `unique("email")` would permit.
+
+Expressions mix with plain columns in one index:
+
+```ts
+table.unique(["tenant", indexExpression(`lower("slug")`)], {
+  name: "posts_tenant_slug_lower_unique",
+});
+```
+
+**An expression index must be named.** The `{table}_{cols}_{type}`
+convention has only column names to work from, and feeding an expression
+through it would produce `metas_to_tsvector('english', title)_index` — an
+identifier that is mangled and impossible for a `down()` to reproduce. So
+omitting `name` is an error:
+
+```
+An index on the expression `lower("title")` (on "metas") needs an explicit name:
+pass { name: "..." }, since the index naming convention has only column names to work from.
+```
+
+> ⚠️ An expression is emitted verbatim, like `where` and `storedAs()`.
+> **Never build one from request input.** Index expressions cannot be
+> parameterised: a bound value compiles to a `$1` placeholder that DDL
+> cannot fill, and Postgres rejects it (`bind message supplies 1
+> parameters, but prepared statement requires 0`). Quoting identifiers
+> inside the expression is yours to do.
+
+A plain string is **never** reinterpreted as SQL — `index(["lower(email)"])`
+still means "a column named `lower(email)`", which is wrong but safe.
+`indexExpression()` is a distinct type precisely so the two cannot be
+confused.
+
+`primary()` accepts no expressions: a `PRIMARY KEY` is a table
+constraint, so there is nothing to put one on.
+
 ### Substring search on Postgres
 
 A trigram index is what makes `whereLike("title", "%ncep%")` fast, and it
@@ -707,28 +762,39 @@ import { sql } from "kysely";
 await sql`CREATE EXTENSION IF NOT EXISTS pg_trgm`.execute(DB.connection().kysely);
 ```
 
-### Postgres full-text search is not yet reachable
+### Postgres full-text search
 
 `fullText()` is MySQL-only and stays that way by design: MySQL's
-`FULLTEXT` indexes existing columns, while Postgres needs a stored
-`tsvector` column to index. Those are different enough that one method
-should not pretend to be both.
-
-The Postgres spelling would be a generated `tsvector` column plus a GIN
-index on it — but **`Blueprint` has no `tsvector` column type**, and
-`storedAs()` on a `text()` column is not a substitute:
+`FULLTEXT` indexes existing columns, and one method should not mean two
+different things. Postgres full-text is a **GIN index over
+`to_tsvector(...)`**, which expression indexes now express directly — no
+generated column, and no `tsvector` column type needed:
 
 ```ts
-// Does NOT work. The column is `text`, and:
-//   data type text has no default operator class for access method "gin"
-table.text("searchable").storedAs("to_tsvector('english', title)");
-table.index("searchable", { using: "gin" });
+const vector = `to_tsvector('english', coalesce("title", '') || ' ' || coalesce("body", ''))`;
+
+await Schema.create("docs", (table) => {
+  table.id();
+  table.string("title");
+  table.text("body");
+  table.index([indexExpression(`(${vector})`)], {
+    name: "docs_searchable",
+    using: "gin",
+  });
+});
 ```
 
-Adding `tsvector` to `compileColumnType()` is the missing piece; the
-index half is done. Until then, Postgres full-text needs a raw statement
-for the column, and word-matching search is better served by the trigram
-index above.
+Query it with the same expression:
+
+```ts
+await sql`
+  select title from docs where ${sql.raw(vector)} @@ to_tsquery('english', 'dream')
+`.execute(DB.connection().kysely);
+```
+
+The expression is parenthesised because Postgres requires it for a
+single-expression index. Word matching is `to_tsvector`/`to_tsquery` as
+above; for substring matching, use the trigram index instead.
 
 ## Blueprint: foreign keys
 

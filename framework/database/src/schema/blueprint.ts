@@ -6,8 +6,10 @@ import { grammarFor } from "./grammars/index.js";
 import { createIndexName } from "./index-name.js";
 import {
   asColumnList,
+  asIndexColumnList,
   asIndexOptions,
   type BlueprintMode,
+  type IndexColumn,
   type IndexCommand,
   type IndexKind,
   type IndexOptions,
@@ -353,8 +355,14 @@ export class Blueprint {
    *
    *   // nulls collide like any other value (Postgres 15+)
    *   table.unique("torrent_id", { nullsNotDistinct: true });
+   *
+   * An entry may also be an `indexExpression()`, for uniqueness over a
+   * computed value — case-insensitive emails being the usual one. Those
+   * need an explicit `name`:
+   *
+   *   table.unique([indexExpression(`lower("email")`)], { name: "users_email_lower_unique" });
    */
-  unique(columns: string | string[], options?: string | IndexOptions): this {
+  unique(columns: IndexColumn | IndexColumn[], options?: string | IndexOptions): this {
     return this.indexCommand("unique", columns, asIndexOptions(options));
   }
 
@@ -363,19 +371,33 @@ export class Blueprint {
    *
    *   table.index("criteria", { using: "gin" });
    *   table.index("title", { using: "gin", opclass: { title: "gin_trgm_ops" } });
+   *
+   * An entry may also be an `indexExpression()`, making it a functional
+   * index. Those need an explicit `name`, since the convention has no
+   * column name to build one from:
+   *
+   *   table.index([indexExpression(`lower("email")`)], { name: "users_email_lower" });
    */
-  index(columns: string | string[], options?: string | IndexOptions): this {
+  index(columns: IndexColumn | IndexColumn[], options?: string | IndexOptions): this {
     return this.indexCommand("index", columns, asIndexOptions(options));
   }
 
   /**
    * MySQL `FULLTEXT` index. **Throws on SQLite and Postgres.**
    *
-   * Deliberately MySQL-only rather than emulated: MySQL's is an index
-   * over existing columns, while Postgres full-text needs a stored
-   * `tsvector` column to index, so they are not the same concept. The
-   * Postgres spelling is a generated column plus a GIN index, see
-   * `storedAs()` and `index(..., { using: "gin" })`.
+   * Deliberately MySQL-only rather than emulated. MySQL's `FULLTEXT` is
+   * its own index type with its own query syntax (`MATCH ... AGAINST`),
+   * whereas Postgres full-text is an ordinary GIN index over a
+   * `to_tsvector(...)` expression, queried with `@@`. One method
+   * covering both would have to hide that difference from the *query*
+   * side too, which it cannot.
+   *
+   * The Postgres spelling is therefore an expression index:
+   *
+   *   table.index([indexExpression(`(to_tsvector('english', "body"))`)], {
+   *     name: "docs_searchable",
+   *     using: "gin",
+   *   });
    */
   fullText(columns: string | string[], name?: string): this {
     return this.indexCommand("fullText", columns, { name });
@@ -479,8 +501,12 @@ export class Blueprint {
     return def;
   }
 
-  private indexCommand(kind: IndexKind, columns: string | string[], options: IndexOptions): this {
-    this.indexes.push({ ...options, kind, columns: asColumnList(columns) });
+  private indexCommand(
+    kind: IndexKind,
+    columns: IndexColumn | IndexColumn[],
+    options: IndexOptions,
+  ): this {
+    this.indexes.push({ ...options, kind, columns: asIndexColumnList(columns) });
 
     return this;
   }

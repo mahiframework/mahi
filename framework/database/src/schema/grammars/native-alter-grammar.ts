@@ -11,6 +11,7 @@ import {
   createIndex,
   namedForeign,
   namedPrimary,
+  primaryKeyColumns,
   type IndexCapabilities,
 } from "./indexes.js";
 
@@ -155,7 +156,7 @@ export function makeNativeAlterGrammar(opts: NativeAlterOptions) {
     for (const pk of compositePrimary) {
       builder = builder.addPrimaryKeyConstraint(
         namedPrimary(table, pk.columns, pk.name),
-        pk.columns,
+        primaryKeyColumns(table, pk.columns),
       );
     }
 
@@ -233,7 +234,10 @@ export function makeNativeAlterGrammar(opts: NativeAlterOptions) {
       if (idx.kind === "primary") {
         await db.schema
           .alterTable(table)
-          .addPrimaryKeyConstraint(namedPrimary(table, idx.columns, idx.name), idx.columns as any)
+          .addPrimaryKeyConstraint(
+            namedPrimary(table, idx.columns, idx.name),
+            primaryKeyColumns(table, idx.columns) as any,
+          )
           .execute();
       }
     }

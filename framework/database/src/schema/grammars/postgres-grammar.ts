@@ -59,11 +59,11 @@ const { compileCreate, compileAlter } = makeNativeAlterGrammar({
     }
   },
 
-  // Every optional index feature except `fullText`, whose method name is
-  // occupied by MySQL's `FULLTEXT` (an index over existing columns,
-  // where Postgres needs a stored `tsvector` column to index — not the
-  // same concept). Postgres full-text is spelled as a generated column
-  // plus `index(..., { using: "gin" })`.
+  // Every optional index feature except `fullText`, which is MySQL's own
+  // index type with its own query syntax. Postgres full-text is an
+  // ordinary GIN index over a `to_tsvector(...)` expression, so it is
+  // reached through `index([indexExpression(...)], { using: "gin" })`
+  // rather than by this flag. See `Blueprint.fullText()`.
   //
   // `supportsNullsNotDistinct` is true for the grammar, but the clause
   // itself needs Postgres 15+; on 14 and older the server raises its own

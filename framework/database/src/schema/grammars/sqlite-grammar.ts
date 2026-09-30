@@ -16,6 +16,7 @@ import {
   namedForeign,
   namedPrimary,
   namedUnique,
+  primaryKeyColumns,
   type IndexCapabilities,
 } from "./indexes.js";
 
@@ -118,7 +119,10 @@ async function compileCreate(db: Kysely<any>, blueprint: Blueprint): Promise<voi
   }
 
   for (const pk of compositePrimary) {
-    builder = builder.addPrimaryKeyConstraint(namedPrimary(table, pk.columns, pk.name), pk.columns);
+    builder = builder.addPrimaryKeyConstraint(
+      namedPrimary(table, pk.columns, pk.name),
+      primaryKeyColumns(table, pk.columns),
+    );
   }
 
   for (const fk of collectForeignKeys(blueprint)) {

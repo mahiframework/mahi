@@ -10,6 +10,7 @@ import {
   NotNullConstraintViolationException,
   UniqueConstraintViolationException,
 } from "../../src/exceptions.js";
+import { indexExpression } from "../../src/schema/types.js";
 
 /**
  * These tests exercise the MySQL and Postgres drivers against the real
@@ -320,6 +321,70 @@ for (const engine of engines) {
 
         // Nothing was created: the throw happens before the CREATE TABLE.
         expect(await schema.hasTable("mysql_partial")).toBe(false);
+      });
+
+      /**
+       * Expression indexes work on **both** server engines, unlike every
+       * option above, so this one is unguarded. MySQL calls them
+       * functional key parts and needs the expression parenthesised,
+       * which the caller writes into the expression itself.
+       */
+      it("enforces uniqueness over an expression", async () => {
+        const parens = engine.name === "mysql" ? ["(", ")"] : ["", ""];
+        const quote = engine.name === "mysql" ? "`" : `"`;
+
+        await schema.create("expr_users", (t: Blueprint) => {
+          t.id();
+          t.string("email");
+          t.unique([indexExpression(`${parens[0]}lower(${quote}email${quote})${parens[1]}`)], {
+            name: "expr_users_email_lower_unique",
+          });
+        });
+
+        const rows = () => new QueryBuilder(() => driver.kysely, "expr_users");
+        await rows().insert({ email: "A@example.com" } as any);
+
+        // Distinct as stored, identical once lowered.
+        await expect(rows().insert({ email: "a@EXAMPLE.com" } as any)).rejects.toBeInstanceOf(
+          UniqueConstraintViolationException,
+        );
+      });
+
+      /**
+       * Postgres full-text search, end to end.
+       *
+       * This is the shape Laravel's Postgres `fullText()` uses: a GIN
+       * index over `to_tsvector(...)` directly, with **no generated
+       * column and no `tsvector` column type**. Expression indexes are
+       * the whole prerequisite, which is why `fullText()` itself stays
+       * MySQL-only.
+       */
+      it("serves a full-text query from an expression index", async () => {
+        if (engine.name !== "postgres") {
+          return;
+        }
+
+        const vector = `to_tsvector('english', coalesce("title", '') || ' ' || coalesce("body", ''))`;
+
+        await schema.create("fts_docs", (t: Blueprint) => {
+          t.id();
+          t.string("title");
+          t.text("body");
+          t.index([indexExpression(`(${vector})`)], {
+            name: "fts_docs_searchable",
+            using: "gin",
+          });
+        });
+
+        const rows = () => new QueryBuilder(() => driver.kysely, "fts_docs");
+        await rows().insert({ title: "Inception", body: "a dream within a dream" } as any);
+        await rows().insert({ title: "Heat", body: "a crew in Los Angeles" } as any);
+
+        const { rows: found } = await sql<{ title: string }>`
+          select title from fts_docs where ${sql.raw(vector)} @@ to_tsquery('english', 'dream')
+        `.execute(driver.kysely);
+
+        expect(found.map((r) => r.title)).toEqual(["Inception"]);
       });
     });
   });

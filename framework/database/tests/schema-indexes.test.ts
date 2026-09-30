@@ -11,12 +11,13 @@ import { SqliteDriver } from "../src/drivers/sqlite-driver.js";
 import { SchemaBuilder } from "../src/schema/schema-builder.js";
 import { UniqueConstraintViolationException } from "../src/exceptions.js";
 import { createIndex } from "../src/schema/grammars/indexes.js";
+import { indexExpression } from "../src/schema/types.js";
 import type { Blueprint } from "../src/schema/blueprint.js";
 import type { Dialect } from "../src/schema/dialect.js";
 
 /**
- * `IndexOptions`: partial predicates, index methods, operator classes
- * and `NULLS NOT DISTINCT`.
+ * `IndexOptions`: partial predicates, index methods, operator classes,
+ * `NULLS NOT DISTINCT`, and expression (functional) indexes.
  *
  * Almost all of this runs without a database server, including the
  * "throws on MySQL/Postgres" half. `assertSupportedIndexes()` runs off
@@ -468,5 +469,160 @@ describe("index option plumbing", () => {
     expect(names).toContain("posts_slug_unique");
     expect(names).toContain("posts_author_slug_index");
     expect(await indexSql(db, "posts_slug_unique")).not.toMatch(/where/i);
+  });
+});
+
+/**
+ * Expression (functional) indexes: an index over a computed value rather
+ * than a stored column.
+ *
+ * Every engine here supports them, so unlike the Postgres-only options
+ * above there is no capability flag — what there is instead is a naming
+ * problem, since the `{table}_{cols}_{type}` convention has nothing to
+ * work from.
+ */
+describe("expression indexes", () => {
+  it("indexes a computed value, and enforces uniqueness over it", async () => {
+    const { db, schema } = fresh();
+
+    await schema.create("users", (table: Blueprint) => {
+      table.id();
+      table.string("email");
+      table.unique([indexExpression(`lower("email")`)], { name: "users_email_lower_unique" });
+    });
+
+    expect(await indexNames(db, "users")).toContain("users_email_lower_unique");
+
+    await db.insertInto("users").values({ email: "A@example.com" }).execute();
+
+    // Differs only by case, so the stored values are distinct but the
+    // indexed expression is not. A plain unique("email") would allow it.
+    await expect(
+      db.insertInto("users").values({ email: "a@EXAMPLE.com" }).execute(),
+    ).rejects.toBeInstanceOf(UniqueConstraintViolationException);
+  });
+
+  it("mixes expressions with plain columns in one index", async () => {
+    const { db, schema } = fresh();
+
+    await schema.create("posts", (table: Blueprint) => {
+      table.id();
+      table.string("tenant");
+      table.string("slug");
+      table.unique(["tenant", indexExpression(`lower("slug")`)], {
+        name: "posts_tenant_slug_lower_unique",
+      });
+    });
+
+    await db.insertInto("posts").values({ tenant: "a", slug: "Hello" }).execute();
+    // Same tenant, slug differing only by case: collides.
+    await expect(
+      db.insertInto("posts").values({ tenant: "a", slug: "HELLO" }).execute(),
+    ).rejects.toBeInstanceOf(UniqueConstraintViolationException);
+
+    // Different tenant: fine, so the plain column half still discriminates.
+    await db.insertInto("posts").values({ tenant: "b", slug: "hello" }).execute();
+    expect(await db.selectFrom("posts").selectAll().execute()).toHaveLength(2);
+  });
+
+  it("combines with the other options", async () => {
+    const { db, schema } = fresh();
+
+    await schema.create("downloads", (table: Blueprint) => {
+      table.id();
+      table.string("path").nullable();
+      table.unique([indexExpression(`lower("path")`)], {
+        name: "downloads_path_lower_unique",
+        where: "path is not null",
+      });
+    });
+
+    const ddl = await indexSql(db, "downloads_path_lower_unique");
+    expect(ddl).toMatch(/lower/i);
+    expect(ddl).toMatch(/where/i);
+
+    // Partial, so two nulls are fine...
+    await db.insertInto("downloads").values({ path: null }).execute();
+    await db.insertInto("downloads").values({ path: null }).execute();
+    // ...and functional, so case-insensitive duplicates are not.
+    await db.insertInto("downloads").values({ path: "/A" }).execute();
+    await expect(
+      db.insertInto("downloads").values({ path: "/a" }).execute(),
+    ).rejects.toBeInstanceOf(UniqueConstraintViolationException);
+  });
+
+  /**
+   * The naming convention cannot serve an expression: it would produce
+   * `metas_to_tsvector('english', title)_index`, which is mangled and
+   * impossible for a `down()` to reproduce. So the name is required, and
+   * omitting it is an error rather than a broken identifier.
+   */
+  it("requires an explicit name", async () => {
+    await expect(
+      fresh().schema.create("metas", (table: Blueprint) => {
+        table.string("title");
+        table.index([indexExpression(`lower("title")`)]);
+      }),
+    ).rejects.toThrow(/needs an explicit name/);
+  });
+
+  it("names the offending expression when it throws", async () => {
+    await expect(
+      fresh().schema.create("metas", (table: Blueprint) => {
+        table.string("title");
+        table.index([indexExpression(`lower("title")`)]);
+      }),
+    ).rejects.toThrow(/lower\("title"\)/);
+  });
+
+  /**
+   * A plain string must never be reinterpreted as SQL: that would turn
+   * every column name into an injection surface. Kysely parses each
+   * string as an ordered column name, so SQL passed as one fails to
+   * compile rather than executing.
+   */
+  it("does not treat a bare string as an expression", async () => {
+    await expect(
+      fresh().schema.create("metas", (table: Blueprint) => {
+        table.string("title");
+        table.index(["lower(title)"], { name: "metas_bad" });
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("rejects an expression in a primary key", async () => {
+    // A PRIMARY KEY is a table constraint, so there is nothing to put an
+    // expression on. `primary()` is typed to refuse one; this pins the
+    // runtime guard behind that type.
+    const { schema } = fresh();
+
+    await expect(
+      schema.create("metas", (table: Blueprint) => {
+        table.string("title");
+        (table as any).primary([indexExpression(`lower("title")`)]);
+      }),
+    ).rejects.toThrow(/cannot be an expression/);
+  });
+
+  it("survives the SQLite table rebuild", async () => {
+    const { db, schema } = fresh();
+
+    await schema.create("users", (table: Blueprint) => {
+      table.id();
+      table.string("label");
+      table.string("email");
+      table.unique([indexExpression(`lower("email")`)], { name: "users_email_lower_unique" });
+    });
+
+    await schema.table("users", (table: Blueprint) => {
+      table.string("label", 100).nullable().change();
+    });
+
+    expect(await indexSql(db, "users_email_lower_unique")).toMatch(/lower/i);
+
+    await db.insertInto("users").values({ label: "a", email: "A@x.com" }).execute();
+    await expect(
+      db.insertInto("users").values({ label: "b", email: "a@X.com" }).execute(),
+    ).rejects.toBeInstanceOf(UniqueConstraintViolationException);
   });
 });

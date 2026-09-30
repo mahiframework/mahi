@@ -13,6 +13,42 @@ export type BlueprintMode = "create" | "alter";
 export type IndexMethod = "btree" | "hash" | "gin" | "gist" | (string & {});
 
 /**
+ * A SQL expression standing where an index column normally goes, so an
+ * index can cover a computed value rather than a stored one:
+ *
+ *   table.index([indexExpression(`lower("email")`)], { name: "users_email_lower" });
+ *
+ * That is a *functional* index, and the thing it unlocks beyond the
+ * obvious (`lower(email)` uniqueness, `(meta->>'slug')` lookups) is
+ * Postgres full-text search, which is an index over
+ * `to_tsvector(...)` and needs no generated column at all.
+ *
+ * A nominal class rather than a bare string because the two cannot be
+ * told apart otherwise, and confusing them is a SQL-injection-shaped
+ * mistake: `index(["lower(email)"])` must keep meaning "a column named
+ * `lower(email)`", which is wrong but safe, rather than silently
+ * becoming executable SQL.
+ *
+ * ⚠️ Emitted verbatim, like `IndexOptions.where` and `storedAs()`.
+ * **Never build one from request input.** Index expressions cannot be
+ * parameterised: a bound value compiles to a `$1` placeholder that DDL
+ * has no way to fill, and Postgres rejects it outright ("bind message
+ * supplies 1 parameters, but prepared statement requires 0"). Quoting
+ * identifiers inside the expression is the caller's job.
+ */
+export class IndexExpression {
+  constructor(readonly sql: string) {}
+}
+
+/** Builds an {@link IndexExpression}. See that class for the safety note. */
+export function indexExpression(sql: string): IndexExpression {
+  return new IndexExpression(sql);
+}
+
+/** One entry in an index's column list: a column name, or a SQL expression. */
+export type IndexColumn = string | IndexExpression;
+
+/**
  * Everything beyond "these columns" that an index can carry.
  *
  * Passed as the second argument to `unique()` / `index()`, in place of
@@ -83,7 +119,7 @@ export interface IndexOptions {
 
 export interface IndexCommand {
   kind: IndexKind;
-  columns: string[];
+  columns: IndexColumn[];
   name?: string;
   where?: string;
   using?: IndexMethod;
@@ -105,6 +141,11 @@ export function asIndexOptions(options?: string | IndexOptions): IndexOptions {
 }
 
 export function asColumnList(columns: string | string[]): string[] {
+  return Array.isArray(columns) ? columns : [columns];
+}
+
+/** `asColumnList()` for index columns, which may be expressions as well as names. */
+export function asIndexColumnList(columns: IndexColumn | IndexColumn[]): IndexColumn[] {
   return Array.isArray(columns) ? columns : [columns];
 }
 
