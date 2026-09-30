@@ -3,10 +3,16 @@ import type { Blueprint } from "../blueprint.js";
 import type { ColumnDefinition } from "../column-definition.js";
 import type { ForeignKeyDefinition } from "../foreign-key-definition.js";
 import type { Dialect } from "../dialect.js";
-import { createIndexName } from "../index-name.js";
-import type { IndexCommand } from "../types.js";
-import { quoteBacktick, quoteDoubleQuoted } from "../quote-identifier.js";
+import { quoteDoubleQuoted } from "../quote-identifier.js";
 import { compileColumnType } from "./column-types.js";
+import {
+  assertSupportedIndexes,
+  collectIndexes,
+  createIndex,
+  namedForeign,
+  namedPrimary,
+  type IndexCapabilities,
+} from "./indexes.js";
 
 /**
  * Shared compiler for engines that support real, in-place `ALTER TABLE`
@@ -16,7 +22,7 @@ import { compileColumnType } from "./column-types.js";
  * the `NativeAlterOptions` hooks; the create/alter/index/foreign-key
  * plumbing is identical and lives here.
  */
-export interface NativeAlterOptions {
+export interface NativeAlterOptions extends IndexCapabilities {
   dialect: Dialect;
 
   /** Apply the auto-increment modifier to a Kysely column builder. */
@@ -36,9 +42,6 @@ export interface NativeAlterOptions {
 
   /** Drop a named foreign key constraint. */
   dropForeign(db: Kysely<any>, table: string, name: string): Promise<void>;
-
-  /** Whether this engine supports `fullText` indexes (MySQL yes, PG no). */
-  supportsFullText: boolean;
 }
 
 function normalizeDefault(value: unknown, dialect: Dialect): unknown {
@@ -115,26 +118,6 @@ function applyColumnModifiers(
   return applyEnumCheck(col, def, opts);
 }
 
-function namedUnique(table: string, columns: string[], name?: string | true): string {
-  return typeof name === "string" ? name : createIndexName(table, "unique", columns);
-}
-
-function namedIndex(table: string, columns: string[], name?: string | true): string {
-  return typeof name === "string" ? name : createIndexName(table, "index", columns);
-}
-
-function namedFullText(table: string, columns: string[], name?: string): string {
-  return name ?? createIndexName(table, "fulltext", columns);
-}
-
-function namedPrimary(table: string, columns: string[], name?: string): string {
-  return name ?? createIndexName(table, "primary", columns);
-}
-
-function namedForeign(table: string, columns: string[], name?: string): string {
-  return name ?? createIndexName(table, "foreign", columns);
-}
-
 function collectForeignKeys(blueprint: Blueprint): ForeignKeyDefinition[] {
   const fks = [...blueprint.foreignKeys];
 
@@ -145,93 +128,6 @@ function collectForeignKeys(blueprint: Blueprint): ForeignKeyDefinition[] {
   }
 
   return fks;
-}
-
-function assertSupportedIndexes(indexes: IndexCommand[], opts: NativeAlterOptions): void {
-  for (const idx of indexes) {
-    if (idx.kind === "fullText" && !opts.supportsFullText) {
-      throw new Error(`fullText indexes are not supported on ${opts.dialect}.`);
-    }
-
-    if (idx.kind === "spatialIndex") {
-      throw new Error(`spatialIndex is not supported on ${opts.dialect}.`);
-    }
-  }
-}
-
-interface PlainIndex {
-  name: string;
-  columns: string[];
-  unique: boolean;
-  fullText?: boolean;
-}
-
-function collectIndexes(blueprint: Blueprint, columns: ColumnDefinition[]): PlainIndex[] {
-  const table = blueprint.table;
-  const out: PlainIndex[] = [];
-
-  for (const col of columns) {
-    if (col.uniqueIndex) {
-      out.push({
-        name: namedUnique(table, [col.name], col.uniqueIndex),
-        columns: [col.name],
-        unique: true,
-      });
-    }
-
-    if (col.nonUniqueIndex) {
-      out.push({
-        name: namedIndex(table, [col.name], col.nonUniqueIndex),
-        columns: [col.name],
-        unique: false,
-      });
-    }
-  }
-
-  for (const idx of blueprint.indexes) {
-    if (idx.kind === "unique") {
-      out.push({
-        name: namedUnique(table, idx.columns, idx.name),
-        columns: idx.columns,
-        unique: true,
-      });
-    } else if (idx.kind === "index") {
-      out.push({
-        name: namedIndex(table, idx.columns, idx.name),
-        columns: idx.columns,
-        unique: false,
-      });
-    } else if (idx.kind === "fullText") {
-      out.push({
-        name: namedFullText(table, idx.columns, idx.name),
-        columns: idx.columns,
-        unique: false,
-        fullText: true,
-      });
-    }
-  }
-
-  return out;
-}
-
-async function createIndex(db: Kysely<any>, table: string, idx: PlainIndex): Promise<void> {
-  if (idx.fullText) {
-    // Kysely has no cross-dialect fullText builder; emit raw (MySQL only).
-    const cols = idx.columns.map((c) => quoteBacktick(c)).join(", ");
-    await sql
-      .raw(`CREATE FULLTEXT INDEX ${quoteBacktick(idx.name)} ON ${quoteBacktick(table)} (${cols})`)
-      .execute(db);
-
-    return;
-  }
-
-  let create: any = db.schema.createIndex(idx.name).on(table).columns(idx.columns);
-
-  if (idx.unique) {
-    create = create.unique();
-  }
-
-  await create.execute();
 }
 
 export function makeNativeAlterGrammar(opts: NativeAlterOptions) {

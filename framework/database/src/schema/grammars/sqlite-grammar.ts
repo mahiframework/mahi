@@ -3,14 +3,32 @@ import type { Blueprint } from "../blueprint.js";
 import type { ColumnDefinition } from "../column-definition.js";
 import type { ForeignKeyDefinition } from "../foreign-key-definition.js";
 import type { SchemaGrammar } from "../dialect.js";
-import { createIndexName } from "../index-name.js";
 import {
   introspectTable,
   type IntrospectedColumn,
   type IntrospectedForeignKey,
 } from "../introspect.js";
-import type { IndexCommand } from "../types.js";
 import { compileColumnType } from "./column-types.js";
+import {
+  assertSupportedIndexes,
+  collectIndexes,
+  createIndex,
+  namedForeign,
+  namedPrimary,
+  namedUnique,
+  type IndexCapabilities,
+} from "./indexes.js";
+
+/**
+ * What SQLite's indexes can do.
+ *
+ * `fullText` is FTS5, a virtual table rather than an index on an
+ * existing one, so it is not the same concept `fullText()` names.
+ */
+const SQLITE_INDEX_CAPS: IndexCapabilities = {
+  dialect: "sqlite",
+  supportsFullText: false,
+};
 
 function normalizeDefault(value: unknown): unknown {
   if (typeof value === "boolean") {
@@ -55,22 +73,6 @@ function applyColumnModifiers(
   return col;
 }
 
-function namedUnique(table: string, columns: string[], name?: string | true): string {
-  return typeof name === "string" ? name : createIndexName(table, "unique", columns);
-}
-
-function namedIndex(table: string, columns: string[], name?: string | true): string {
-  return typeof name === "string" ? name : createIndexName(table, "index", columns);
-}
-
-function namedPrimary(table: string, columns: string[], name?: string): string {
-  return name ?? createIndexName(table, "primary", columns);
-}
-
-function namedForeign(table: string, columns: string[], name?: string): string {
-  return name ?? createIndexName(table, "foreign", columns);
-}
-
 function collectForeignKeys(blueprint: Blueprint): ForeignKeyDefinition[] {
   const fks = [...blueprint.foreignKeys];
 
@@ -83,20 +85,8 @@ function collectForeignKeys(blueprint: Blueprint): ForeignKeyDefinition[] {
   return fks;
 }
 
-function assertSupportedIndexes(indexes: IndexCommand[]): void {
-  for (const idx of indexes) {
-    if (idx.kind === "fullText") {
-      throw new Error("fullText indexes are not supported on SQLite.");
-    }
-
-    if (idx.kind === "spatialIndex") {
-      throw new Error("spatialIndex is not supported on SQLite.");
-    }
-  }
-}
-
 async function compileCreate(db: Kysely<any>, blueprint: Blueprint): Promise<void> {
-  assertSupportedIndexes(blueprint.indexes);
+  assertSupportedIndexes(blueprint.indexes, SQLITE_INDEX_CAPS);
   const table = blueprint.table;
 
   if (blueprint.columns.some((c) => c.changing)) {
@@ -146,50 +136,8 @@ async function compileCreate(db: Kysely<any>, blueprint: Blueprint): Promise<voi
 
   await builder.execute();
 
-  const indexesToCreate: { name: string; columns: string[]; unique: boolean }[] = [];
-
-  for (const col of blueprint.columns) {
-    if (col.uniqueIndex) {
-      indexesToCreate.push({
-        name: namedUnique(table, [col.name], col.uniqueIndex),
-        columns: [col.name],
-        unique: true,
-      });
-    }
-
-    if (col.nonUniqueIndex) {
-      indexesToCreate.push({
-        name: namedIndex(table, [col.name], col.nonUniqueIndex),
-        columns: [col.name],
-        unique: false,
-      });
-    }
-  }
-
-  for (const idx of blueprint.indexes) {
-    if (idx.kind === "unique") {
-      indexesToCreate.push({
-        name: namedUnique(table, idx.columns, idx.name),
-        columns: idx.columns,
-        unique: true,
-      });
-    } else if (idx.kind === "index") {
-      indexesToCreate.push({
-        name: namedIndex(table, idx.columns, idx.name),
-        columns: idx.columns,
-        unique: false,
-      });
-    }
-  }
-
-  for (const idx of indexesToCreate) {
-    let create: any = db.schema.createIndex(idx.name).on(table).columns(idx.columns);
-
-    if (idx.unique) {
-      create = create.unique();
-    }
-
-    await create.execute();
+  for (const idx of collectIndexes(blueprint, blueprint.columns)) {
+    await createIndex(db, table, idx);
   }
 
   const fromCol = blueprint.columns.find((c) => c.autoIncrementFrom !== undefined);
@@ -202,7 +150,7 @@ async function compileCreate(db: Kysely<any>, blueprint: Blueprint): Promise<voi
 }
 
 async function compileAlter(db: Kysely<any>, blueprint: Blueprint): Promise<void> {
-  assertSupportedIndexes(blueprint.indexes);
+  assertSupportedIndexes(blueprint.indexes, SQLITE_INDEX_CAPS);
   const table = blueprint.table;
 
   const addedForeignKeys = collectForeignKeys(blueprint);
@@ -261,50 +209,8 @@ async function compileAlter(db: Kysely<any>, blueprint: Blueprint): Promise<void
     await db.schema.alterTable(table).dropColumn(col).execute();
   }
 
-  const indexesToCreate: { name: string; columns: string[]; unique: boolean }[] = [];
-
-  for (const col of added) {
-    if (col.uniqueIndex) {
-      indexesToCreate.push({
-        name: namedUnique(table, [col.name], col.uniqueIndex),
-        columns: [col.name],
-        unique: true,
-      });
-    }
-
-    if (col.nonUniqueIndex) {
-      indexesToCreate.push({
-        name: namedIndex(table, [col.name], col.nonUniqueIndex),
-        columns: [col.name],
-        unique: false,
-      });
-    }
-  }
-
-  for (const idx of blueprint.indexes) {
-    if (idx.kind === "unique") {
-      indexesToCreate.push({
-        name: namedUnique(table, idx.columns, idx.name),
-        columns: idx.columns,
-        unique: true,
-      });
-    } else if (idx.kind === "index") {
-      indexesToCreate.push({
-        name: namedIndex(table, idx.columns, idx.name),
-        columns: idx.columns,
-        unique: false,
-      });
-    }
-  }
-
-  for (const idx of indexesToCreate) {
-    let create: any = db.schema.createIndex(idx.name).on(table).columns(idx.columns);
-
-    if (idx.unique) {
-      create = create.unique();
-    }
-
-    await create.execute();
+  for (const idx of collectIndexes(blueprint, added)) {
+    await createIndex(db, table, idx);
   }
 
   if (blueprint.renameTo) {

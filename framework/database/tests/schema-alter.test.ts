@@ -185,14 +185,14 @@ describe("Blueprint alter-mode", () => {
         table.text("body");
         table.fullText(["body"]);
       }),
-    ).rejects.toThrow(/fullText indexes are not supported on SQLite/);
+    ).rejects.toThrow(/fullText indexes are not supported on sqlite/);
 
     await expect(
       schema.create("places", (table: Blueprint) => {
         table.id();
         table.spatialIndex(["coords"]);
       }),
-    ).rejects.toThrow(/spatialIndex is not supported on SQLite/);
+    ).rejects.toThrow(/spatialIndex is not supported on sqlite/);
   });
 });
 
