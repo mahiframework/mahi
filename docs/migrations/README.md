@@ -352,6 +352,16 @@ alone.
 | `Schema.hasTable(table)` | `Promise<boolean>` |
 | `Schema.hasColumn(table, column)` | `Promise<boolean>` |
 | `Schema.dropAllTables()` | Every user table. Used by `migrate:fresh`. |
+| `Schema.truncateAllTables()` | Every row from every user table, keeping the schema. Used by `clearDatabase()` in tests. |
+
+`truncateAllTables()` empties each table and restarts auto-increment
+counters at 1, ignoring foreign-key order. SQLite runs `DELETE FROM`
+with the `foreign_keys` pragma off and clears `sqlite_sequence`; MySQL
+runs `TRUNCATE` with `FOREIGN_KEY_CHECKS = 0` on one pinned connection;
+Postgres runs a single `TRUNCATE ... RESTART IDENTITY CASCADE`, scoped
+to `current_schema()` like `dropAllTables()`. Views and the `migrations`
+and `migrations_lock` tables are skipped, so the migration ledger still
+matches the schema. See [Testing](../testing/#test-isolation).
 
 The callback receives a `Blueprint`, collects definitions, and compiles
 them to Kysely schema statements on `execute()`.

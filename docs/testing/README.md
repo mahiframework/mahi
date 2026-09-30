@@ -1,8 +1,10 @@
 # Testing
 
-`@mahiframework/testing` boots your **real** application against a throwaway SQLite
-database and dispatches requests straight into its Hono instance, no
-server, no port, no mocking of the framework.
+`@mahiframework/testing` boots your **real** application against a throwaway
+database (SQLite by default, or MySQL/Postgres, see
+[Choosing an engine](#choosing-an-engine)) and dispatches requests
+straight into its Hono instance, no server, no port, no mocking of the
+framework.
 
 ```ts
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -77,14 +79,28 @@ Every call gets its **own** `mkdtemp` directory, so two
 `createTestApplication()` calls, in the same file or in parallel files,
 never share a database.
 
-**2. Sets three environment variables *before* `bootstrapFn()` runs.**
+On MySQL or Postgres it also creates a scratch database on the server,
+`mahi_test_app_<label>_<random>`, and points `DB_CONNECTION`, `DB_HOST`,
+`DB_PORT`, `DB_DATABASE`, `DB_USERNAME` and `DB_PASSWORD` at it. Every
+call gets its own, for the same reason. See
+[Choosing an engine](#choosing-an-engine).
+
+**2. Sets the environment *before* `bootstrapFn()` runs.**
 The ordering is the whole trick. A typical `config/database.ts` reads
-`env.DB_FILENAME`, so setting it first means the app picks up the temp
-file with no test-specific configuration:
+`env.DB_CONNECTION` and `env.DB_FILENAME` (or the `DB_*` host
+variables), so setting them first means the app picks up the throwaway
+database with no test-specific configuration:
 
 ```ts
 export function databaseConfig(env: Env): DatabaseConfig {
-  return { default: "sqlite", connections: { sqlite: { filename: env.DB_FILENAME } } };
+  return {
+    default: env.DB_CONNECTION,
+    connections: {
+      sqlite: { driver: "sqlite", filename: env.DB_FILENAME },
+      mysql: { driver: "mysql", host: env.DB_HOST, database: env.DB_DATABASE /* ... */ },
+      pgsql: { driver: "postgres", host: env.DB_HOST, database: env.DB_DATABASE /* ... */ },
+    },
+  };
 }
 ```
 
@@ -126,6 +142,7 @@ them. See [Migrations](../migrations/).
 
 ```ts
 interface TestApplicationOptions {
+  database?: TestDatabaseEngine | TestDatabaseOptions;
   configure?: (app: Application) => void;
   fakeQueue?: boolean;
   fakeEvents?: boolean;
@@ -137,6 +154,12 @@ interface TestApplicationOptions {
   fakeCache?: boolean;
 }
 ```
+
+**`database`** picks the engine: `"sqlite"` (the default), `"mysql"` or
+`"postgres"`. The object form also takes a `label` for the scratch
+database name and a `connectionName` for apps whose `config/database.ts`
+doesn't use the template's `sqlite`/`mysql`/`pgsql` names. See
+[Choosing an engine](#choosing-an-engine).
 
 **`configure`** runs after `bootstrapFn()` resolves but before migrations.
 Note that `bootstrapFn` is itself responsible for calling
@@ -257,6 +280,7 @@ interface TestApplication {
   request: (path: string, init?: RequestInit) => Promise<Response>;
   cleanup: () => Promise<void>;
   resetDatabase: () => Promise<void>;
+  clearDatabase: () => Promise<void>;
   actingAs: (user: unknown, guard?: string) => void;
   queue?: FakeQueueDriver;
   events?: RecordingEventDispatcher;
@@ -291,21 +315,33 @@ registered), so request() is unavailable.
 1. restores any module-level fakes (`Http.restore()` when `fakeHttp` was
    set, `Process.restore()` when `fakeProcess` was);
 2. `app.terminate()`: runs every provider's `shutdown()` hook, which
-   closes the sqlite handle and any Redis client the app opened;
-3. restores the `process.env` keys it mutated (`DB_FILENAME`, `NODE_ENV`,
-   `APP_KEY`) to exactly what they were, deleting the ones that were
-   previously unset;
-4. removes the temp directory.
+   closes the sqlite handle or the MySQL/Postgres pool, and any Redis
+   client the app opened;
+3. on MySQL or Postgres, drops the scratch database;
+4. restores the `process.env` keys it mutated (`DB_FILENAME`, `NODE_ENV`,
+   `APP_KEY`, and the `DB_*` connection keys) to exactly what they were,
+   deleting the ones that were previously unset;
+5. removes the temp directory.
 
-The order matters: terminating before the `rm` means the database file is
-not deleted out from under an open handle, and the handle is not left
-holding a file descriptor for the rest of the run.
+The order matters: terminating first means the database file is not
+deleted out from under an open handle, and on Postgres it is what makes
+the drop possible at all, since a database with a connected session
+cannot be dropped.
+
+Dropping the scratch database never throws. If it fails, the database is
+left behind (it is uniquely named, so nothing reuses it) rather than one
+failed teardown failing the whole suite.
 
 Always call it from `afterAll`.
 
+**`clearDatabase()`** deletes every row from every table, keeps the
+schema, and restarts auto-increment counters at 1. The `migrations`
+ledger is left alone. This is the per-test reset to reach for. See
+[Test isolation](#test-isolation).
+
 **`resetDatabase()`** re-runs every migration from scratch against the
-same temp file (`migrate:fresh`, drop all tables, re-migrate), wiping all
-rows without recreating the file. See [Test isolation](#test-isolation).
+same database (`migrate:fresh`, drop all tables, re-migrate). Only needed
+when a test changes the schema.
 
 **`actingAs(user, guard?)`** sets the authenticated user for every
 subsequent request driven through the kernel, Laravel's `actingAs()`. It
@@ -564,7 +600,7 @@ Write tests that don't collide, unique emails, unique hashtag names,
 fresh posts, and the shared database is a non-issue. The template's
 helpers already do this with `randomUUID()` suffixes.
 
-When you genuinely need per-`it()` isolation, `resetDatabase()` from a
+When you genuinely need per-`it()` isolation, `clearDatabase()` from a
 `beforeEach`:
 
 ```ts
@@ -573,25 +609,46 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  await testApp.resetDatabase();
+  await testApp.clearDatabase();
 });
 
 afterAll(() => testApp.cleanup());
 ```
 
-It runs `migrate:fresh`, drops every table and re-migrates, so rows are
-gone but the schema is intact. It is fast (better-sqlite3 is synchronous,
-no network round-trip) but not free, and it does **not** recreate the temp
-file or re-boot the application. Any fixture created in `beforeAll` is
-wiped by the first `beforeEach`, so create fixtures in `beforeEach` too
-when you use it.
+It is Laravel's `DatabaseTruncation`: every row goes, the schema stays,
+and auto-increment ids restart at 1 on every engine so a test asserting
+an id means the same thing everywhere. Per engine:
 
-Because `resetDatabase()` doesn't re-boot the app, the **fakes are not
-reset with it**. Both expose their own `reset()`:
+| Engine | How |
+|---|---|
+| SQLite | `DELETE FROM` each table with foreign keys off, then clears `sqlite_sequence` |
+| MySQL | `TRUNCATE` each table with `FOREIGN_KEY_CHECKS = 0` on one pinned connection |
+| Postgres | one `TRUNCATE ... RESTART IDENTITY CASCADE` over the tables in `current_schema()` |
+
+The `migrations` and `migrations_lock` tables are skipped, so the ledger
+still matches the schema. Any fixture created in `beforeAll` is wiped by
+the first `beforeEach`, so create fixtures in `beforeEach` too when you
+use it.
+
+There is deliberately no transaction-wrapped reset (Laravel's
+`RefreshDatabase`). Rolling back after each test is cheap, but it means
+nothing the test does is ever committed: `lock()` and
+`SELECT ... FOR UPDATE` have nothing to contend with, a second
+connection or a queue worker can't see the test's rows, and
+commit-time behaviour is never exercised. Those are the things a real
+engine is there to test.
+
+**`resetDatabase()`** is the heavier option: it runs `migrate:fresh`,
+dropping every table and re-running every migration. Use it only when a
+test alters the schema. On SQLite it is fast; on MySQL or Postgres it
+costs seconds per call, which makes it unusable in a `beforeEach`.
+
+Neither re-boots the app, so the **fakes are not reset with them**. Each
+exposes its own `reset()`:
 
 ```ts
 beforeEach(async () => {
-  await testApp.resetDatabase();
+  await testApp.clearDatabase();
   testApp.queue?.reset();
   testApp.events?.reset();
   testApp.mail?.reset();
@@ -602,6 +659,92 @@ beforeEach(async () => {
 For per-`describe` isolation without the reset, nest `describe` blocks
 with their own `beforeAll`/`afterAll`, useful when each block needs
 different fake options anyway.
+
+### Choosing an engine
+
+**Test on what you deploy on.** SQLite is the default because it needs
+nothing running, not because it stands in for MySQL or Postgres. A suite
+that deploys on Postgres and tests on SQLite passes things production
+won't:
+
+- `like` folds case on SQLite and is case-sensitive on Postgres, so a
+  search endpoint can pass every test and match nothing in production.
+- Partial indexes, GIN indexes and `dropForeign()` can't run on SQLite at
+  all, so those migrations have to be skipped or branched on dialect,
+  and the tested schema is no longer the deployed one.
+- SQLite has no type affinity: a `varchar(20)` column accepts anything.
+- `lock()` is a no-op on SQLite, so a `SELECT ... FOR UPDATE` race is
+  asserted against nothing.
+- Unique-violation and other error translation is engine-specific; a
+  SQLite test only proves the SQLite mapping.
+
+Each of those is a green test that asserted nothing.
+
+Pick the engine per call:
+
+```ts
+testApp = await createTestApplication(bootstrap, { database: "postgres" });
+```
+
+or move the whole suite without touching a test file:
+
+```bash
+MAHI_TEST_ENGINE=postgres npm test
+```
+
+The option wins over the variable. An unrecognised value in either throws
+rather than falling back to SQLite, since a typo that quietly ran SQLite
+would report a Postgres run that never happened.
+
+**Where the server is.** The harness reads its own variables, not `DB_*`
+(those belong to your app, and the harness *writes* them):
+
+| Variable | Default |
+|---|---|
+| `MAHI_TEST_MYSQL_HOST` / `_PORT` | `127.0.0.1` / `3306` |
+| `MAHI_TEST_MYSQL_DATABASE` | `mahi_test` |
+| `MAHI_TEST_MYSQL_USER` / `_PASSWORD` | `root` / `mysql` |
+| `MAHI_TEST_PGHOST` / `MAHI_TEST_PGPORT` | `127.0.0.1` / `5432` |
+| `MAHI_TEST_PGDATABASE` | `mahi_test` |
+| `MAHI_TEST_PGUSER` / `MAHI_TEST_PGPASSWORD` | `postgres` / `postgres` |
+
+The configured database is only used to connect and issue
+`CREATE DATABASE`; each `createTestApplication()` call then works in its
+own `mahi_test_app_<label>_<random>` database, dropped by `cleanup()`.
+That gives parallel test files real isolation without serialising them.
+The user needs permission to create and drop databases.
+
+A crashed run can leave a scratch database behind. They all share the
+`mahi_test_app_` prefix, so they're easy to find and drop.
+
+The object form sets the name label and, if your `config/database.ts`
+names its connections differently from the template, the connection to
+select:
+
+```ts
+await createTestApplication(bootstrap, {
+  database: { engine: "postgres", label: "checkout", connectionName: "primary" },
+});
+```
+
+**Skipping when the server isn't there.** Gate the suite with
+`testEngineAvailable()`, so a developer without docker running gets a
+skip rather than a wall of connection errors:
+
+```ts
+import { testEngineAvailable } from "@mahiframework/testing";
+
+const suite = (await testEngineAvailable("postgres")) ? describe : describe.skip;
+
+suite("checkout on postgres", () => {
+  // ...
+});
+```
+
+Set `CI_STRICT_MODE=true` in the CI job that provisions the database and
+an unreachable server throws instead. A skip there would report a green
+run that tested nothing. It is deliberately not keyed off `CI`, which
+every GitHub Actions runner sets, including jobs with no database.
 
 ## Database assertions
 
@@ -1311,11 +1454,18 @@ A provider's `migrations()` hook supplies its own migration directory, so
 fixture schema comes along with the fixture provider. `request()` throws
 if you call it; everything else works.
 
+That fixture only knows SQLite, so `{ database: "postgres" }` or
+`MAHI_TEST_ENGINE` would have no connection to select. To run it on
+every engine, configure it the way the template does: read
+`DB_CONNECTION` for the default and declare `sqlite`, `mysql` and `pgsql`
+connections from the `DB_*` variables.
+
 ## Gotchas
 
 **`cleanup()` is not optional.** Without it, `mkdtemp` directories
-accumulate in `$TMPDIR` across runs, the sqlite handle stays open, and
-`DB_FILENAME` is left pointing at a temp path for every test file that
+accumulate in `$TMPDIR` across runs, the sqlite handle or server pool
+stays open, a scratch MySQL/Postgres database is left on the server, and
+`DB_FILENAME`/`DB_*` are left pointing at it for every test file that
 runs after it in the same worker. `afterAll(() => testApp.cleanup())`.
 
 **The application is unusable after `cleanup()`.** It has been
@@ -1328,14 +1478,23 @@ the second up before the first, `terminate()` restores the global
 of sequence.
 
 **One database per file by default, not per test.** Every `it()` in a file
-shares state unless you call `resetDatabase()` in a `beforeEach`.
+shares state unless you call `clearDatabase()` in a `beforeEach`.
 
-**`resetDatabase()` doesn't reset the fakes.** Call `testApp.queue?.reset()`,
-`testApp.events?.reset()`, `testApp.mail?.reset()`, and
-`testApp.notifications?.reset()` alongside it.
+**`clearDatabase()`/`resetDatabase()` don't reset the fakes.** Call
+`testApp.queue?.reset()`, `testApp.events?.reset()`,
+`testApp.mail?.reset()`, and `testApp.notifications?.reset()` alongside
+them.
 
-**`resetDatabase()` wipes `beforeAll` fixtures.** If you use it, create
-fixtures in `beforeEach` too.
+**`clearDatabase()`/`resetDatabase()` wipe `beforeAll` fixtures.** If you
+use either, create fixtures in `beforeEach` too.
+
+**`resetDatabase()` in a `beforeEach` is slow on a server engine.** It
+re-runs every migration. Use `clearDatabase()` unless the test changes
+the schema.
+
+**A server-engine test is skipped, not failed, when the server is down**,
+if you gate it with `testEngineAvailable()`. Set `CI_STRICT_MODE=true`
+wherever the server is supposed to be running.
 
 **`fakeQueue`/`fakeEvents` are silent no-ops when the provider isn't
 registered.** `testApp.queue` is `undefined` and `assertPushed` was never
@@ -1373,8 +1532,9 @@ and stdin wiring.
 environment is used instead of a fresh one, which is fine but worth
 knowing if encryption assertions behave oddly.
 
-**`process.env.DB_FILENAME` and `NODE_ENV` are mutated globally.** Each
-`createTestApplication()` overwrites them for the whole process; files
+**`process.env.DB_FILENAME`, `DB_CONNECTION`, the other `DB_*` keys and
+`NODE_ENV` are mutated globally.** Each `createTestApplication()`
+overwrites them for the whole process; files
 running in parallel workers are isolated by vitest's per-worker processes,
 but two calls in one file leave the *last* value in `process.env`.
 
