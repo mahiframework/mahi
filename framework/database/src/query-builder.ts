@@ -208,6 +208,27 @@ interface DatePartWhereNode {
   value: string;
 }
 
+/**
+ * `whereLike` and friends, a `LIKE` match whose case-sensitivity is
+ * resolved per engine.
+ *
+ * Separate from `BasicWhereNode` with a `"like"` operator because that
+ * one passes its operator straight to Kysely and so inherits whatever
+ * the engine's `LIKE` happens to mean, folding on SQLite, folding on
+ * MySQL under a `*_ci` collation, NOT folding on Postgres. This node
+ * records the intent instead and lets the active `QueryGrammar` pick the
+ * spelling (`ILIKE`, `lower()`/`lower()`, plain `LIKE`). See
+ * `query/grammar.ts`.
+ */
+interface LikeWhereNode {
+  type: "like";
+  connector: Connector;
+  not: boolean;
+  column: string;
+  pattern: string;
+  caseInsensitive: boolean;
+}
+
 /** `whereJsonContains`/`whereJsonContainsKey`/`whereJsonLength`. See the class docstring's "JSON where helpers" section. */
 interface JsonContainsWhereNode {
   type: "jsonContains";
@@ -242,6 +263,7 @@ export type WhereNode =
   | RawWhereNode
   | GroupWhereNode
   | DatePartWhereNode
+  | LikeWhereNode
   | JsonContainsWhereNode
   | JsonContainsKeyWhereNode
   | JsonLengthWhereNode;
@@ -1205,6 +1227,94 @@ export class QueryBuilder<TRow extends Record<string, any>> {
     return this;
   }
 
+  /**
+   * `LIKE` match against `pattern` whose case-sensitivity is the same on
+   * every engine, **case-insensitive by default**.
+   *
+   * This is the portable form of `where(column, "like", pattern)`, which
+   * is not portable at all: `LIKE` folds ASCII case on SQLite, folds on
+   * MySQL under a `*_ci` collation, and is case-sensitive on Postgres,
+   * so the same call returns different rows per engine, silently. A
+   * search endpoint written and tested against SQLite passes every test
+   * and then fails to find `Inception` for `inception` in Postgres
+   * production. `whereLike()` compiles to whichever construct actually
+   * folds there (`ILIKE`, `lower()`/`lower()`, plain `LIKE`), so the
+   * default behaviour is the same everywhere.
+   *
+   * `pattern` **is** the pattern: `%` and `_` are wildcards and are not
+   * escaped, so a value taken from user input matches the way SQL says
+   * it does (searching for `50%` matches anything starting `50`). Escape
+   * them in the caller if they should be literal.
+   *
+   * `{ caseInsensitive: false }` opts out, and means **the engine's own
+   * default** rather than a promise of case sensitivity, it is sensitive
+   * on Postgres, collation-dependent on MySQL, and still ASCII-folding
+   * on SQLite, which has no per-query case-sensitive form. Use it when
+   * you want the engine's native `LIKE`; `where(column, "like", ...)`
+   * is the same thing.
+   *
+   * Folding is not byte-identical across engines for non-ASCII
+   * input: SQLite's `LIKE` folds ASCII only, so `Ärger` does not match
+   * `%ärger%` there, while MySQL and Postgres match it.
+   *
+   * ```ts
+   * Post.query().whereLike("title", "%inception%");                          // folds everywhere
+   * Post.query().whereLike("title", "%Inception%", { caseInsensitive: false }); // engine default
+   * ```
+   */
+  whereLike<K extends keyof TRow & string>(
+    column: K,
+    pattern: string,
+    options?: { caseInsensitive?: boolean },
+  ): this {
+    return this.pushLike("and", false, column, pattern, options);
+  }
+
+  orWhereLike<K extends keyof TRow & string>(
+    column: K,
+    pattern: string,
+    options?: { caseInsensitive?: boolean },
+  ): this {
+    return this.pushLike("or", false, column, pattern, options);
+  }
+
+  whereNotLike<K extends keyof TRow & string>(
+    column: K,
+    pattern: string,
+    options?: { caseInsensitive?: boolean },
+  ): this {
+    return this.pushLike("and", true, column, pattern, options);
+  }
+
+  orWhereNotLike<K extends keyof TRow & string>(
+    column: K,
+    pattern: string,
+    options?: { caseInsensitive?: boolean },
+  ): this {
+    return this.pushLike("or", true, column, pattern, options);
+  }
+
+  private pushLike(
+    connector: Connector,
+    not: boolean,
+    column: string,
+    pattern: string,
+    options: { caseInsensitive?: boolean } | undefined,
+  ): this {
+    this.wheres.push({
+      type: "like",
+      connector,
+      not,
+      column,
+      pattern,
+      // Defaults to true: folding is the only semantics every engine can
+      // deliver, and it is what a search wants. See `whereLike()`.
+      caseInsensitive: options?.caseInsensitive ?? true,
+    });
+
+    return this;
+  }
+
   private pushDatePart<V extends string | number | Date | DateTime>(
     connector: Connector,
     part: DatePart,
@@ -1767,6 +1877,13 @@ export class QueryBuilder<TRow extends Record<string, any>> {
         const extracted = this.grammar().datePart(node.part, this.qualify(node.column));
 
         return eb(extracted as any, node.operator, node.value);
+      }
+      case "like": {
+        const expr = this.grammar().like(this.qualify(node.column), node.pattern, {
+          caseInsensitive: node.caseInsensitive,
+        });
+
+        return node.not ? eb.not(expr as any) : expr;
       }
       case "jsonContains": {
         const expr = this.grammar().jsonContains(

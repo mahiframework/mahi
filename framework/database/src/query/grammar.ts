@@ -46,6 +46,8 @@ export interface JsonColumn {
  * - **upsert**, `ON CONFLICT ... DO UPDATE` (SQLite/Postgres) vs
  *   `ON DUPLICATE KEY UPDATE` (MySQL).
  * - **row locks**, real on MySQL/Postgres, nonexistent on SQLite.
+ * - **case-insensitive `LIKE`**, Postgres `ILIKE`, MySQL a
+ *   `lower()`/`lower()` comparison, SQLite plain `LIKE`.
  *
  * A new engine is added by implementing this interface and registering
  * it in `queryGrammarFor()`; `QueryBuilder` itself does not change.
@@ -74,6 +76,43 @@ export interface QueryGrammar {
    * otherwise produce a number.
    */
   datePart(part: DatePart, column: string): Expression<any>;
+
+  /**
+   * `WHERE` predicate matching `column` against a `LIKE` pattern, with
+   * `caseInsensitive` selecting the engine's case-folding form.
+   *
+   * Returns a whole predicate rather than a left-hand side (as
+   * `datePart()` does) because here the *operator* is what varies:
+   * Postgres spells folding as a different operator (`ILIKE`), MySQL as
+   * a `lower()`/`lower()` comparison of both sides, so there is no
+   * single left-hand side the caller could compare through
+   * `eb(lhs, "like", pattern)`.
+   *
+   * `caseInsensitive: true` is guaranteed on every engine, which is the
+   * whole point of the member: without it `where(col, "like", v)` folds
+   * on SQLite, folds on MySQL under a `*_ci` collation, and does NOT
+   * fold on Postgres, so the same query returns different rows per
+   * engine.
+   *
+   * `caseInsensitive: false` means **the engine's own default**, not a
+   * guarantee of case sensitivity: case-sensitive on Postgres,
+   * collation-dependent on MySQL, ASCII-folding on SQLite. Neither
+   * MySQL nor SQLite can be forced case-sensitive per query without
+   * damage, MySQL would need a `COLLATE utf8mb4_bin` that assumes the
+   * charset and overrides the collation the schema chose, and SQLite's
+   * `PRAGMA case_sensitive_like` is connection-global so it cannot vary
+   * per query at all.
+   *
+   * Folding is not byte-identical across engines for non-ASCII
+   * input. SQLite's `LIKE` folds **ASCII only** (`Ä` does not match
+   * `ä`), while MySQL's `lower()` and Postgres' `ILIKE` fold per
+   * collation and do match it.
+   */
+  like(
+    column: string,
+    pattern: GrammarBinding,
+    options: { caseInsensitive: boolean },
+  ): Expression<any>;
 
   /** `WHERE` predicate: the JSON array at `column` contains the scalar `value`. */
   jsonContains(column: JsonColumn, value: GrammarBinding): Expression<any>;

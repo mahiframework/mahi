@@ -23,6 +23,10 @@ function jsonPath(column: JsonColumn): string {
  * compiled into better-sqlite3 by default), and upserts from the same
  * `ON CONFLICT ... DO UPDATE` syntax Postgres uses.
  *
+ * `LIKE` needs no help here: it folds ASCII case by default, so both
+ * halves of `like()`'s `caseInsensitive` option compile identically.
+ * See that method.
+ *
  * Row locks are the one thing SQLite genuinely cannot do: the database
  * is a single file with one writer, there is no row-level lock to take,
  * and Kysely's SQLite dialect emits `for update` verbatim into SQL that
@@ -39,6 +43,19 @@ export const sqliteQueryGrammar: QueryGrammar = {
     // strftime() already returns text, so the comparison against the
     // caller's string value needs no further cast.
     return sql`strftime(${STRFTIME_FORMAT[part]}, ${sql.ref(column)})`;
+  },
+
+  like(
+    column: string,
+    pattern: GrammarBinding,
+    _options: { caseInsensitive: boolean },
+  ): Expression<any> {
+    // One spelling for both options: SQLite's LIKE folds ASCII case
+    // already, and the sensitive form has no per-query equivalent.
+    // `PRAGMA case_sensitive_like` is connection-global, and `GLOB` is
+    // not a substitution, it takes shell wildcards (`*`, `?`) rather
+    // than SQL's (`%`, `_`), so a caller's pattern would change meaning.
+    return sql`${sql.ref(column)} like ${pattern}`;
   },
 
   jsonContains(column: JsonColumn, value: GrammarBinding): Expression<any> {

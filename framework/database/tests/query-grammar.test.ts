@@ -83,6 +83,58 @@ describe("query grammar", () => {
     expect(query("postgres").whereDay("created_at", "05").toSql()).toContain("lpad");
   });
 
+  it("folds case with whatever construct each engine actually has", () => {
+    // Postgres is the reason this exists: plain `like` there is
+    // case-sensitive, so `where("title", "like", ...)` silently returns
+    // different rows than it does on SQLite.
+    expect(query("postgres").whereLike("title", "%inception%").toSql()).toContain("ilike");
+    // lower() on both sides rather than a named collation, so it holds
+    // under a `*_bin` column too.
+    expect(query("mysql").whereLike("title", "%inception%").toSql()).toMatch(
+      /lower\(.+\) like lower\(/,
+    );
+    // SQLite's `like` folds ASCII already, so there is nothing to add.
+    const sqlite = query("sqlite").whereLike("title", "%inception%").toSql();
+    expect(sqlite).toContain("like");
+    expect(sqlite).not.toContain("lower(");
+  });
+
+  it("defaults to folding, so the portable behaviour is the one you get by omission", () => {
+    expect(query("postgres").whereLike("title", "%x%").toSql()).toContain("ilike");
+  });
+
+  it("drops to the engine's own LIKE when case-insensitivity is declined", () => {
+    const postgres = query("postgres")
+      .whereLike("title", "%x%", { caseInsensitive: false })
+      .toSql();
+    expect(postgres).toContain("like");
+    expect(postgres).not.toContain("ilike");
+
+    const mysql = query("mysql").whereLike("title", "%x%", { caseInsensitive: false }).toSql();
+    expect(mysql).toContain("like");
+    expect(mysql).not.toContain("lower(");
+  });
+
+  it("negates through NOT rather than a second operator spelling", () => {
+    // `not ... ilike` keeps the grammar member as the single source of
+    // the operator, so every engine negates the same way.
+    expect(query("postgres").whereNotLike("title", "%x%").toSql()).toMatch(/not.+ilike/);
+  });
+
+  it("binds the pattern rather than interpolating it", () => {
+    const builder = query("postgres").whereLike("title", "%inception%");
+    expect(builder.getBindings()).toContain("%inception%");
+    expect(builder.toSql()).not.toContain("inception");
+  });
+
+  it("routes the column through qualify(), so an aliased builder rewrites it", () => {
+    // The same rewrite every other grammar-backed node gets: without it
+    // a `whereLike` inside a correlated subquery would name the real
+    // table rather than the alias the subquery selects from.
+    const sql = query("postgres").alias("posts__sub").whereLike("posts.title", "%x%").toSql();
+    expect(sql).toContain('"posts__sub"."title"');
+  });
+
   it("uses each engine's JSON containment construct", () => {
     expect(query("sqlite").whereJsonContains("meta->tags", "x").toSql()).toContain("json_each");
     expect(query("mysql").whereJsonContains("meta->tags", "x").toSql()).toContain("json_contains");

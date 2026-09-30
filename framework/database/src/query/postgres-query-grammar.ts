@@ -34,6 +34,9 @@ function jsonbPath(column: JsonColumn): Expression<any> {
  * `lpad(..., 2, '0')` to match, except `year`, which is already four
  * digits.
  *
+ * `LIKE` here is the only case-sensitive one of the three engines, so
+ * `ILIKE` is what `caseInsensitive: true` compiles to. See `like()`.
+ *
  * JSON uses the `jsonb` operator family: `@>` for containment,
  * `jsonb_path_exists()` for key presence, `jsonb_array_length()` for
  * length. See `jsonbPath()` for why everything is cast to `jsonb`
@@ -60,6 +63,21 @@ export const postgresQueryGrammar: QueryGrammar = {
       case "year":
         return sql`cast(extract(year from ${ref}) as text)`;
     }
+  },
+
+  like(
+    column: string,
+    pattern: GrammarBinding,
+    options: { caseInsensitive: boolean },
+  ): Expression<any> {
+    // Postgres is the engine that makes this member necessary: its
+    // `LIKE` is the only case-*sensitive* one of the three, and `ILIKE`
+    // is the folding form.
+    if (options.caseInsensitive) {
+      return sql`${sql.ref(column)} ilike ${pattern}`;
+    }
+
+    return sql`${sql.ref(column)} like ${pattern}`;
   },
 
   jsonContains(column: JsonColumn, value: GrammarBinding): Expression<any> {

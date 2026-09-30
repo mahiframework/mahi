@@ -144,6 +144,10 @@ type WhereOperator = "=" | "!=" | ">" | ">=" | "<" | "<=" | "like" | "is" | "is 
 
 `whereNot` also accepts a callback, giving `NOT (...)` over a group.
 
+`"like"` here means **whatever the engine's `LIKE` means**, which is not
+the same thing on all three. Use [`whereLike()`](#like) for a match that
+behaves identically everywhere.
+
 ### Bound values
 
 You do not serialise values yourself. Every place the builder binds a
@@ -346,6 +350,85 @@ timezone isn't UTC, pass a pre-formatted string rather than a `Date`.
 Post.query().whereYear("created_at", 2026);
 Post.query().whereDate("created_at", ">=", "2026-01-01");
 ```
+
+### `LIKE`
+
+```ts
+whereLike(column, pattern, options?)      orWhereLike
+whereNotLike(column, pattern, options?)   orWhereNotLike
+
+options: { caseInsensitive?: boolean }     // default: true
+```
+
+**Case-insensitive by default, on every engine.** This is the portable
+form of `where(column, "like", pattern)`, which is not portable: `LIKE`
+folds ASCII case on SQLite, folds on MySQL under a `*_ci` collation, and
+is case-sensitive on Postgres. So the same call returns different rows
+per engine, with nothing thrown and nothing logged:
+
+```ts
+// Finds "Inception" on SQLite and MySQL. Finds nothing on Postgres.
+Post.query().where("title", "like", "%inception%");
+
+// Finds "Inception" on all three.
+Post.query().whereLike("title", "%inception%");
+```
+
+That divergence is why this method exists. A search endpoint developed
+and tested against SQLite (which is what `createTestApplication()` gives
+you) passes every test and then fails to find `Inception` when a user
+types `inception` in Postgres production.
+
+Compiled SQL:
+
+| `caseInsensitive` | SQLite | MySQL | Postgres |
+|---|---|---|---|
+| `true` (default) | `col like ?` | `lower(col) like lower(?)` | `col ilike ?` |
+| `false` | `col like ?` | `col like ?` | `col like ?` |
+
+MySQL folds through `lower()` on both sides rather than a named
+collation, so it is correct under a `*_bin`/`*_cs` column too, and
+assumes nothing about the column's charset.
+
+**`pattern` is the pattern.** `%` and `_` are wildcards and are **not**
+escaped, matching SQL and Laravel. A value taken straight from a search
+box therefore behaves as SQL says it does, `50%` matches anything
+starting `50`. Escape them yourself if they should be literal:
+
+```ts
+const term = input.replace(/[%_]/g, (c) => `\\${c}`);
+Post.query().whereLike("title", `%${term}%`);
+```
+
+#### What `caseInsensitive: false` does and does not promise
+
+`true` is **guaranteed** everywhere. `false` means **the engine's own
+default**, not a promise of case sensitivity:
+
+| Engine | `caseInsensitive: false` behaviour |
+|---|---|
+| Postgres | case-sensitive |
+| MySQL | collation-dependent (insensitive under the usual `*_ci` default) |
+| SQLite | still folds ASCII |
+
+Neither MySQL nor SQLite can be forced case-sensitive per query without
+damage. MySQL would need a `COLLATE utf8mb4_bin` that assumes the charset
+and overrides the collation the schema chose deliberately, and SQLite's
+`PRAGMA case_sensitive_like` is connection-global so it cannot vary per
+query at all (`GLOB` is case-sensitive but takes shell wildcards `*`/`?`
+rather than SQL's `%`/`_`, so it is not a substitution).
+
+This is a smaller promise than it looks, and it is the one applications
+need: searches want folding, and the engine that does not fold is the one
+that needed the help.
+
+#### Non-ASCII
+
+Folding is **not byte-identical across engines** for non-ASCII input.
+SQLite's `LIKE` folds ASCII only, so `Ärger` does **not** match
+`%ärger%` there, while MySQL's `lower()` and Postgres' `ILIKE` fold per
+collation and do match it. If you need consistent non-ASCII folding,
+normalise the case in application code and store a folded column.
 
 ### JSON
 

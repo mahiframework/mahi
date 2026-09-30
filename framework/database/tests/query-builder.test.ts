@@ -176,6 +176,60 @@ describe("QueryBuilder", () => {
     expect(notBetween.map((r) => r.name)).toEqual(["Gear"]);
   });
 
+  /**
+   * SQLite only. The four methods share one grammar member, so the
+   * per-engine spelling is proven once in `query-grammar.test.ts` (shape)
+   * and the cross-dialect suite (rows); what's left to check is that the
+   * connector and negation wiring behaves like the `where` family's.
+   */
+  describe("whereLike()", () => {
+    it("matches a pattern, folding case by default", async () => {
+      const rows = await query().whereLike("name", "%spro%").get();
+      expect(rows.map((r) => r.name)).toEqual(["Sprocket"]);
+    });
+
+    it("treats % and _ as wildcards rather than escaping them", async () => {
+      // The value IS the pattern, matching Laravel. A caller who wants a
+      // literal `%` escapes it themselves.
+      expect((await query().whereLike("name", "Spr_cket").get()).map((r) => r.name)).toEqual([
+        "Sprocket",
+      ]);
+      expect(await query().whereLike("name", "spro").get()).toHaveLength(0);
+    });
+
+    it("orWhereLike() widens rather than narrowing", async () => {
+      const rows = await query()
+        .where("name", "Cog")
+        .orWhereLike("name", "%gear%")
+        .orderBy("name")
+        .get();
+      expect(rows.map((r) => r.name)).toEqual(["Cog", "Gear"]);
+    });
+
+    it("whereNotLike() excludes the matches", async () => {
+      const rows = await query().whereNotLike("name", "%o%").get();
+      expect(rows.map((r) => r.name)).toEqual(["Gear"]);
+    });
+
+    it("orWhereNotLike() combines the negation with OR", async () => {
+      const rows = await query()
+        .where("name", "Sprocket")
+        .orWhereNotLike("name", "%o%")
+        .orderBy("name")
+        .get();
+      expect(rows.map((r) => r.name)).toEqual(["Gear", "Sprocket"]);
+    });
+
+    it("composes inside a where() group", async () => {
+      const rows = await query()
+        .where("active", 1)
+        .where((q) => q.whereLike("name", "%spro%").orWhereLike("name", "%gear%"))
+        .orderBy("name")
+        .get();
+      expect(rows.map((r) => r.name)).toEqual(["Gear", "Sprocket"]);
+    });
+  });
+
   it("whereColumn() compares two columns on the same row", async () => {
     const rows = await query().whereColumn("price", ">", "min_price").orderBy("name").get();
     expect(rows.map((r) => r.name)).toEqual(["Gear", "Sprocket"]);

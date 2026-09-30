@@ -1073,6 +1073,11 @@ framework's problem. This covers `where`/`orWhere`/`whereNot`/
 payload), plus `Factory`'s `definition()`. A factory writes model-shape
 values too.
 
+`whereLike()` is the deliberate exception: its second argument is a
+`LIKE` **pattern**, not a column value, so it is bound as-is even on a
+cast column. Running `%2026%` through a `Cast.datetime()` would rewrite
+it into something that matches nothing.
+
 Casts are idempotent by contract (`toDatabaseType` accepts
 `ModelType | DbType`), so passing a DB-shape value stays correct:
 `where("published", 1)` also works.

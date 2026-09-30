@@ -1101,6 +1101,55 @@ export class EloquentBuilder<
     return this;
   }
 
+  /**
+   * `LIKE` match that folds case on every engine. See
+   * `QueryBuilder.whereLike()`.
+   *
+   * The pattern is passed through without `castBinding()`, unlike
+   * `where()`'s comparand: it is a `LIKE` pattern, not a column value,
+   * so a cast declared for `column` (a JSON serialiser, a `DateTime`
+   * formatter) would mangle `%foo%` rather than prepare it.
+   */
+  whereLike<K extends keyof TRow & string>(
+    column: K,
+    pattern: string,
+    options?: { caseInsensitive?: boolean },
+  ): this {
+    this.query.whereLike(column, pattern, options);
+
+    return this;
+  }
+
+  orWhereLike<K extends keyof TRow & string>(
+    column: K,
+    pattern: string,
+    options?: { caseInsensitive?: boolean },
+  ): this {
+    this.query.orWhereLike(column, pattern, options);
+
+    return this;
+  }
+
+  whereNotLike<K extends keyof TRow & string>(
+    column: K,
+    pattern: string,
+    options?: { caseInsensitive?: boolean },
+  ): this {
+    this.query.whereNotLike(column, pattern, options);
+
+    return this;
+  }
+
+  orWhereNotLike<K extends keyof TRow & string>(
+    column: K,
+    pattern: string,
+    options?: { caseInsensitive?: boolean },
+  ): this {
+    this.query.orWhereNotLike(column, pattern, options);
+
+    return this;
+  }
+
   whereDate<K extends keyof TRow & string>(
     column: K,
     operator: WhereOperator,

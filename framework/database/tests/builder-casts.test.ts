@@ -129,6 +129,50 @@ describe("EloquentBuilder casts its bindings", () => {
     });
   });
 
+  describe("whereLike", () => {
+    it("binds the pattern uncast, even on a cast column", () => {
+      // A `LIKE` pattern is not a column value: running `%2026%`
+      // through the datetime cast would either throw or rewrite it into
+      // something that matches nothing.
+      expect(
+        Widget.query()
+          .whereLike("published_at" as never, "%2026%")
+          .getBindings(),
+      ).toEqual(["%2026%"]);
+      expect(
+        Widget.query()
+          .whereLike("meta" as never, "%a%")
+          .getBindings(),
+      ).toEqual(["%a%"]);
+    });
+
+    it("reaches the grammar through every variant", () => {
+      expect(Widget.query().orWhereLike("name", "%x%").getBindings()).toEqual(["%x%"]);
+      expect(Widget.query().whereNotLike("name", "%x%").getBindings()).toEqual(["%x%"]);
+      expect(Widget.query().orWhereNotLike("name", "%x%").getBindings()).toEqual(["%x%"]);
+    });
+
+    it("filters rows through the model layer", async () => {
+      await Widget.create({
+        name: "Sprocket",
+        active: true,
+        meta: null,
+        published_at: null,
+        note: null,
+      });
+      await Widget.create({
+        name: "Cog",
+        active: true,
+        meta: null,
+        published_at: null,
+        note: null,
+      });
+
+      const found = await Widget.query().whereLike("name", "%spro%").get();
+      expect(found.toArray().map((w) => w.name)).toEqual(["Sprocket"]);
+    });
+  });
+
   describe("whereIn / whereBetween", () => {
     it("casts every value in an IN list", () => {
       expect(Widget.query().whereIn("active", [true, false]).getBindings()).toEqual([1, 0]);

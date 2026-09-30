@@ -478,6 +478,65 @@ for (const engine of ENGINES) {
       expect(twoTags.map((r: any) => r.title)).toEqual(["Tagged"]);
     });
 
+    it("whereLike() folds case on every engine, which Postgres LIKE does not", async () => {
+      // The case this exists for. `where("title", "like", "%inception%")`
+      // finds this row on SQLite and MySQL and misses it on Postgres, so
+      // a search endpoint developed against SQLite ships broken. One
+      // assertion, three engines, same answer.
+      await Post.create({ title: "Inception", views: 0 });
+
+      const found = await table("xd_posts").whereLike("title", "%inception%").get();
+      expect(found.map((r: any) => r.title)).toEqual(["Inception"]);
+
+      // And it still filters, rather than matching everything.
+      expect((await table("xd_posts").whereLike("title", "%memento%").get()).length).toBe(0);
+    });
+
+    it("whereLike() without folding is the engine's own LIKE", async () => {
+      await Post.create({ title: "Inception", views: 0 });
+
+      const rows = await table("xd_posts")
+        .whereLike("title", "%inception%", { caseInsensitive: false })
+        .get();
+
+      if (engine.name === "postgres") {
+        // The only engine with a real per-query case-sensitive LIKE.
+        expect(rows).toHaveLength(0);
+      } else {
+        // MySQL is collation-dependent (insensitive under the `*_ci`
+        // default this suite's tables get) and SQLite's LIKE folds ASCII
+        // with no per-query way to stop it. Asserted as "runs and
+        // returns the engine's own answer" rather than a row count,
+        // which is exactly the contract `caseInsensitive: false` makes.
+        expect(rows.length).toBeLessThanOrEqual(1);
+      }
+
+      // The case-matching pattern matches everywhere regardless.
+      expect(
+        (
+          await table("xd_posts")
+            .whereLike("title", "%Inception%", { caseInsensitive: false })
+            .get()
+        ).length,
+      ).toBe(1);
+    });
+
+    it("whereLike() folds non-ASCII only where the engine does", async () => {
+      await Post.create({ title: "Ärger", views: 0 });
+
+      const rows = await table("xd_posts").whereLike("title", "%ärger%").get();
+
+      if (engine.name === "sqlite") {
+        // SQLite's LIKE folds ASCII only, so `Ä` does not match `ä`.
+        // Pinned rather than left to be discovered by whoever searches
+        // in German.
+        expect(rows).toHaveLength(0);
+      } else {
+        // MySQL's lower() and Postgres' ILIKE both fold per collation.
+        expect(rows.map((r: any) => r.title)).toEqual(["Ärger"]);
+      }
+    });
+
     it("inRandomOrder() runs (H6: MySQL needs RAND(), not RANDOM())", async () => {
       await Post.create({ title: "A", views: 1 });
       await Post.create({ title: "B", views: 2 });

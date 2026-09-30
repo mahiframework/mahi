@@ -19,6 +19,10 @@ function jsonPath(column: JsonColumn): string {
  * they are cast to text and left-padded to two digits. `year()` is
  * already four digits and only needs the cast.
  *
+ * Case-insensitive `LIKE` goes through `lower()` on both sides rather
+ * than a named collation, so it holds under a `*_bin` column too. See
+ * `like()`.
+ *
  * JSON goes through `json_contains()`/`json_contains_path()`/
  * `json_length()`. `json_contains()` takes its candidate as a **JSON
  * document**, so the scalar is `JSON.stringify`d. An unquoted `x`
@@ -46,6 +50,26 @@ export const mysqlQueryGrammar: QueryGrammar = {
       case "year":
         return sql`cast(year(${ref}) as char)`;
     }
+  },
+
+  like(
+    column: string,
+    pattern: GrammarBinding,
+    options: { caseInsensitive: boolean },
+  ): Expression<any> {
+    if (options.caseInsensitive) {
+      // Both sides through lower() rather than `COLLATE utf8mb4_ci`:
+      // folding this way is collation-independent, so it holds under a
+      // `*_bin`/`*_cs` column too, and it assumes nothing about the
+      // column's charset the way naming a collation would.
+      return sql`lower(${sql.ref(column)}) like lower(${pattern})`;
+    }
+
+    // MySQL has no per-query case-*sensitive* form worth using either:
+    // forcing it needs `COLLATE utf8mb4_bin`, which overrides whatever
+    // collation the schema chose. So this is the column's own collation,
+    // insensitive under the `*_ci` default.
+    return sql`${sql.ref(column)} like ${pattern}`;
   },
 
   jsonContains(column: JsonColumn, value: GrammarBinding): Expression<any> {
