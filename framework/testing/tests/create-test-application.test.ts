@@ -131,6 +131,77 @@ describe("createTestApplication()", () => {
     await cleanup();
   });
 
+  it('defaults to sqlite, and { database: "sqlite" } is the same thing', async () => {
+    // The default has to stay sqlite: it is what every existing suite
+    // relies on, and it is the only engine that needs nothing running.
+    const implicit = await createTestApplication(bootstrapFixtureApp);
+    const implicitDialect = implicit.app.make<DatabaseManager>(DATABASE_TOKEN).driver().dialect;
+    await implicit.cleanup();
+
+    const explicit = await createTestApplication(bootstrapFixtureApp, { database: "sqlite" });
+    const explicitDialect = explicit.app.make<DatabaseManager>(DATABASE_TOKEN).driver().dialect;
+    await explicit.cleanup();
+
+    expect(implicitDialect).toBe("sqlite");
+    expect(explicitDialect).toBe("sqlite");
+  });
+
+  it("clearDatabase() wipes the rows and keeps the schema", async () => {
+    const { request, clearDatabase, cleanup } = await createTestApplication(bootstrapFixtureApp);
+
+    try {
+      await request("/widgets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Sprocket" }),
+      });
+      expect(await (await request("/widgets")).json()).toHaveLength(1);
+
+      await clearDatabase();
+
+      // 200 with an empty list, not a "no such table": the schema is
+      // still there, which is the difference from resetDatabase().
+      const empty = await request("/widgets");
+      expect(empty.status).toBe(200);
+      expect(await empty.json()).toEqual([]);
+
+      const created = await request("/widgets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Cog" }),
+      });
+      expect(created.status).toBe(201);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("clearDatabase() leaves the migrations ledger intact", async () => {
+    const { app, clearDatabase, cleanup } = await createTestApplication(bootstrapFixtureApp);
+
+    try {
+      const kysely = app.make<DatabaseManager>(DATABASE_TOKEN).driver().kysely;
+      const before = await kysely
+        .selectFrom("migrations" as any)
+        .selectAll()
+        .execute();
+      expect(before.length).toBeGreaterThan(0);
+
+      await clearDatabase();
+
+      // The schema survives a row wipe, so the record of how it was
+      // built has to as well, or the next migrate replays everything
+      // against tables that already exist.
+      const after = await kysely
+        .selectFrom("migrations" as any)
+        .selectAll()
+        .execute();
+      expect(after).toHaveLength(before.length);
+    } finally {
+      await cleanup();
+    }
+  });
+
   it("isolates each call to a distinct temp sqlite file", async () => {
     const first = await createTestApplication(bootstrapFixtureApp);
     const firstDb = process.env.DB_FILENAME;

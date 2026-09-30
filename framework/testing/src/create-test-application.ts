@@ -21,6 +21,15 @@ import {
   type JobRegistry,
 } from "@mahiframework/queue";
 import { STORAGE_TOKEN, StorageManager, FakeStorageDriver } from "@mahiframework/storage";
+import {
+  connectionEnv,
+  connectionNameFor,
+  createScratchDatabase,
+  dropScratchDatabase,
+  resolveTestEngine,
+  type TestDatabaseEngine,
+  type TestDatabaseOptions,
+} from "./test-database.js";
 
 /**
  * Snapshot the given `process.env` keys and return a function that puts
@@ -43,6 +52,33 @@ function captureEnv(keys: string[]): () => void {
 }
 
 export interface TestApplicationOptions {
+  /**
+   * Which database engine to boot the application against.
+   *
+   * Defaults to `"sqlite"`, which needs nothing running: the app gets a
+   * temp file, as it always has. `"mysql"`/`"postgres"` create a
+   * throwaway database on the server named by the `MAHI_TEST_*`
+   * variables and drop it in `cleanup()`, so the suite runs against the
+   * schema it actually deploys on.
+   *
+   *   const app = await createTestApplication(bootstrap, {
+   *     database: "postgres",
+   *   });
+   *
+   * Set `MAHI_TEST_ENGINE` to move a whole suite without editing test
+   * files; this option wins over it where both are present.
+   *
+   * ⚠️ Gate the suite with `testEngineAvailable()` first, or a developer
+   * with no docker running gets a connection error rather than a skip.
+   *
+   * Choosing is worth doing deliberately: SQLite is not a stand-in for
+   * the engine you deploy on. `like` folds case on SQLite and does not
+   * on Postgres, `lock()` is a documented no-op, SQLite has no type
+   * affinity, and partial/GIN indexes cannot be created at all. Each of
+   * those is a test that passes while asserting nothing.
+   */
+  database?: TestDatabaseEngine | TestDatabaseOptions;
+
   /**
    * Called with the booted Application, after `bootstrapFn()` resolves but
    * before migrations run, for extra `app.config.set`/`merge` calls or
@@ -152,15 +188,35 @@ export interface TestApplication {
   request: (path: string, init?: RequestInit) => Promise<Response>;
   cleanup: () => Promise<void>;
   /**
-   * Re-run every migration from scratch against the same temp DB
-   * (`migrate:fresh`, drops all tables, re-migrates), wiping all rows
-   * without re-creating the temp file. Call from `beforeEach()` in test
-   * files that want per-`it()` isolation rather than the shared-DB-per-file
-   * default. Fast (better-sqlite3 is synchronous, no network round-trip),
-   * but not free. Most files are fine relying on the shared-DB default
-   * and creating fresh fixtures per test.
+   * Re-run every migration from scratch against the same database
+   * (`migrate:fresh`, drops all tables, re-migrates).
+   *
+   * Reach for this only when a test *changes the schema* and needs it
+   * rebuilt. For the ordinary "wipe the rows between tests" case use
+   * `clearDatabase()`, which is the same isolation for a fraction of
+   * the cost: this re-runs every migration, which on MySQL or Postgres
+   * is seconds per call and makes a `beforeEach()` unusable.
    */
   resetDatabase: () => Promise<void>;
+  /**
+   * Delete every row from every table, leaving the schema in place and
+   * restarting auto-increment counters at 1. Laravel's
+   * `DatabaseTruncation`, and the right default for per-`it()`
+   * isolation:
+   *
+   *   beforeEach(() => testApp.clearDatabase());
+   *
+   * Preserves the `migrations` ledger, so the schema and the record of
+   * how it was built stay in agreement.
+   *
+   * Unlike wrapping each test in a transaction and rolling it back,
+   * this changes nothing about how the database behaves: commits are
+   * real, `lock()`/`SELECT ... FOR UPDATE` still contend, and a second
+   * connection or an out-of-process worker sees the same rows the test
+   * does. Those are precisely the behaviours worth testing on a real
+   * engine, so the reset must not be the thing that hides them.
+   */
+  clearDatabase: () => Promise<void>;
   /**
    * The `FakeQueueDriver` installed when `options.fakeQueue` was set,
    * `undefined` otherwise. Assert with `testApp.queue!.assertPushed(...)`.
@@ -199,22 +255,25 @@ export interface TestApplication {
 }
 
 /**
- * Boots a real `Application` against a temp sqlite file, runs migrations,
- * and returns an in-process `request()` function backed by the app's own
- * Hono instance, the setup every app's test suite would otherwise
- * hand-roll, extracted once.
+ * Boots a real `Application` against a throwaway database, runs
+ * migrations, and returns an in-process `request()` function backed by
+ * the app's own Hono instance, the setup every app's test suite would
+ * otherwise hand-roll, extracted once.
  *
  * Takes the app's own `bootstrapFn` (e.g. the app's `bin/bootstrap.ts`
  * `bootstrap`) as a parameter rather than importing it directly. This
  * package can't depend on any specific app, so it stays a generic helper
  * any app supplies its own bootstrap function to.
  *
- * Sets `DB_FILENAME`/`NODE_ENV` env vars before calling `bootstrapFn` so a
- * typical `config/database.ts` that reads `env.DB_FILENAME` picks up the
- * temp file automatically, matching the convention in the scaffolded
- * `config/database.ts`. Also sets `APP_KEY` (if not already set) to a
- * fresh random key, so `EncryptionServiceProvider` (whose env schema entry
- * has no default, by design) doesn't fail `loadEnv()` validation in tests
+ * Sets the database environment variables before calling `bootstrapFn`
+ * so a typical `config/database.ts` reading them picks the throwaway
+ * database up with no test-specific configuration, matching the
+ * convention in the scaffolded `config/database.ts`. That is
+ * `DB_FILENAME` for the default SQLite engine, and `DB_CONNECTION` plus
+ * the `DB_HOST`/`DB_DATABASE`/... set when `options.database` selects
+ * MySQL or Postgres. Also sets `APP_KEY` (if not already set) to a fresh
+ * random key, so `EncryptionServiceProvider` (whose env schema entry has
+ * no default, by design) doesn't fail `loadEnv()` validation in tests
  * that don't otherwise touch a real `.env` file.
  *
  * Pass `{ fakeQueue: true }` / `{ fakeEvents: true }` to swap in the
@@ -228,18 +287,40 @@ export async function createTestApplication(
   bootstrapFn: () => Promise<Application>,
   options: TestApplicationOptions = {},
 ): Promise<TestApplication> {
+  const database = resolveTestEngine(options.database);
   const tmpDir = await mkdtemp(path.join(tmpdir(), "mahi-test-"));
 
   // Snapshot before mutating, restore in `cleanup()`. `process.env` is
   // process-global and outlives the Application, so a test file that
   // points `DB_FILENAME` at its own temp database would otherwise leave
   // it pointing there for every file that runs afterwards in the same
-  // worker, at a path `cleanup()` has already deleted.
-  const restoreEnv = captureEnv(["DB_FILENAME", "NODE_ENV", "APP_KEY"]);
+  // worker, at a path `cleanup()` has already deleted. The `DB_*`
+  // connection keys are in the list for the same reason.
+  const restoreEnv = captureEnv([
+    "DB_FILENAME",
+    "NODE_ENV",
+    "APP_KEY",
+    "DB_CONNECTION",
+    "DB_HOST",
+    "DB_PORT",
+    "DB_DATABASE",
+    "DB_USERNAME",
+    "DB_PASSWORD",
+  ]);
 
+  // Set even on a server engine. It costs nothing, and it means an app
+  // that resolves its sqlite connection for any reason writes to the
+  // temp dir rather than into the repository.
   process.env.DB_FILENAME = path.join(tmpDir, "test.sqlite");
   process.env.NODE_ENV = "test";
   process.env.APP_KEY ??= `base64:${randomBytes(32).toString("base64")}`;
+  process.env.DB_CONNECTION = connectionNameFor(database);
+
+  const scratchDatabase = await createScratchDatabase(database.engine, database.label);
+
+  if (scratchDatabase) {
+    Object.assign(process.env, connectionEnv(database, scratchDatabase));
+  }
 
   const app = await bootstrapFn();
   options.configure?.(app);
@@ -362,11 +443,15 @@ export async function createTestApplication(
         app.make<AuthManager>(AUTH_TOKEN).actingAs(null);
       }
 
-      // Terminate BEFORE deleting the temp dir: this closes the sqlite
+      // Terminate BEFORE releasing the database: this closes the sqlite
       // handle (and any Redis client the app opened), so the file is not
       // removed out from under an open connection, and the handle does
       // not linger holding the event loop open for the rest of the run.
+      // On a server engine it also drains the pool, which Postgres
+      // requires before the database can be dropped at all.
       await app.terminate();
+
+      await dropScratchDatabase(database.engine, scratchDatabase);
 
       restoreEnv();
       await rm(tmpDir, { recursive: true, force: true });
@@ -377,6 +462,9 @@ export async function createTestApplication(
     },
     resetDatabase: async () => {
       await runner.fresh(migrationSources);
+    },
+    clearDatabase: async () => {
+      await db.schema().truncateAllTables();
     },
     queue,
     events,

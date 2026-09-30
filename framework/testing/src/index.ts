@@ -1,6 +1,9 @@
 export { createTestApplication } from "./create-test-application.js";
 export type { TestApplication, TestApplicationOptions } from "./create-test-application.js";
 
+export { testEngineAvailable } from "./test-database.js";
+export type { TestDatabaseEngine, TestDatabaseOptions } from "./test-database.js";
+
 export { TestClient } from "./test-client.js";
 export type { JsonResponse } from "./test-client.js";
 
