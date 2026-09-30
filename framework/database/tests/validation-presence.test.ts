@@ -6,6 +6,7 @@ import { DatabaseManager } from "../src/database-manager.js";
 import { DATABASE_TOKEN } from "../src/database-service-provider.js";
 import { Model } from "../src/model.js";
 import { registerValidationPresenceResolver } from "../src/validation-presence.js";
+import { transaction } from "../src/transaction.js";
 
 interface WidgetAttributes {
   id: string;
@@ -83,5 +84,67 @@ describe("exists / unique against sqlite", () => {
       },
     );
     expect(await other.passes()).toBe(false);
+  });
+});
+
+describe("exists / unique inside a transaction", () => {
+  let app: Application;
+  let manager: DatabaseManager;
+
+  beforeEach(async () => {
+    app = new Application();
+    manager = new DatabaseManager(app, { default: "sqlite", connections: {} });
+    manager.extend("sqlite", () => new SqliteDriver({ filename: ":memory:" }));
+    app.instance(DATABASE_TOKEN, manager);
+    setCurrentApp(app);
+
+    await manager
+      .driver()
+      .kysely.schema.createTable("widgets")
+      .addColumn("id", "text", (col) => col.primaryKey())
+      .addColumn("name", "text", (col) => col.notNull())
+      .addColumn("active", "integer", (col) => col.notNull().defaultTo(1))
+      .execute();
+
+    registerValidationPresenceResolver();
+  });
+
+  afterEach(() => {
+    Rule.setPresenceResolver(undefined);
+    clearCurrentApp();
+  });
+
+  /**
+   * The rules resolve their connection per call, so they see the
+   * enclosing transaction's uncommitted writes. Reading the root
+   * connection instead would validate against pre-transaction state and
+   * wave through a duplicate the same transaction had just written.
+   */
+  it("sees a row written by the enclosing transaction", async () => {
+    await transaction(manager.driver().kysely, async () => {
+      await Widget.create({ id: "1", name: "Sprocket", active: 1 });
+
+      const taken = new Validator(
+        { name: "Sprocket" },
+        {},
+        { name: rule().unique(Widget, "name") },
+      );
+      expect(await taken.passes()).toBe(false);
+
+      const found = new Validator({ id: "1" }, {}, { id: rule().exists(Widget) });
+      expect(await found.passes()).toBe(true);
+    });
+  });
+
+  it("does not see a row the transaction rolled back", async () => {
+    await expect(
+      transaction(manager.driver().kysely, async () => {
+        await Widget.create({ id: "1", name: "Sprocket", active: 1 });
+        throw new Error("rolled back");
+      }),
+    ).rejects.toThrow("rolled back");
+
+    const free = new Validator({ name: "Sprocket" }, {}, { name: rule().unique(Widget, "name") });
+    expect(await free.passes()).toBe(true);
   });
 });

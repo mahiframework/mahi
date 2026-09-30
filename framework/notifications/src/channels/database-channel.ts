@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { DatabaseManager } from "@mahiframework/database";
+import type { Kysely } from "kysely";
+import { getActiveTransaction, type DatabaseManager } from "@mahiframework/database";
 import type { NotificationChannel } from "../notification-channel.js";
 import type { Notification } from "../notification.js";
 import type { NotificationRoutable } from "../notifiable.js";
@@ -69,9 +70,8 @@ export class DatabaseChannel implements NotificationChannel {
     const notifiableType = this.resolveNotifiableType(notifiable);
     const now = new Date().toISOString();
 
-    await this.db
-      .connection()
-      .kysely.insertInto("notifications")
+    await this.connection()
+      .insertInto("notifications")
       .values({
         id: notification.id ?? randomUUID(),
         type: notification.databaseType(),
@@ -87,6 +87,22 @@ export class DatabaseChannel implements NotificationChannel {
         updated_at: now,
       })
       .execute();
+  }
+
+  /**
+   * The connection the row is written on: the active transaction when
+   * one is open, else the root.
+   *
+   * Resolved per call, never captured, the same rule
+   * `Model.resolveConnection()` follows. Writing to the root instead
+   * would commit the notification independently of the transaction that
+   * produced it, so it would survive a rollback and outlive the record
+   * it refers to.
+   */
+  private connection(): Kysely<any> {
+    const root = this.db.connection().kysely;
+
+    return getActiveTransaction(root) ?? root;
   }
 
   /**

@@ -555,10 +555,10 @@ importers:
       '@mahiframework/mail':
         specifier: workspace:*
         version: link:../mail
-    devDependencies:
       kysely:
         specifier: ^0.29.5
         version: 0.29.5
+    devDependencies:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3

@@ -8,6 +8,7 @@ import {
   Relation,
   SCHEMA_TOKEN,
   SqliteDriver,
+  transaction,
 } from "@mahiframework/database";
 import { DatabaseChannel } from "../src/channels/database-channel.js";
 import { Notification } from "../src/notification.js";
@@ -218,6 +219,36 @@ describe("DatabaseChannel", () => {
       const rows = await kysely.selectFrom("notifications").selectAll().execute();
       // The agreement that makes a `notifiable` morphTo resolvable.
       expect(rows[0]!.notifiable_type).toBe(UserModel.morphAlias());
+    });
+  });
+
+  describe("transaction participation", () => {
+    it("writes on the active transaction, so a rollback takes the row with it", async () => {
+      const { channel, kysely } = await buildChannel();
+
+      // Writing to the root connection instead would commit the
+      // notification independently of the transaction that produced it,
+      // leaving a row pointing at a record that no longer exists.
+      await expect(
+        transaction(kysely, async () => {
+          await channel.send(new User("user-1"), new FollowNotification("actor-9"));
+          throw new Error("rolled back");
+        }),
+      ).rejects.toThrow("rolled back");
+
+      const rows = await kysely.selectFrom("notifications").selectAll().execute();
+      expect(rows).toHaveLength(0);
+    });
+
+    it("commits with the transaction when it succeeds", async () => {
+      const { channel, kysely } = await buildChannel();
+
+      await transaction(kysely, async () => {
+        await channel.send(new User("user-1"), new FollowNotification("actor-9"));
+      });
+
+      const rows = await kysely.selectFrom("notifications").selectAll().execute();
+      expect(rows).toHaveLength(1);
     });
   });
 });

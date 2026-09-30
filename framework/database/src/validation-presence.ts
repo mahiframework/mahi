@@ -2,6 +2,7 @@ import { app } from "@mahiframework/core";
 import { Rule, type PresenceResolver } from "@mahiframework/validation";
 import { DATABASE_TOKEN } from "./database-service-provider.js";
 import type { DatabaseManager } from "./database-manager.js";
+import { getActiveTransaction } from "./transaction-context.js";
 
 /**
  * Register `exists` / `unique` against the default database connection.
@@ -38,6 +39,17 @@ export function registerValidationPresenceResolver(): void {
   Rule.setPresenceResolver(resolver);
 }
 
+/**
+ * The connection these rules query: the active transaction when one is
+ * open, else the root.
+ *
+ * Resolved per call, never captured, the same rule
+ * `Model.resolveConnection()` and `SchemaBuilder` follow. Without it a
+ * `unique` check inside a transaction would read pre-transaction state
+ * and pass against a row the same transaction had just written.
+ */
 function kysely() {
-  return app().make<DatabaseManager>(DATABASE_TOKEN).connection().kysely;
+  const connection = app().make<DatabaseManager>(DATABASE_TOKEN).connection().kysely;
+
+  return getActiveTransaction(connection) ?? connection;
 }

@@ -21,10 +21,10 @@
     "@mahiframework/database": "workspace:*",
     "@mahiframework/events": "workspace:*",
     "@mahiframework/facades": "workspace:*",
-    "@mahiframework/mail": "workspace:*"
+    "@mahiframework/mail": "workspace:*",
+    "kysely": "^0.29.5"
   },
   "devDependencies": {
-    "kysely": "^0.29.5",
     "typescript": "^5.7.2",
     "vite": "^8.0.0",
     "vitest": "^4.1.11"
