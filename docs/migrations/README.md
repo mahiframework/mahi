@@ -540,12 +540,17 @@ never emitted. They exist for API parity, not effect.
 | Method | Notes |
 |---|---|
 | `primary(columns, name?)` | Composite primary key constraint. |
-| `unique(columns, name?)` | |
-| `index(columns, name?)` | |
+| `unique(columns, name? \| options?)` | |
+| `index(columns, name? \| options?)` | |
 | `fullText(columns, name?)` | **MySQL only**: throws on SQLite and Postgres. |
 | `spatialIndex(columns, name?)` | **Throws on every dialect.** |
 
 `columns` is a string or a string array.
+
+`unique()` and `index()` take either an index name or an `IndexOptions`
+object in their second argument. `primary()` takes only a name: a
+`PRIMARY KEY` is a table constraint rather than a free-standing index, so
+it cannot be partial or pick a method.
 
 ```
 fullText indexes are not supported on sqlite.
@@ -577,6 +582,153 @@ await Schema.create("post_hashtag", (table) => {
 Indexes are created as separate `CREATE INDEX` statements **after** the
 table, both for `.unique()`/`.index()` column modifiers and for
 table-level `unique()`/`index()` calls.
+
+## Blueprint: index options
+
+```ts
+interface IndexOptions {
+  name?: string;
+  where?: string;                      // partial index predicate
+  using?: "btree" | "hash" | "gin" | "gist" | string;
+  opclass?: Record<string, string>;    // per-column operator class
+  nullsNotDistinct?: boolean;          // Postgres 15+
+}
+```
+
+| Option | sqlite | mysql | postgres |
+|---|---|---|---|
+| `where` | yes | **throws** | yes |
+| `using` | **throws** | `btree`/`hash` only | yes |
+| `opclass` | **throws** | **throws** | yes |
+| `nullsNotDistinct` | **throws** | **throws** | yes |
+
+Like `fullText()`, an option the engine cannot do **throws at compile
+time, before any DDL runs**, rather than quietly creating a weaker index:
+
+```
+Partial indexes (the "where" option, on unique(torrent_id)) are not supported on mysql.
+Index methods (the "using" option, on index(criteria)) are not supported on sqlite.
+Index method "gin" (on index(criteria)) is not supported on mysql, which has only btree and hash.
+Operator classes (the "opclass" option, on index(title)) are not supported on sqlite.
+"nullsNotDistinct" (on unique(torrent_id)) is not supported on sqlite; it needs Postgres 15 or newer.
+```
+
+A silently-downgraded index is a performance cliff nobody finds; a throw
+is found on the first migration run.
+
+### Partial indexes (`where`)
+
+```ts
+await Schema.create("downloads", (table) => {
+  table.id();
+  table.unsignedBigInteger("torrent_id").nullable();
+  table.unique("torrent_id", { where: "torrent_id is not null" });
+});
+```
+
+```sql
+CREATE UNIQUE INDEX downloads_torrent_id_unique
+  ON downloads (torrent_id) WHERE torrent_id is not null;
+```
+
+This one is **not an optimisation**. A plain `unique()` on a nullable
+column permits many nulls on SQLite and Postgres, which is usually what
+you want, but "at most one non-null, unlimited nulls" has no non-partial
+spelling. It is a correctness constraint.
+
+> ⚠️ `where` is raw SQL, embedded verbatim, exactly like `storedAs()` and
+> `virtualAs()`. **Never build it from request input.** Index predicates
+> cannot be parameterised on any engine — a database restriction, not a
+> choice here — so there is no safe-binding form to fall back on.
+
+The inverse case, "nulls collide like any other value", is
+`nullsNotDistinct` below. Nullable-unique is really two capabilities that
+want opposite things, so neither is a default.
+
+### Index methods (`using`) and operator classes (`opclass`)
+
+```ts
+// containment queries on jsonb
+table.index("criteria", { using: "gin" });
+
+// the index that makes a substring search fast
+table.index("title", { using: "gin", opclass: { title: "gin_trgm_ops" } });
+```
+
+```sql
+CREATE INDEX profiles_criteria_index ON profiles USING gin (criteria);
+CREATE INDEX metas_title_index ON metas USING gin (title gin_trgm_ops);
+```
+
+`opclass` is keyed by column name; columns absent from the map are
+emitted as plain references, so the two mix in one index. A key naming a
+column that is not part of the index throws, rather than being dropped in
+silence.
+
+Postgres `using` values are **not** validated, so `brin`, `spgist` and
+extension-provided methods pass through. MySQL's are, because its list is
+closed and short.
+
+> ⚠️ `gin_trgm_ops` additionally needs `CREATE EXTENSION pg_trgm`, which
+> stays your own explicit statement. Creating an extension is a
+> privileged, database-wide side effect that a table blueprint should not
+> perform implicitly; the framework only lets the *index* reference the
+> opclass.
+
+### `nullsNotDistinct`
+
+```ts
+table.unique("torrent_id", { nullsNotDistinct: true });
+```
+
+Makes nulls collide like any other value, so a second `NULL` is a unique
+violation. Unique indexes only (it throws on a non-unique one, as
+Postgres would) and Postgres 15+ only — on 14 and older the server raises
+its own syntax error rather than this layer version-detecting.
+
+### Substring search on Postgres
+
+A trigram index is what makes `whereLike("title", "%ncep%")` fast, and it
+needs nothing but the options above:
+
+```ts
+await Schema.create("metas", (table) => {
+  table.id();
+  table.string("title");
+  table.index("title", { using: "gin", opclass: { title: "gin_trgm_ops" } });
+});
+```
+
+Plus the extension, once, as its own statement:
+
+```ts
+import { sql } from "kysely";
+
+await sql`CREATE EXTENSION IF NOT EXISTS pg_trgm`.execute(DB.connection().kysely);
+```
+
+### Postgres full-text search is not yet reachable
+
+`fullText()` is MySQL-only and stays that way by design: MySQL's
+`FULLTEXT` indexes existing columns, while Postgres needs a stored
+`tsvector` column to index. Those are different enough that one method
+should not pretend to be both.
+
+The Postgres spelling would be a generated `tsvector` column plus a GIN
+index on it — but **`Blueprint` has no `tsvector` column type**, and
+`storedAs()` on a `text()` column is not a substitute:
+
+```ts
+// Does NOT work. The column is `text`, and:
+//   data type text has no default operator class for access method "gin"
+table.text("searchable").storedAs("to_tsvector('english', title)");
+table.index("searchable", { using: "gin" });
+```
+
+Adding `tsvector` to `compileColumnType()` is the missing piece; the
+index half is done. Until then, Postgres full-text needs a raw statement
+for the column, and word-matching search is better served by the trigram
+index above.
 
 ## Blueprint: foreign keys
 

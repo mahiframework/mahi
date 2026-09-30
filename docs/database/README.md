@@ -219,6 +219,10 @@ handled for you; it is listed because the differences are observable.
 | `enum` column | text | native `enum` | `varchar` + `CHECK` |
 | `fullText` index | unsupported | supported | unsupported |
 | `spatialIndex` | unsupported | unsupported | unsupported |
+| Partial index (`where`) | supported | unsupported | supported |
+| Index method (`using`) | unsupported | `btree`/`hash` | supported |
+| Operator class (`opclass`) | unsupported | unsupported | supported |
+| `nullsNotDistinct` | unsupported | unsupported | supported (15+) |
 
 ### Documented limitations
 
@@ -242,6 +246,15 @@ handled for you; it is listed because the differences are observable.
 - **`migrate:fresh` on Postgres only drops the current schema's
   tables**, resolved from `current_schema()` / the connection's
   `searchPath`.
+- **An index option the engine cannot do throws**, rather than silently
+  creating a weaker index. `unique(cols, { where })` on MySQL, or
+  `{ using: "gin" }` on SQLite, fails at compile time before any DDL
+  runs. See [Migrations](../migrations/#blueprint-index-options).
+- **`fullText()` is MySQL-only by design, and Postgres full-text is not
+  yet reachable.** MySQL indexes existing columns; Postgres needs a
+  stored `tsvector` column, and `Blueprint` has no `tsvector` type. The
+  GIN index half works — the column type is the missing piece. Substring
+  search is served by a trigram index today.
 
 ## The DB facade
 
