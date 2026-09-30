@@ -299,16 +299,28 @@ export abstract class Manager<TDriver = unknown> {
   driver(name?: string): TDriver;
   isResolved(name: string): boolean;
   resolvedDriverNames(): string[];
+  forget(name: string): Promise<boolean>;
 }
 ```
 
 | Member | Purpose |
 |---|---|
 | `getDefaultDriver()` | Abstract. Which driver `driver()` resolves with no argument. Usually `this.config.default`. |
-| `extend(name, factory)` | Register a driver factory. Returns `this`. |
+| `extend(name, factory)` | Register a driver factory. Returns `this`. Re-registering invalidates any cached instance. |
 | `driver(name?)` | Resolve and cache a driver. Throws `DriverNotRegisteredError` if the name is unknown. |
 | `isResolved(name)` | Has this name already been resolved (and therefore cached)? |
 | `resolvedDriverNames()` | Every name resolved so far. |
+| `forget(name)` | Disconnect the resolved driver and unregister the name. `true` if anything was dropped. |
+
+`forget()` is for a driver whose name goes away entirely, a disk built
+from a database row that has since been deleted. `extend()` already
+invalidates a cached instance, so re-registering is enough to *replace* a
+driver; `forget()` is what closes one. Without it the only thing that
+ever calls `disconnect()` is `disconnectAll()` at shutdown, so dropping a
+connected driver any other way leaks its socket. Like
+`disconnectAll()`, it never resolves a registered-but-unused driver just
+to tear it down. Unlike it, a failing `disconnect()` propagates, since the
+caller asked about one driver and is in a position to handle the answer.
 
 `DriverFactory<TDriver>` is `(app: Application) => TDriver`.
 

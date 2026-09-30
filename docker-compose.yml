@@ -8,9 +8,11 @@
 # `framework/database/tests/drivers/`, which runs the model and query
 # layer against all three dialects,
 # `framework/testing/tests/engines.integration.test.ts`, which boots a
-# test application on each engine, and `framework/redis/tests/`, whose
+# test application on each engine, `framework/redis/tests/`, whose
 # subject is cross-process atomicity and pub/sub fanout (things no
-# in-memory substitute reproduces).
+# in-memory substitute reproduces), and
+# `framework/storage-sftp/tests/`, whose subject is a real SSH server's
+# behaviour.
 #
 # When these are NOT running, those suites skip themselves, so `pnpm
 # test` stays green on a machine without docker. `pnpm test:integration`
@@ -49,6 +51,28 @@ services:
       POSTGRES_DB: mahi_test
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d mahi_test"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  # The SFTP driver's contract suite runs against a real SSH server:
+  # atomic-replace-via-`posix-rename`, a `readdir` walk, reconnect after a
+  # dropped session and "rename refuses an existing target" are all
+  # properties of the *server*, and a mock would only assert that the
+  # driver calls the functions the mock was written around.
+  sftp:
+    image: atmoz/sftp:alpine
+    ports:
+      - "2222:22"
+    # user:password:uid:gid:dir. The account is chrooted to its home,
+    # which sshd requires to be root-owned, so the home itself is not
+    # writable and the trailing `upload` names the writable subdirectory
+    # the image creates and chowns. The tests root their disks in there,
+    # and see it as `/upload` since the chroot is their filesystem root.
+    environment:
+      SFTP_USERS: "mahi:mahi:1000:100:upload"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 22"]
       interval: 3s
       timeout: 5s
       retries: 20

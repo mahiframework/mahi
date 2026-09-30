@@ -618,6 +618,181 @@ video. When it stops being fine, point the disk's `url` at a CDN origin
 that reads from the same bucket, `url()` starts emitting CDN URLs, the
 catch-all route stops being hit, and no application code changes.
 
+## SFTP: files on another machine
+
+`@mahiframework/storage-sftp` is a second driver, for files that live on
+a host you reach over SSH: a NAS, a seedbox, a media server that isn't
+mounted locally. It is a separate package so an application that never
+uses SFTP doesn't install an SSH stack.
+
+```bash
+npm install @mahiframework/storage-sftp ssh2
+```
+
+`ssh2` is an **optional peer dependency**. The driver imports it on first
+use and, if it's missing, says so with the command that fixes it rather
+than failing with a module-not-found from somewhere deep inside a write.
+
+```ts
+// config/storage.ts
+import { env } from "@mahiframework/core";
+
+export function storageConfig(): StorageConfig {
+  return {
+    default: "public",
+    disks: {
+      public: { root: storage_path("app/public"), url: "/storage" },
+      media: {
+        driver: "sftp",
+        host: env("MEDIA_HOST", "nas.local"),
+        port: 22,
+        username: env("MEDIA_USER", "media"),
+        password: env("MEDIA_PASSWORD"),
+        root: "/srv/media",
+      },
+    },
+  };
+}
+```
+
+```ts
+// config/app.ts — after StorageServiceProvider, which binds STORAGE_TOKEN.
+providers: [StorageServiceProvider, SftpStorageServiceProvider];
+```
+
+From there it is a disk like any other, and code that takes a
+`StorageDriver` doesn't know the difference:
+
+```ts
+await Storage.disk("media").allFiles("movies");
+const stream = await Storage.disk("media").readStream("movies/clip.mkv");
+```
+
+| Key | Meaning |
+|---|---|
+| `driver` | `"sftp"`. Required, it's what makes the provider claim the disk. |
+| `host` / `port` | The SSH server. `port` defaults to 22. |
+| `username` | The login user. Required. |
+| `password` | Password auth. |
+| `privateKey` / `passphrase` | Key auth. The key **contents**, not a path. |
+| `root` | The disk root. Relative paths resolve against the login user's home. |
+| `concurrency` | Max in-flight requests during a recursive walk. Default 8. |
+| `keepaliveInterval` | SSH keepalive in ms. Default 20000; `0` disables. |
+| `readyTimeout` | Handshake timeout in ms. Default 20000. |
+| `hostVerifier` | Verify the host key. Omitted, **any** host key is accepted. |
+| `url` | Public prefix, only if something *else* serves these files over HTTP. |
+
+### What it costs that a local disk doesn't
+
+The interface is identical. The performance characteristics are not, and
+the driver documents rather than hides the differences:
+
+**`copy()` is a download and a re-upload.** SFTP has no server-side copy
+primitive, so copying a 40 GB file moves 80 GB across the wire. It's
+streamed, so it costs no memory, but it is not the cheap metadata
+operation `copyFile` is locally. `move()` *is* a server-side rename, and
+is cheap at any size.
+
+**`url()` throws** unless you configured a `url` prefix. SFTP serves no
+HTTP, so there is no URL to derive. A prefix only makes sense when a
+separate web server publishes the same directory. To hand a client a
+file with no such server, put a route in front of it with
+`serveStoredFile`, which streams and supports range requests.
+
+**`path()` always throws.** The bytes are on another machine. Returning a
+remote path that `node:fs` would then fail to open is worse than
+refusing.
+
+**Recursive listing is bounded.** `allFiles()` is one `readdir` per
+directory, and they share a single SSH channel, so `concurrency` caps
+in-flight requests rather than adding throughput. Everything is still
+sorted, and a missing directory is still `[]`.
+
+**Path traversal is checked lexically only.** The local driver
+additionally `realpath`s every target, because a symlink inside its root
+can point outside it. Over SFTP the server resolves symlinks and enforces
+its own permissions. The honest way to confine a remote account is on the
+server (a chrooted SFTP user), not with a client-side check the client
+can't back up. The lexical guard still rejects the `../` that matters in
+application code.
+
+### Atomic writes, honestly
+
+`writeStream`/`putStream` write to a temp sibling and rename into place,
+so a crashed write never leaves a partial file at the final path. Over
+SFTP that last step has a caveat worth knowing: plain SFTP `rename`
+**fails if the target exists**, so an atomic replace needs OpenSSH's
+`posix-rename@openssh.com` extension.
+
+Where the server offers it (OpenSSH does, so nearly every real
+deployment) the replace is genuinely atomic. Where it doesn't, the driver
+falls back to unlink-then-rename, which has a brief window in which the
+path doesn't exist. That's a real downgrade, so it's reported rather than
+hidden:
+
+```ts
+const disk = Storage.disk("media") as SftpStorageDriver;
+disk.sftp().replacesAtomically();  // true | false | undefined (not yet probed)
+```
+
+### Connections
+
+One SSH session per driver instance, reused across every operation. This
+isn't an optimisation so much as the difference between a usable driver
+and an unusable one: a handshake is several round trips, and `allFiles()`
+is one request per directory.
+
+A long-lived connection dies in ways a fresh one can't, though: a NAS
+spins down, a NAT table forgets the flow, an appliance hits its own idle
+timeout. So a connection-level failure is retried **once** on a fresh
+session, and only a second failure surfaces. Retrying is safe because a
+transport failure means the server never processed the request. A server
+error (no such file, permission denied) is never retried. Once, not
+"until it works", because infinite retry against a host that's genuinely
+gone is indistinguishable from a hang.
+
+Registering a disk doesn't connect, and neither does resolving one. The
+session opens on the first actual operation, so a NAS asleep at boot is
+not a boot failure. `SftpStorageServiceProvider.shutdown()` closes
+whatever was opened.
+
+### A disk per database row
+
+Config-file disks are registered at boot. Applications that store remote
+hosts as **rows** (one per library, say) need a disk built on demand:
+
+```ts
+function diskFor(library: Library): StorageDriver {
+  const name = `library:${library.id}`;
+
+  if (!storage.isResolved(name)) {
+    storage.extend(name, () => new SftpStorageDriver({
+      host: library.host,
+      username: library.username,
+      privateKey: library.private_key,
+      root: library.path,
+    }));
+  }
+
+  return storage.disk(name);
+}
+```
+
+`extend()` invalidates any driver already cached under that name, so
+re-extending after a row is edited is all it takes for the next
+resolution to use the new host.
+
+When a row is **deleted**, drop the disk with `forget()`:
+
+```ts
+await storage.forget(`library:${library.id}`);
+```
+
+`forget(name)` disconnects the resolved driver and unregisters the
+factory. Without it the only thing that ever calls `disconnect()` is
+`disconnectAll()` at shutdown, so a dropped disk would leak its SSH
+session for the life of the process.
+
 ## Writing a custom driver
 
 Implement the `StorageDriver` methods and register a factory with
@@ -712,6 +887,46 @@ rmSync(root, { recursive: true, force: true });
 constructible standalone. For a full-application test, set
 `storage.disks.*.root` to a temp directory in the test's config.
 
+### The driver contract suite
+
+`StorageDriver` is 21 methods, and most of them carry a guarantee the
+signature doesn't show: listings are sorted, a missing directory is `[]`
+rather than an error, `readStream` rejects *before* the first chunk, a
+truncating stream write is atomic. A driver can satisfy every type and
+miss every one of those.
+
+So the contract ships as executable cases, and every driver runs the same
+ones. If you write a driver, run them against it:
+
+```ts
+import { storageDriverContract } from "@mahiframework/storage";
+
+describe("MyStorageDriver", () => {
+  for (const testCase of storageDriverContract()) {
+    it(testCase.name, async () => {
+      await testCase.run(await freshDriver());  // an EMPTY disk per case
+    });
+  }
+});
+```
+
+Each case gets an empty disk and may leave anything behind; isolation is
+the caller's job. Failures throw plain `Error`s rather than calling a
+matcher, which is what keeps `@mahiframework/storage` free of a
+test-runner dependency.
+
+```ts
+storageDriverContract({
+  urlPrefix: "/storage",  // assert url() returns prefix + path; omitted, assert it THROWS
+  hasPath: false,         // the bytes aren't local, so assert path() throws
+  largeFileBytes: 512 * 1024,  // default 8 MiB; lower it when each chunk costs a round trip
+});
+```
+
+`LocalStorageDriver` and `SftpStorageDriver` both run it, which is what
+stops a local and a remote disk from quietly becoming two different
+abstractions behind one interface.
+
 ## Gotchas
 
 **`url()` throws on a private disk.** It does not fall back to a
@@ -743,10 +958,15 @@ handling.
 empty array, not an error, but a *traversal* argument (`files("../..")`)
 still throws, like every other method.
 
-**Stream/metadata methods throw `FileNotFoundException` on a missing
-file.** `readStream`, `size`, `lastModified`, and the source of
+**Read/metadata methods throw `FileNotFoundException` on a missing
+file.** `get`, `readStream`, `size`, `lastModified`, and the source of
 `copy`/`move` reject with the typed exception (importable from
 `@mahiframework/storage`), distinct from the plain `Error` a traversal raises.
+
+**`finish` on a `writeStream` means the file is readable.** The rename
+happens before the event, not in a listener beside it, so
+`await` the stream and then reading the path back is safe rather than a
+race.
 
 **`writeStream`/`putStream` are atomic for `"w"`, not `"a"`.** A truncating
 write goes through a temp file + `rename`, so a crash leaves no partial
@@ -758,6 +978,11 @@ yourself, with whatever encoding is actually right.
 **Disk names are driver names.** `extend("public", ...)` replaces the
 public disk's factory entirely. There's no separate driver-type layer to
 override instead.
+
+**On SFTP, `path()` and (unconfigured) `url()` throw, and `copy()` is
+expensive.** The bytes are on another machine: there's no local path, no
+HTTP URL, and no server-side copy primitive. See
+[SFTP](#sftp-files-on-another-machine).
 
 ## Related
 

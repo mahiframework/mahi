@@ -95,6 +95,85 @@ describe("Manager", () => {
   });
 });
 
+describe("Manager.forget()", () => {
+  it("disconnects the resolved driver and unregisters the name", async () => {
+    const disconnect = vi.fn(async () => {});
+
+    const manager = new FakeManager(new Application());
+    manager.extend("analytics", () => ({ name: "analytics", disconnect }));
+    manager.driver("analytics");
+
+    expect(await manager.forget("analytics")).toBe(true);
+
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect(manager.isResolved("analytics")).toBe(false);
+    expect(() => manager.driver("analytics")).toThrow(DriverNotRegisteredError);
+  });
+
+  /**
+   * The same "don't resolve to destroy" rule `disconnectAll()` follows:
+   * for a real driver, constructing one in order to close it opens the
+   * very socket the call exists to release.
+   */
+  it("never resolves a registered-but-unused driver in order to drop it", async () => {
+    const factory = vi.fn(() => ({ name: "analytics", disconnect: async () => {} }));
+
+    const manager = new FakeManager(new Application());
+    manager.extend("analytics", factory);
+
+    expect(await manager.forget("analytics")).toBe(true);
+    expect(factory).not.toHaveBeenCalled();
+  });
+
+  it("leaves other drivers alone", async () => {
+    const disconnect = vi.fn(async () => {});
+
+    const manager = new FakeManager(new Application());
+    manager.extend("sqlite", () => ({ name: "sqlite", disconnect }));
+    manager.extend("analytics", () => ({ name: "analytics" }));
+    manager.driver();
+    manager.driver("analytics");
+
+    await manager.forget("analytics");
+
+    expect(disconnect).not.toHaveBeenCalled();
+    expect(manager.resolvedDriverNames()).toEqual(["sqlite"]);
+  });
+
+  it("returns false for a name it never knew", async () => {
+    const manager = new FakeManager(new Application());
+
+    expect(await manager.forget("nope")).toBe(false);
+  });
+
+  it("skips a driver with no disconnect()", async () => {
+    const manager = new FakeManager(new Application());
+    manager.extend("sqlite", () => ({ name: "sqlite" }));
+    manager.driver();
+
+    await expect(manager.forget("sqlite")).resolves.toBe(true);
+  });
+
+  /**
+   * Shutdown is best-effort because one unreachable server must not
+   * strand another's pool. A single deliberate drop is not: the caller
+   * asked about one driver and can handle the answer.
+   */
+  it("propagates a disconnect failure, and still drops the driver", async () => {
+    const manager = new FakeManager(new Application());
+    manager.extend("sqlite", () => ({
+      name: "sqlite",
+      disconnect: async () => {
+        throw new Error("boom");
+      },
+    }));
+    manager.driver();
+
+    await expect(manager.forget("sqlite")).rejects.toThrow("boom");
+    expect(manager.isResolved("sqlite")).toBe(false);
+  });
+});
+
 describe("Manager.disconnectAll()", () => {
   it("disconnects every resolved driver that has a disconnect()", async () => {
     const sqlite = vi.fn(async () => {});

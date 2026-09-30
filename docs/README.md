@@ -148,6 +148,7 @@ Mahi is a set of packages, not a monolith. Install what you use.
 | `@mahiframework/events` | Event dispatcher, listeners |
 | `@mahiframework/broadcasting` | Websocket broadcasting |
 | `@mahiframework/storage` | Filesystem disks |
+| `@mahiframework/storage-sftp` | An SFTP disk, for files on a remote host |
 | `@mahiframework/mail` | Mailables, SMTP/log transports |
 | `@mahiframework/notifications` | Multi-channel notifications |
 | `@mahiframework/encryption` | Encrypter, hasher, signer |

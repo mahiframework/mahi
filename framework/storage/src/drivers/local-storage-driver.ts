@@ -5,6 +5,7 @@ import { randomBytes } from "node:crypto";
 import { Readable, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { joinPublicUrl } from "../public-url.js";
+import { CommittingWriteStream } from "../committing-write-stream.js";
 import { FileNotFoundException } from "../exceptions.js";
 import type { StorageDriver, StreamSource } from "../storage-driver.js";
 
@@ -115,7 +116,20 @@ export class LocalStorageDriver implements StorageDriver {
   }
 
   async get(path: string): Promise<Buffer> {
-    return fs.readFile(await this.resolveReal(path));
+    const full = await this.resolveReal(path);
+
+    try {
+      return await fs.readFile(full);
+    } catch (error) {
+      // A missing file is the typed exception, like every other
+      // read-oriented method, rather than a bare ENOENT that a caller
+      // would have to match on `code` to recognise.
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new FileNotFoundException(path);
+      }
+
+      throw error;
+    }
   }
 
   async exists(path: string): Promise<boolean> {
@@ -274,24 +288,18 @@ export class LocalStorageDriver implements StorageDriver {
       return createWriteStream(full, { flags: "a" });
     }
 
-    // Write to a temp sibling and rename on `finish`, so a crashed or
-    // aborted write never leaves a partial file visible at the final path.
+    // Write to a temp sibling and rename into place once the caller has
+    // finished, so a crashed or aborted write never leaves a partial file
+    // visible at the final path. `CommittingWriteStream` is what makes
+    // `finish` fire *after* the rename, so a caller that awaits it can
+    // immediately read the file back.
     const temp = `${full}.${randomBytes(6).toString("hex")}.tmp`;
-    const stream = createWriteStream(temp, { flags: "w" });
-    let renamed = false;
-    stream.on("finish", () => {
-      renamed = true;
-      fs.rename(temp, full).catch((error) => stream.emit("error", error));
-    });
-    const cleanup = (): void => {
-      if (!renamed) {
-        void fs.rm(temp, { force: true }).catch(() => {});
-      }
-    };
-    stream.on("error", cleanup);
-    stream.on("close", cleanup);
 
-    return stream;
+    return new CommittingWriteStream({
+      target: createWriteStream(temp, { flags: "w" }),
+      commit: () => fs.rename(temp, full),
+      discard: () => fs.rm(temp, { force: true }),
+    });
   }
 
   async putStream(path: string, source: StreamSource): Promise<void> {

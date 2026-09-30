@@ -10,7 +10,7 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# The database and Redis suites turn an unreachable engine into a failure
+# The database, Redis and SFTP suites turn an unreachable service into a failure
 # rather than a skip, so a broken service cannot report green by testing
 # nothing. That is keyed off `CI_STRICT_MODE`, NOT `CI`: GitHub Actions sets
 # `CI=true` on every runner, so keying off it made the service-free `check`
@@ -65,10 +65,10 @@ jobs:
       - name: Test (SQLite)
         run: pnpm test
 
-  # Full suite against real MySQL 8, Postgres 16, and Redis 7. CI_STRICT_MODE=true turns an
-  # unreachable engine into a failure.
+  # Full suite against real MySQL 8, Postgres 16, Redis 7, and an SFTP
+  # server. CI_STRICT_MODE=true turns an unreachable service into a failure.
   integration:
-    name: integration (mysql / postgres / redis)
+    name: integration (mysql / postgres / redis / sftp)
     runs-on: ubuntu-latest
     needs: check
     services:
@@ -103,6 +103,21 @@ jobs:
           - 6379:6379
         options: >-
           --health-cmd="redis-cli ping"
+          --health-interval=3s
+          --health-timeout=5s
+          --health-retries=20
+      # The SFTP driver's suite runs against a real SSH server. A service
+      # container takes no command, so the account is declared through
+      # `SFTP_USERS` rather than as an argument, and `upload` is the
+      # writable subdirectory the image creates inside the chrooted home.
+      sftp:
+        image: atmoz/sftp:alpine
+        ports:
+          - 2222:22
+        env:
+          SFTP_USERS: "mahi:mahi:1000:100:upload"
+        options: >-
+          --health-cmd="nc -z 127.0.0.1 22"
           --health-interval=3s
           --health-timeout=5s
           --health-retries=20

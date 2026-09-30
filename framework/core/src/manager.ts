@@ -157,6 +157,34 @@ export abstract class Manager<TDriver = unknown> {
   }
 
   /**
+   * Drop one driver: disconnect the resolved instance if there is one,
+   * and forget its factory, so the name is unregistered rather than
+   * merely uncached. Returns `true` if anything was actually dropped.
+   *
+   * `extend()` already invalidates a cached instance, so re-registering a
+   * name is enough to *replace* a driver. This is for the case where the
+   * name goes away entirely, a disk built from a database row whose row
+   * was deleted, say. Without it the only thing that ever calls
+   * `disconnect()` is `disconnectAll()`, so dropping a connected driver
+   * by any other route leaks whatever socket it was holding.
+   *
+   * Disconnection failures propagate: unlike shutdown, this is a
+   * deliberate single-target operation whose caller is in a position to
+   * handle the error.
+   */
+  async forget(name: string): Promise<boolean> {
+    const driver = this.resolved.get(name);
+    const wasResolved = this.resolved.delete(name);
+    const wasRegistered = this.creators.delete(name);
+
+    if (isDisconnectable(driver)) {
+      await driver.disconnect();
+    }
+
+    return wasResolved || wasRegistered;
+  }
+
+  /**
    * Call `disconnect()` on every resolved driver that has one, then
    * forget them, so the manager can resolve fresh ones if it is somehow
    * used again.
