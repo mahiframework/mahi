@@ -29,4 +29,19 @@ export interface SchemaGrammar {
 
   /** Drop every user table (used by `migrate:fresh`). */
   dropAllTables(db: Kysely<any>): Promise<void>;
+
+  /**
+   * Delete every row from every user table, leaving the schema in place
+   * and restarting auto-increment counters at 1. The between-tests reset
+   * behind `@mahiframework/testing`'s `clearDatabase()`.
+   *
+   * Skips the framework's own migration ledger (see `FRAMEWORK_TABLES`),
+   * which must survive a row wipe or the schema and the ledger disagree.
+   *
+   * Identity is restarted on every dialect rather than left to each
+   * engine's default (Postgres `TRUNCATE` continues, MySQL `DELETE`
+   * continues but `TRUNCATE` resets, SQLite keeps `sqlite_sequence`), so
+   * a test asserting on a generated id behaves the same everywhere.
+   */
+  truncateAllTables(db: Kysely<any>): Promise<void>;
 }

@@ -1,6 +1,7 @@
 import { sql, type Kysely } from "kysely";
 import type { ColumnDefinition } from "../column-definition.js";
 import type { SchemaGrammar } from "../dialect.js";
+import { isFrameworkTable } from "../framework-tables.js";
 import { compileColumnType } from "./column-types.js";
 import { makeNativeAlterGrammar } from "./native-alter-grammar.js";
 import { quoteDoubleQuoted } from "../quote-identifier.js";
@@ -112,9 +113,50 @@ async function dropAllTables(db: Kysely<any>): Promise<void> {
   }
 }
 
+/**
+ * Empty every user table in the **current schema**, keeping the schema
+ * itself and restarting every identity sequence.
+ *
+ * One `TRUNCATE a, b, c` rather than a statement per table: tables
+ * truncated together in a single statement satisfy each other's foreign
+ * keys, so the dependency ordering that would otherwise be needed (and
+ * that nothing here can derive — Kysely's introspection reports no
+ * constraint metadata) stops mattering.
+ *
+ * `RESTART IDENTITY` resets the `serial`/`bigserial` sequences behind
+ * `increments()`/`id()` columns, which `TRUNCATE` leaves alone by
+ * default.
+ *
+ * `CASCADE` covers a foreign key from a table *outside* the list, a
+ * view's dependent, or one in another schema. That reach is why the
+ * `current_schema()` filter below is not optional — see
+ * `dropAllTables()` for the same hazard stated at length.
+ */
+async function truncateAllTables(db: Kysely<any>): Promise<void> {
+  const { rows } = await sql<{ schema: string }>`select current_schema() as schema`.execute(db);
+  const current = rows[0]?.schema ?? "public";
+
+  const tables = await db.introspection.getTables();
+
+  const targets = tables
+    .filter((table) => !table.isView)
+    .filter((table) => table.schema === undefined || table.schema === current)
+    .filter((table) => !isFrameworkTable(table.name))
+    .map((table) => `${quoteDoubleQuoted(current)}.${quoteDoubleQuoted(table.name)}`);
+
+  // `TRUNCATE` with no tables is a syntax error, and an empty schema is
+  // a legitimate state (nothing migrated yet).
+  if (targets.length === 0) {
+    return;
+  }
+
+  await sql.raw(`TRUNCATE TABLE ${targets.join(", ")} RESTART IDENTITY CASCADE`).execute(db);
+}
+
 export const postgresGrammar: SchemaGrammar = {
   dialect: "postgres",
   compileCreate,
   compileAlter,
   dropAllTables,
+  truncateAllTables,
 };

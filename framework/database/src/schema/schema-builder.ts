@@ -79,4 +79,22 @@ export class SchemaBuilder {
   async dropAllTables(): Promise<void> {
     await grammarFor(this.dialect).dropAllTables(this.db);
   }
+
+  /**
+   * Delete every row from every user table, leaving the schema in place
+   * and restarting auto-increment counters at 1. The cheap between-tests
+   * reset behind `@mahiframework/testing`'s `clearDatabase()`, and far
+   * cheaper than `dropAllTables()` plus a re-migrate.
+   *
+   * The framework's own `migrations`/`migrations_lock` ledger is
+   * preserved — the schema survives, so the record of how it got there
+   * has to as well.
+   *
+   * Delegates to the dialect's grammar, which knows how to clear tables
+   * without a foreign-key dependency order (no engine here reports one)
+   * and how to reset identity, which each spells differently.
+   */
+  async truncateAllTables(): Promise<void> {
+    await grammarFor(this.dialect).truncateAllTables(this.db);
+  }
 }

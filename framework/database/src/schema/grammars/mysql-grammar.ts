@@ -1,6 +1,7 @@
 import { sql, type Kysely } from "kysely";
 import type { ColumnDefinition } from "../column-definition.js";
 import type { SchemaGrammar } from "../dialect.js";
+import { isFrameworkTable } from "../framework-tables.js";
 import { compileColumnType } from "./column-types.js";
 import { makeNativeAlterGrammar } from "./native-alter-grammar.js";
 import { quoteBacktick } from "../quote-identifier.js";
@@ -100,9 +101,45 @@ async function dropAllTables(db: Kysely<any>): Promise<void> {
   });
 }
 
+/**
+ * Empty every user table, keeping the schema.
+ *
+ * `TRUNCATE` rather than `DELETE` because it resets `AUTO_INCREMENT`,
+ * which `DELETE` does not. That costs the statement its transactional
+ * nature — `TRUNCATE` is DDL on MySQL and implicitly commits — but this
+ * runs between tests, not inside one, and the identity reset is the
+ * point.
+ *
+ * Runs inside `db.connection()` for the same reason `dropAllTables()`
+ * does: `FOREIGN_KEY_CHECKS` is a **session** variable, so issued
+ * against the pool it applies to whichever connection served that one
+ * statement while the truncates that follow may be handed different
+ * ones, leaving enforcement on for them and failing on the first table
+ * another references.
+ */
+async function truncateAllTables(db: Kysely<any>): Promise<void> {
+  await db.connection().execute(async (connection) => {
+    await sql`SET FOREIGN_KEY_CHECKS = 0`.execute(connection);
+    try {
+      const tables = await connection.introspection.getTables();
+
+      for (const table of tables) {
+        if (table.isView || isFrameworkTable(table.name)) {
+          continue;
+        }
+
+        await sql.raw(`TRUNCATE TABLE ${quoteBacktick(table.name)}`).execute(connection);
+      }
+    } finally {
+      await sql`SET FOREIGN_KEY_CHECKS = 1`.execute(connection);
+    }
+  });
+}
+
 export const mysqlGrammar: SchemaGrammar = {
   dialect: "mysql",
   compileCreate,
   compileAlter,
   dropAllTables,
+  truncateAllTables,
 };

@@ -48,4 +48,8 @@ export class Schema extends Facade<SchemaBuilder>(() => SCHEMA_TOKEN) {
   static dropAllTables(): Promise<void> {
     return this.instance().dropAllTables();
   }
+
+  static truncateAllTables(): Promise<void> {
+    return this.instance().truncateAllTables();
+  }
 }

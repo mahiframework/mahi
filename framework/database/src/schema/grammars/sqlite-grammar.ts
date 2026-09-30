@@ -3,6 +3,7 @@ import type { Blueprint } from "../blueprint.js";
 import type { ColumnDefinition } from "../column-definition.js";
 import type { ForeignKeyDefinition } from "../foreign-key-definition.js";
 import type { SchemaGrammar } from "../dialect.js";
+import { isFrameworkTable } from "../framework-tables.js";
 import {
   introspectTable,
   type IntrospectedColumn,
@@ -427,9 +428,53 @@ async function dropAllTables(db: Kysely<any>): Promise<void> {
   }
 }
 
+/**
+ * Empty every user table, keeping the schema. Foreign keys are disabled
+ * for the duration so the tables can be cleared in any order, the same
+ * trick `dropAllTables()` uses and for the same reason: there is no
+ * dependency-ordering information to sort by.
+ *
+ * SQLite has no `TRUNCATE`; a `DELETE` with no `WHERE` is the documented
+ * equivalent and the engine optimises it into the same bulk operation.
+ *
+ * `sqlite_sequence` is the identity reset. It is created lazily by the
+ * engine, the first time a table is declared `AUTOINCREMENT` (which this
+ * framework emits for `increments()`/`id()` columns, see
+ * `column-types.ts`), so its presence is checked against `sqlite_master`
+ * rather than assumed. It cannot be found through `getTables()`: Kysely's
+ * introspector filters `sqlite_%` out.
+ */
+async function truncateAllTables(db: Kysely<any>): Promise<void> {
+  await sql`PRAGMA foreign_keys = OFF`.execute(db);
+  try {
+    const tables = await db.introspection.getTables();
+
+    for (const table of tables) {
+      if (table.isView || table.name.startsWith("sqlite_") || isFrameworkTable(table.name)) {
+        continue;
+      }
+
+      await db.deleteFrom(table.name).execute();
+    }
+
+    const sequence = await sql<{
+      name: string;
+    }>`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'`.execute(
+      db,
+    );
+
+    if (sequence.rows.length > 0) {
+      await sql`DELETE FROM sqlite_sequence`.execute(db);
+    }
+  } finally {
+    await sql`PRAGMA foreign_keys = ON`.execute(db);
+  }
+}
+
 export const sqliteGrammar: SchemaGrammar = {
   dialect: "sqlite",
   compileCreate,
   compileAlter,
   dropAllTables,
+  truncateAllTables,
 };
