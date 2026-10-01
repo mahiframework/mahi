@@ -996,9 +996,7 @@ for (const engine of ENGINES) {
       await (ada as any).relations.stampedTags().attach([tag.id]);
       const [before] = await table("xd_author_tag").get();
 
-      await (ada as any).relations
-        .stampedTags()
-        .sync({ [String(tag.id)]: { weight: 4 } }, false);
+      await (ada as any).relations.stampedTags().sync({ [String(tag.id)]: { weight: 4 } }, false);
 
       const [after] = await table("xd_author_tag").get();
       expect(String(after.created_at)).toBe(String(before.created_at));
