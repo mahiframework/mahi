@@ -516,8 +516,8 @@ importers:
         specifier: workspace:*
         version: link:../facades
       nodemailer:
-        specifier: ^6.9.16
-        version: 6.10.1
+        specifier: ^10.0.10
+        version: 10.0.10
     devDependencies:
       '@types/nodemailer':
         specifier: ^6.4.17
@@ -1828,13 +1828,13 @@ packages:
     resolution: {integrity: sha512-LA4ZjwlnUblHVgq0oBF3Jl/6h/Nvs5fzBLwdEF4nuxnFdsfajde4WfxtJr3CaiH+F6ewcIB/q4jQ4UzPyid+CQ==}
     hasBin: true
 
+  nodemailer@10.0.10:
+    resolution: {integrity: sha512-He9XskOFms62SyAKkLu8CcGcYHAo+BSHSsORI8s4PJH8qZgZY4L4lDfvyN0twvmbpyG+eGrxpyBlskj9d9rJ8A==}
+    engines: {node: '>=20.0.0'}
+
   nodemailer@10.0.3:
     resolution: {integrity: sha512-h5c8ypcMoOIh44bIcVROvTDbjRdOJX8AXTkxMht2C92HlSjkG+/8kjoqmNPypfjQaVNaUHWyZ3tqs5I3K91F3g==}
     engines: {node: '>=20.0.0'}
-
-  nodemailer@6.10.1:
-    resolution: {integrity: sha512-Z+iLaBGVaSjbIzQ4pX6XV41HrooLsQ10ZWPUehGmuantvzWoDVBnmsdUcOIDM1t+yPor5pDhVlDESgOMEGxhHA==}
-    engines: {node: '>=6.0.0'}
 
   obug@2.1.4:
     resolution: {integrity: sha512-4a+OsYv9UktOJKE+l1A4OufDgdRF9PifWj+tJnHURo/P+WOxpG4GzUFL9qCalmWauao6ogiG+QvnCovwPoyAWA==}
@@ -3039,9 +3039,9 @@ snapshots:
 
   node-gyp-build@4.8.4: {}
 
-  nodemailer@10.0.3: {}
+  nodemailer@10.0.10: {}
 
-  nodemailer@6.10.1: {}
+  nodemailer@10.0.3: {}
 
   obug@2.1.4: {}
 
