@@ -41,7 +41,7 @@ for (const engine of ENGINES) {
       name: string;
       posts: HasMany<Post>;
       tags: BelongsToMany<Tag>;
-      pivotTags: BelongsToMany<Tag, { weight: number }>;
+      pivotTags: BelongsToMany<Tag, { weight: number; note: string | null }>;
       stampedTags: BelongsToMany<Tag>;
     }
 
@@ -117,7 +117,7 @@ for (const engine of ENGINES) {
           pivotTable: "xd_author_tag",
           foreignPivotKey: "author_id",
           relatedPivotKey: "tag_id",
-          withPivot: ["weight"],
+          withPivot: ["weight", "note"],
         }),
         stampedTags: belongsToMany(() => Tag, {
           pivotTable: "xd_author_tag",
@@ -197,8 +197,12 @@ for (const engine of ENGINES) {
         t.unsignedBigInteger("author_id");
         t.unsignedBigInteger("tag_id");
         // Pivot payload + timestamp columns, for the relationship-write
-        // cases below (attach with attributes / withTimestamps).
+        // cases below (attach with attributes / withTimestamps). Two
+        // payload columns, so a sync() whose ids supply different ones
+        // has something to leave alone. Deliberately no unique index on
+        // (author_id, tag_id): the batched pivot UPDATE must not need one.
         t.integer("weight").nullable();
+        t.string("note").nullable();
         t.timestamps();
       });
       await h.create("xd_comments", (t: Blueprint) => {
@@ -945,6 +949,61 @@ for (const engine of ENGINES) {
 
       const found = await (ada as any).relations.pivotTags().first();
       expect(Number(found.pivot.weight)).toBe(9);
+    });
+
+    it("sync() writes every id's pivot payload in one UPDATE (X8)", async () => {
+      // The batched pivot UPDATE assigns each column a CASE over the
+      // related key, which is the most dialect-exposed statement in the
+      // write path: Postgres has to infer the untyped THEN parameters'
+      // types (the `ELSE <column>` branch is what lets it), and the whole
+      // statement runs without any unique index on the pivot pair.
+      const ada = await Author.create({ name: "Ada" });
+      const tags = [];
+
+      for (const label of ["a", "b", "c"]) {
+        tags.push(await Tag.create({ label }));
+      }
+
+      await (ada as any).relations
+        .pivotTags()
+        .attach(Object.fromEntries(tags.map((t) => [String(t.id), { weight: 0, note: "seed" }])));
+
+      // Disjoint payloads: the first two rewrite one column each and must
+      // keep the other, the third is given nothing at all.
+      const result = await (ada as any).relations.pivotTags().sync({
+        [String(tags[0]!.id)]: { weight: 9 },
+        [String(tags[1]!.id)]: { note: "rewritten" },
+        [String(tags[2]!.id)]: {},
+      });
+
+      expect(result.updated.map(String).sort()).toEqual(
+        [tags[0]!.id, tags[1]!.id].map(String).sort(),
+      );
+      expect(result.detached).toEqual([]);
+
+      const rows = await table("xd_author_tag").orderBy("tag_id").get();
+      expect(rows.map((r: any) => [Number(r.weight), r.note])).toEqual([
+        [9, "seed"],
+        [0, "rewritten"],
+        [0, "seed"],
+      ]);
+    });
+
+    it("sync() refreshes pivot updated_at without rewriting created_at (X8)", async () => {
+      const ada = await Author.create({ name: "Ada" });
+      const tag = await Tag.create({ label: "a" });
+
+      await (ada as any).relations.stampedTags().attach([tag.id]);
+      const [before] = await table("xd_author_tag").get();
+
+      await (ada as any).relations
+        .stampedTags()
+        .sync({ [String(tag.id)]: { weight: 4 } }, false);
+
+      const [after] = await table("xd_author_tag").get();
+      expect(String(after.created_at)).toBe(String(before.created_at));
+      expect(after.updated_at).not.toBeNull();
+      expect(Number(after.weight)).toBe(4);
     });
 
     it("syncWithPivotValues() applies the same pivot values to every row (X8)", async () => {

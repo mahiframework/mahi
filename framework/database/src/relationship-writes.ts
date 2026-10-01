@@ -1,4 +1,4 @@
-import type { Kysely } from "kysely";
+import { sql, type Kysely } from "kysely";
 import { sameKey } from "./key-identity.js";
 import type { EloquentBuilder } from "./eloquent-builder.js";
 import type { AnyModelClass, Model } from "./model.js";
@@ -86,7 +86,19 @@ export type RelatedKey = SqlBinding | Model;
  */
 export type AttachIds = RelatedKey | RelatedKey[] | Record<string, PivotAttributes>;
 
-/** What `sync()`/`syncWithoutDetaching()` report, Laravel's three buckets, same names. */
+/**
+ * What `sync()`/`syncWithoutDetaching()` report, Laravel's three buckets,
+ * same names.
+ *
+ * `updated` is every id that was **already linked and was supplied
+ * attributes**, which is what it has always meant in practice: the diff
+ * reads only the pivot's keys (`currentPivotIds()`), never its payloads,
+ * so it has never been in a position to compare an old value against a
+ * new one and report "changed". Deriving it from the pre-write link set
+ * rather than from an affected-row count also makes it mean the same
+ * thing on every engine, where MySQL reports 0 affected rows for an
+ * update that wrote identical values and the others report 1.
+ */
 export interface SyncResult {
   attached: SqlBinding[];
   detached: SqlBinding[];
@@ -157,8 +169,8 @@ export interface BelongsToManyWrites {
   /**
    * Makes the pivot match `ids` exactly: inserts links that are missing,
    * deletes links not present (unless `detaching` is `false`), and
-   * updates the pivot attributes of links that are present but whose
-   * supplied attributes differ.
+   * rewrites the pivot attributes of links that are already present and
+   * were supplied some.
    *
    *   await post.relations.tags().sync([1, 2, 3]);
    *   await post.relations.tags().sync({ 1: { weight: 9 } });
@@ -168,6 +180,11 @@ export interface BelongsToManyWrites {
    *
    * The `updated` bucket only ever contains ids given *with* attributes:
    * `sync([1,2,3])` supplies none, so it never reports an update.
+   *
+   * **Four statements at most, whatever the size of `ids`**: the SELECT
+   * that reads the current links, then one UPDATE
+   * (`batchUpdatePivotRows()`), one INSERT (`insertPivotRows()`) and one
+   * DELETE (`deletePivotRows()`), each skipped when its bucket is empty.
    */
   sync(ids: AttachIds, detaching?: boolean): Promise<SyncResult>;
 
@@ -199,6 +216,11 @@ export interface BelongsToManyWrites {
    * Updates the pivot row for one already-attached id, returning the
    * number of pivot rows written (0 if the link doesn't exist).
    * Stamps `updated_at` when the relation declares `withTimestamps`.
+   *
+   * One id, so one plain `UPDATE` (`updatePivotRow()`), not the batched
+   * form `sync()` uses. This is also the only caller that needs the
+   * affected-row count, since "the link doesn't exist" is a result here
+   * rather than something the caller already knows.
    */
   updateExistingPivot(id: RelatedKey, attributes: PivotAttributes): Promise<number>;
 }
@@ -543,6 +565,107 @@ async function updatePivotRow(
 }
 
 /**
+ * Updates the pivot rows for `pairs` as a **single UPDATE**, each column
+ * assigned a `CASE` over the related key:
+ *
+ *   UPDATE post_tag
+ *      SET weight = CASE WHEN tag_id = ? THEN ? WHEN tag_id = ? THEN ? ELSE weight END,
+ *          updated_at = ?
+ *    WHERE post_id = ? AND tag_id IN (?, ?)
+ *
+ * Every pair must already be linked; this writes, it never inserts.
+ *
+ * Laravel updates one row per statement here, and so did this, but each
+ * one was *awaited* inside `runSync()`'s loop, making a refresh of n
+ * attribute-carrying links n sequential round trips with the
+ * transaction's row locks held across all of them. The insert and delete
+ * halves of `sync()` were already single statements
+ * (`insertPivotRows()`, `deletePivotRows()`); this is the third.
+ *
+ * ## Why `CASE`, and not an upsert
+ *
+ * `ON CONFLICT ... DO UPDATE` would fold this into the insert, but a
+ * multi-row `INSERT` must name the same columns for every row, so
+ * `sync({ 1: { weight: 9 }, 2: { note: "x" } })` would pad the gaps and
+ * overwrite row 1's `note` with a default. Laravel's per-row `UPDATE`
+ * names only the columns that id supplied, which is what `ELSE <column>`
+ * reproduces: a matched row whose payload omitted a column keeps the
+ * value it had. The upsert would also need a unique index on the pivot's
+ * key pair, which `attach()` does not require and which MySQL would not
+ * complain about the absence of.
+ *
+ * `ELSE <column>` earns its place twice over: it is also the typed
+ * anchor Postgres resolves the untyped `THEN` parameters against, which
+ * a bare `CASE WHEN ... THEN $1 END` has no way to do.
+ *
+ * ## Timestamps
+ *
+ * `updated_at` is stamped once for every matched row, and `created_at`
+ * is never assigned *by this function*, so a refresh cannot rewrite when
+ * a link was made. An id that passes either column explicitly still
+ * wins for its own row, matching `insertPivotRows()`, where a payload's
+ * own `created_at` also beats the stamp. For `updated_at` the stamp
+ * becomes that `CASE`'s fallback rather than the column, because every
+ * row the statement matches is being written and so none of them should
+ * keep an older value.
+ *
+ * A column whose value is an explicit `null` is written, clearing it; an
+ * `undefined` one is treated as "not supplied" and skipped.
+ */
+async function batchUpdatePivotRows(
+  owner: AnyModelClass,
+  spec: PivotWriteSpec,
+  pairs: [SqlBinding, PivotAttributes][],
+): Promise<number> {
+  if (pairs.length === 0) {
+    return 0;
+  }
+
+  // First-seen order across every payload, so the SET list is stable
+  // rather than dependent on which id happened to carry which column.
+  const columns: string[] = [];
+
+  for (const [, attributes] of pairs) {
+    for (const [column, value] of Object.entries(attributes)) {
+      if (value !== undefined && !columns.includes(column)) {
+        columns.push(column);
+      }
+    }
+  }
+
+  const now = spec.withTimestamps ? currentTimestampFor(owner.resolveConnection()) : undefined;
+  const values: Record<string, unknown> = {};
+
+  for (const column of columns) {
+    const branches = pairs
+      .filter(([, attributes]) => attributes[column] !== undefined)
+      .map(
+        ([key, attributes]) =>
+          sql`when ${sql.ref(spec.relatedPivotKey)} = ${key} then ${attributes[column]}`,
+      );
+
+    const fallback = column === "updated_at" && now !== undefined ? now : sql.ref(column);
+
+    values[column] = sql`case ${sql.join(branches, sql` `)} else ${fallback} end`;
+  }
+
+  if (now !== undefined && !columns.includes("updated_at")) {
+    values.updated_at = now;
+  }
+
+  if (Object.keys(values).length === 0) {
+    return 0;
+  }
+
+  return pivotQuery(owner, spec)
+    .whereIn(
+      spec.relatedPivotKey,
+      pairs.map(([key]) => key),
+    )
+    .update(values);
+}
+
+/**
  * Runs `work` inside a transaction on this model's connection.
  *
  * `transaction()` nests via savepoint when one is already open, so a
@@ -569,6 +692,7 @@ async function runSync(
     const attached: SqlBinding[] = [];
     const updated: SqlBinding[] = [];
     const toInsert: [SqlBinding, PivotAttributes][] = [];
+    const toUpdate: [SqlBinding, PivotAttributes][] = [];
 
     for (const [key, attributes] of desired) {
       if (!current.some((existing) => sameKey(existing, key))) {
@@ -582,14 +706,12 @@ async function runSync(
       // `sync([1,2,3])` must not rewrite pivot payloads it said nothing
       // about, nor claim in its result that it did.
       if (Object.keys(attributes).length > 0) {
-        const written = await updatePivotRow(owner, spec, key, attributes);
-
-        if (written > 0) {
-          updated.push(key);
-        }
+        toUpdate.push([key, attributes]);
+        updated.push(key);
       }
     }
 
+    await batchUpdatePivotRows(owner, spec, toUpdate);
     await insertPivotRows(owner, spec, toInsert);
 
     const detached: SqlBinding[] = [];

@@ -843,6 +843,13 @@ await post.relations.tags().updateExistingPivot(1, { weight: 9 });
 savepoint when one is open, so a `sync()` inside your own transaction is
 rolled back with it rather than committing on its own.
 
+**`sync()` is at most four statements, whatever the size of the set**: the
+`SELECT` that reads the current links, then one `UPDATE`, one `INSERT` and
+one `DELETE`, each skipped when it has nothing to do. Re-syncing thirty
+links with pivot attributes costs the same round trips as re-syncing two,
+which matters because that is the shape of a refresh from an upstream
+source: attributes for every id, and almost all of them already linked.
+
 Three behaviours worth pinning down:
 
 - **`detach([])` is a no-op, not "detach all".** Only the no-argument
@@ -854,11 +861,15 @@ Three behaviours worth pinning down:
   `syncWithoutDetaching()` when you mean "ensure linked".
 - **`updated` only ever lists ids you supplied attributes for.** A plain
   `sync([1,2,3])` says nothing about pivot payloads, so it never rewrites
-  or reports them.
+  or reports them. Nor does a payload have to be complete: `sync({ 1: {
+  weight: 9 } })` writes `weight` and leaves that row's other pivot
+  columns as they were.
 
 With `withTimestamps: true`, `attach()` stamps `created_at`/`updated_at`
 and `updateExistingPivot()`/`sync()` refresh `updated_at`, spelled the way
-the connected engine accepts (MySQL rejects the ISO `Z` form).
+the connected engine accepts (MySQL rejects the ISO `Z` form). A link's
+`created_at` is never rewritten, so re-syncing cannot lose when it was
+made.
 
 Pivot attributes are **raw DB-shape values**. A pivot table has no model,
 so there are no casts to apply. Laravel behaves the same way.

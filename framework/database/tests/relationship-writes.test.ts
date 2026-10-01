@@ -7,6 +7,7 @@ import { Model } from "../src/model.js";
 import { Relation } from "../src/morph-map.js";
 import { transaction } from "../src/transaction.js";
 import { UniqueConstraintViolationException } from "../src/exceptions.js";
+import type { SyncResult } from "../src/relationship-writes.js";
 import {
   belongsTo,
   belongsToMany,
@@ -46,7 +47,7 @@ interface PostAttributes {
 
   author: BelongsTo<User>;
   tags: BelongsToMany<Tag>;
-  tagsWithPivot: BelongsToMany<Tag, { weight: number }>;
+  tagsWithPivot: BelongsToMany<Tag, { weight: number; note: string | null }>;
   stampedTags: BelongsToMany<Tag>;
   comments: MorphMany<Comment>;
 }
@@ -148,7 +149,7 @@ class Post extends Model<PostAttributes>()({
       pivotTable: "post_tag",
       foreignPivotKey: "post_id",
       relatedPivotKey: "tag_id",
-      withPivot: ["weight"],
+      withPivot: ["weight", "note"],
     }),
     /** Same pivot with `withTimestamps`, so attach stamps created_at/updated_at. */
     stampedTags: belongsToMany(() => Tag, {
@@ -197,11 +198,52 @@ async function attachedTagIds(app: Application, postId: string): Promise<string[
 
 describe("Relationship writes", () => {
   let app: Application;
+  /** The kind of every statement executed since the last `statementsFor()`. */
+  let statementLog: string[] = [];
+
+  /**
+   * Runs `fn` and returns the kind of each statement it executed
+   * (`"SelectQueryNode"`, `"UpdateQueryNode"`, ...), the `countQueries()`
+   * pattern from `morph-to-many.test.ts` widened past SELECTs because
+   * what matters here is writes.
+   *
+   * Recorded with a `KyselyPlugin` rather than by wrapping the driver's
+   * executor: Kysely gives a transaction its own executor, so an
+   * executor patch would see nothing a `sync()` does. Plugins are copied
+   * onto the transaction's executor and so see everything.
+   *
+   * Kinds rather than a bare count because "4 statements" is only the
+   * right answer if they are the four intended ones, and savepoint
+   * commands have no node kind to report, which usefully leaves the
+   * transaction's own overhead out of the assertion.
+   */
+  const statementsFor = async (fn: () => Promise<unknown>): Promise<string[]> => {
+    statementLog = [];
+    await fn();
+
+    // A copy, so a result held across a later call (comparing two sizes)
+    // isn't still pointing at the live log.
+    return [...statementLog];
+  };
 
   beforeEach(async () => {
     app = new Application();
     const manager = new DatabaseManager(app, { default: "sqlite", connections: {} });
-    manager.extend("sqlite", () => new SqliteDriver({ filename: ":memory:" }));
+    manager.extend("sqlite", () => {
+      const driver = new SqliteDriver({ filename: ":memory:" });
+      (driver as { kysely: typeof driver.kysely }).kysely = driver.kysely.withPlugin({
+        transformQuery(args) {
+          statementLog.push(args.node.kind);
+
+          return args.node;
+        },
+        async transformResult(args) {
+          return args.result;
+        },
+      });
+
+      return driver;
+    });
     app.instance(DATABASE_TOKEN, manager);
     setCurrentApp(app);
 
@@ -250,6 +292,9 @@ describe("Relationship writes", () => {
       .addColumn("post_id", "text", (col) => col.notNull())
       .addColumn("tag_id", "text", (col) => col.notNull())
       .addColumn("weight", "integer")
+      // A second payload column, so a sync() whose ids supply different
+      // columns has something to leave alone.
+      .addColumn("note", "text")
       .addColumn("created_at", "text")
       .addColumn("updated_at", "text")
       .addPrimaryKeyConstraint("post_tag_pk", ["post_id", "tag_id"])
@@ -467,6 +512,50 @@ describe("Relationship writes", () => {
       expect(pivot.created_at).toEqual(expect.any(String));
     });
 
+    it("refreshes updated_at on an updated row without touching created_at", async () => {
+      // A refresh that rewrote `created_at` would lose when the link was
+      // made, which no amount of re-syncing should be able to do.
+      const post = (await Post.find("p1"))!;
+      await post.relations.stampedTags().attach({ t1: { weight: 1 }, t2: { weight: 2 } });
+
+      const before = await pivotRows(app, "p1");
+      // Both rows were stamped by one `attach()`, so one value covers them.
+      const createdAt = before[0]!.created_at as string;
+      await post.relations.stampedTags().sync({ t1: { weight: 9 }, t3: { weight: 3 } }, false);
+
+      const after = await pivotRows(app, "p1");
+      const byId = new Map(after.map((row) => [row.tag_id, row]));
+
+      // Updated: same created_at, a fresh updated_at.
+      expect(byId.get("t1")!.created_at).toBe(createdAt);
+      expect(byId.get("t1")!.updated_at).toEqual(expect.any(String));
+      expect(byId.get("t1")!.weight).toBe(9);
+      // Not in the synced set at all, so outside the UPDATE's WHERE and
+      // untouched down to its stamp.
+      expect(byId.get("t2")!.created_at).toBe(createdAt);
+      expect(byId.get("t2")!.updated_at).toBe(createdAt);
+      expect(byId.get("t2")!.weight).toBe(2);
+      // Inserted: both stamps, equal to each other.
+      expect(byId.get("t3")!.created_at).toEqual(expect.any(String));
+      expect(byId.get("t3")!.updated_at).toBe(byId.get("t3")!.created_at);
+    });
+
+    it("lets one id's explicit updated_at win while the others take the stamp", async () => {
+      const post = (await Post.find("p1"))!;
+      await post.relations.stampedTags().attach(["t1", "t2"]);
+
+      await post.relations
+        .stampedTags()
+        .sync({ t1: { updated_at: "2001-01-01 00:00:00" }, t2: { weight: 5 } });
+
+      const rows = await pivotRows(app, "p1");
+      const byId = new Map(rows.map((row) => [row.tag_id, row]));
+
+      expect(byId.get("t1")!.updated_at).toBe("2001-01-01 00:00:00");
+      expect(byId.get("t2")!.updated_at).not.toBe("2001-01-01 00:00:00");
+      expect(byId.get("t2")!.updated_at).toEqual(expect.any(String));
+    });
+
     it("syncWithoutDetaching() adds but never removes", async () => {
       const post = (await Post.find("p1"))!;
       await post.relations.tags().attach(["t2", "t3"]);
@@ -529,6 +618,104 @@ describe("Relationship writes", () => {
       const result = await tag.relations.posts().sync(["p1"]);
 
       expect(result).toEqual({ attached: [], detached: [], updated: [] });
+    });
+  });
+
+  describe("sync() statement count", () => {
+    /** `prefix`-numbered tags, linked to p1 with an empty pivot payload. */
+    async function seedLinked(prefix: string, count: number): Promise<string[]> {
+      const ids = Array.from({ length: count }, (_, i) => `${prefix}${i}`);
+
+      for (const id of ids) {
+        await Tag.create({ id, name: id });
+      }
+
+      const post = (await Post.find("p1"))!;
+      await post.relations.tagsWithPivot().attach(Object.fromEntries(ids.map((id) => [id, {}])));
+
+      return ids;
+    }
+
+    /** `{ id: { weight } }` for `ids`, the refresh shape: attributes for every id. */
+    function withWeights(ids: string[]): Record<string, { weight: number }> {
+      return Object.fromEntries(ids.map((id, i) => [id, { weight: i }]));
+    }
+
+    it("is constant in the number of ids when every id is already linked", async () => {
+      // The refresh case: re-syncing a record's links from upstream
+      // supplies attributes for every id and almost all are present
+      // already. One UPDATE each made this O(n) sequential round trips,
+      // every one of them awaited inside the transaction.
+      const post = (await Post.find("p1"))!;
+
+      const few = await seedLinked("a", 5);
+      const forFew = await statementsFor(() =>
+        post.relations.tagsWithPivot().sync(withWeights(few), false),
+      );
+
+      const many = await seedLinked("b", 50);
+      const forMany = await statementsFor(() =>
+        post.relations.tagsWithPivot().sync(withWeights([...few, ...many]), false),
+      );
+
+      expect(forFew).toEqual(["SelectQueryNode", "UpdateQueryNode"]);
+      expect(forMany).toEqual(forFew);
+    });
+
+    it("is four statements for a mix of new, present and removed ids", async () => {
+      const present = await seedLinked("a", 20);
+      await Tag.create({ id: "n1", name: "n1" });
+      await Tag.create({ id: "n2", name: "n2" });
+
+      const post = (await Post.find("p1"))!;
+      // Keeps all but the last two, rewrites their payloads, adds two.
+      const kept = present.slice(0, -2);
+      const dropped = present.slice(-2);
+
+      let result!: SyncResult;
+      const statements = await statementsFor(async () => {
+        result = await post.relations
+          .tagsWithPivot()
+          .sync({ ...withWeights(kept), n1: { weight: 1 }, n2: { weight: 2 } });
+      });
+
+      expect(statements).toEqual([
+        "SelectQueryNode",
+        "UpdateQueryNode",
+        "InsertQueryNode",
+        "DeleteQueryNode",
+      ]);
+      expect(result.attached).toEqual(["n1", "n2"]);
+      expect(result.updated).toEqual(kept);
+      expect(result.detached.sort()).toEqual([...dropped].sort());
+    });
+
+    it("skips the UPDATE entirely when no id was given attributes", async () => {
+      // A plain `sync([...])` says nothing about payloads, so it must not
+      // issue a write that rewrites them, batched or otherwise.
+      const ids = await seedLinked("a", 5);
+      const post = (await Post.find("p1"))!;
+
+      expect(await statementsFor(() => post.relations.tags().sync(ids, false))).toEqual([
+        "SelectQueryNode",
+      ]);
+    });
+
+    it("writes only the columns each id supplied, leaving the rest alone", async () => {
+      // A multi-row upsert cannot express this: its VALUES rows must
+      // share a column list, so t1's `note` would be padded away.
+      const post = (await Post.find("p1"))!;
+      await post.relations
+        .tagsWithPivot()
+        .attach({ t1: { weight: 1, note: "keep" }, t2: { weight: 2, note: "also" } });
+
+      await post.relations.tagsWithPivot().sync({ t1: { weight: 9 }, t2: { note: "rewritten" } });
+
+      const rows = await pivotRows(app, "p1");
+      expect(rows.map((row) => [row.tag_id, row.weight, row.note])).toEqual([
+        ["t1", 9, "keep"],
+        ["t2", 2, "rewritten"],
+      ]);
     });
   });
 
