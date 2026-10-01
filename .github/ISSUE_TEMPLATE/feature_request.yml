@@ -1,0 +1,78 @@
+name: Feature request
+description: "Propose a feature, or ask for one to be fleshed out."
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Mahi is pre-1.0 and deliberately opinionated. A proposal lands much more easily if it can answer: where does this fit in the existing shape of the framework, and what does it let someone build that they could not build before?
+  - type: input
+    id: summary
+    attributes:
+      label: Feature
+      description: One sentence, phrased as what the framework would be able to do.
+      placeholder: "Retry a failed job with exponential backoff"
+    validations:
+      required: true
+  - type: dropdown
+    id: package
+    attributes:
+      label: Which package would this live in?
+      options:
+        - Not sure / new package
+        - core
+        - auth
+        - authorization
+        - broadcasting
+        - cache
+        - cli
+        - database
+        - datetime
+        - encryption
+        - events
+        - facades
+        - health
+        - http
+        - http-client
+        - mail
+        - notifications
+        - pipeline
+        - process
+        - queue
+        - redis
+        - schedule
+        - snowflake
+        - storage
+        - storage-sftp
+        - testing
+        - tui
+        - validation
+        - create-mahi
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that Mahi makes hard or impossible today? Describe the app you are building, not the API you want.
+      render: markdown
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API
+      description: How would you expect this to look and be used? Include config files, environment variables, and driver options if relevant.
+      render: typescript
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: What have you tried? What is the workaround, and why is it unsatisfying?
+      render: markdown
+    validations:
+      required: false

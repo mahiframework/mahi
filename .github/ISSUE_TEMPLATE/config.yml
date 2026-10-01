@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or "how do I…?"
+    url: https://github.com/mahiframework/mahi/discussions
+    about: For usage questions, ideas, and help with your own app. This repository is for bugs.
+  - name: Support questions
+    url: https://github.com/mahiframework/mahi/blob/main/.github/SUPPORT.md
+    about: "Where to look before asking: documentation, existing issues, and what belongs where."
+  - name: Security vulnerability
+    url: https://github.com/mahiframework/mahi/security/advisories/new
+    about: Report privately, never as a public issue. See SECURITY.md.
+  - name: Documentation issue
+    url: https://github.com/mahiframework/mahi/tree/main/docs
+    about: For documentation fixes, open a pull request against the docs in this repository.

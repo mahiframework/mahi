@@ -1,0 +1,113 @@
+name: Bug report
+description: "Something in Mahi is broken."
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please read the [contribution guide](https://github.com/mahiframework/mahi/blob/main/.github/CONTRIBUTING.md#bug-reports) first.
+
+        If the problem is in your application rather than in the framework, or you are asking how to do something, this is not the right place — see [SUPPORT.md](https://github.com/mahiframework/mahi/blob/main/.github/SUPPORT.md).
+  - type: input
+    id: mahi-version
+    attributes:
+      label: Mahi version
+      description: Run `node scripts/set-version.mjs --print` from the repo, or check your `package.json`.
+      placeholder: "0.1.4"
+    validations:
+      required: true
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js version
+      description: Output of `node --version`.
+      placeholder: "v26.1.0"
+    validations:
+      required: true
+  - type: input
+    id: package-manager
+    attributes:
+      label: Package manager
+      description: Which package manager and version you installed with.
+      placeholder: "pnpm 9.15.0"
+    validations:
+      required: true
+  - type: input
+    id: services
+    attributes:
+      label: Database / Redis / SFTP
+      description: Which services your app is using, and their versions. Leave blank if none.
+      placeholder: "MySQL 8.4 for macOS 15.5 on arm64 (Homebrew), Redis 7"
+    validations:
+      required: false
+  - type: dropdown
+    id: package
+    attributes:
+      label: Which package is affected?
+      description: Pick the closest one. `core` if several are involved, or if you are unsure.
+      options:
+        - core
+        - auth
+        - authorization
+        - broadcasting
+        - cache
+        - cli
+        - database
+        - datetime
+        - encryption
+        - events
+        - facades
+        - health
+        - http
+        - http-client
+        - mail
+        - notifications
+        - pipeline
+        - process
+        - queue
+        - redis
+        - schedule
+        - snowflake
+        - storage
+        - storage-sftp
+        - testing
+        - tui
+        - validation
+        - create-mahi
+        - docs
+        - Not sure / more than one
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened, and what did you expect to happen instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: |
+        The smallest sequence that shows the problem. A GitHub repository is best — `npm create mahi@latest bug-report --github --public` gets you a starting point.
+      render: markdown
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs, stack traces, or failing test output
+      description: Paste the output, not a screenshot. Wrap it in a code block.
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else?
+      description: Workarounds you found, or a related issue you already read.
+    validations:
+      required: false

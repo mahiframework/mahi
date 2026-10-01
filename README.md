@@ -3,19 +3,50 @@
 > **Work in progress.** Mahi is still being built. Things will change,
 > break, and get renamed without warning. Don't use it in production yet.
 
-A TypeScript application framework for building APIs and services on
-Node.js, service providers with a two-stage `register()`/`boot()`
-lifecycle, a service container, Manager-based driver resolution, an
-expressive ORM, an HTTP kernel (Hono), a CLI kernel (Commander), queues,
-scheduling, and an event system. All plugin-extensible.
-
-**[Read the documentation →](https://bradietilley.dev/mahi/dev-main)**
+[![CI](https://github.com/mahiframework/mahi/actions/workflows/ci.yml/badge.svg)](https://github.com/mahiframework/mahi/actions/workflows/ci.yml)
+[![Release](https://github.com/mahiframework/mahi/actions/workflows/release.yml/badge.svg)](https://github.com/mahiframework/mahi/actions/workflows/release.yml)
+[![npm](https://img.shields.io/npm/v/@mahiframework/core?label=npm)](https://www.npmjs.com/package/@mahiframework/core)
+[![node](https://img.shields.io/node/v/@mahiframework/core)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![license](https://img.shields.io/github/license/mahiframework/mahi)](./LICENSE)
+[![docs](https://img.shields.io/badge/docs-bradietilley.dev%2Fmahi-6366f1)](https://bradietilley.dev/mahi/dev-main)
 
 ```bash
 npm create mahi@latest my-app
 cd my-app
 ./artisan serve
 ```
+
+## About
+
+Inspired by Laravel, whose best features are simplicity, elegance and structure.
+
+Laravel's built using service providers, a container, managers resolving drivers,
+an expressive ORM, queues, scheduling, events, all in predictable places with
+predictable names. You can open any Laravel app and immediately know where things
+live. That same predictability is why agents are so good at leveraging it: the
+conventions are strong enough that "add an endpoint" or "add a queued job" has one
+obvious, boring, correct answer. Bootstrapping an API becomes minutes of work.
+
+The catch is PHP. It's a big runtime, it isn't especially portable, and the moment
+your frontend is TypeScript you're running a two-language stack. Your Docker image
+now carries PHP *and* Node. Your resource footprint effectively doubles. The whole
+thing starts to feel clunky and worst of all, your backend literally doesn't speak
+the same language as your frontend. So you reach for codegen: scrape the routes,
+infer the request payloads, guess at the response shapes, emit some `.d.ts` files
+and hope they stay honest. It works until it doesn't, and it's hacky at best.
+
+Mahi keeps the structure and drops the language barrier. Same framework shape you
+already know, all in TypeScript. Your app can ship a contracts package including
+endpoints, request payloads, response payloads, resource shapes, that the backend
+actually *implements* and the frontend *imports*. No codegen, no drift, and best
+of all no translation layer. One shared interface, type-checked on both sides of
+the app. And because it's TypeScript, you get real types: generics, unions,
+discriminated results, inference that actually follows your data through the ORM
+and out the other end. That's a feature PHP simply doesn't have.
+
+That's Mahi. Laravel's ideas, TypeScript's type system, one language end to end.
+Built with a lot of love, and a lot of opinions. Have a poke around.
 
 ## This repository
 
@@ -51,76 +82,13 @@ framework/            The framework packages (published as @mahiframework/*)
   datetime/             Immutable DateTime, Duration, Interval, Period
   tui/                  Terminal UI — prompts, tables, spinners, progress bars
   create-mahi/          The `npm create mahi@latest` scaffolder + the base app template
-
 docs/                 The documentation
 ```
 
-Each framework package owns its own test suite.
-`framework/create-mahi/template/` is the in-tree base app the scaffolder
-ships.
+## Requirements
 
-## Working on the framework
-
-```bash
-pnpm install
-pnpm build
-pnpm test
-```
-
-Turborepo drives the task graph. Run tests serially if your machine
-oversubscribes:
-
-```bash
-pnpm turbo run test --concurrency=1
-```
-
-### Testing the scaffolder
-
-`create-mahi` generates an app that depends on `@mahiframework/*` at published
-versions. To scaffold against the working tree instead, use
-`--link-workspace` to rewrite them to `workspace:*` and scaffold into
-`.tmp-scaffold/` (a gitignored workspace member):
-
-```bash
-pnpm --filter create-mahi build
-node framework/create-mahi/dist/index.js .tmp-scaffold/demo --no-install --no-git --link-workspace
-pnpm install
-
-cd .tmp-scaffold/demo
-./artisan key:generate
-./artisan migrate
-./artisan serve
-```
-
-### Integration tests
-
-The MySQL, Postgres, and Redis suites skip themselves when no server is
-reachable. To run them locally against the same images CI uses:
-
-```bash
-pnpm test:integration     # docker compose up, then the full suite with CI_STRICT_MODE=true
-pnpm services:down
-```
-
-### Releasing
-
-Every `@mahiframework/*` package shares one version and is published together. To
-cut a release:
-
-```bash
-pnpm version:set 0.2.0    # bumps every lockstep package + the create-mahi template pins
-pnpm metadata:check && pnpm version:check && pnpm pack:check
-git commit -am "release: v0.2.0"
-git tag v0.2.0
-git push origin main v0.2.0
-```
-
-The `Release` workflow builds, lints, typechecks, tests, verifies the tag
-matches the lockstep version, and runs `pnpm -r publish`, which only
-publishes packages whose version is not already on npm, so re-running a
-release is safe. It authenticates to npm with trusted publishing (OIDC), so
-there is no token to rotate: each package lists this repository and
-`release.yml` as its trusted publisher.
+- Node.js 26 or later
+- pnpm 9
 
 ## Documentation
 
@@ -136,7 +104,9 @@ Full documentation lives at
 - [Cache](https://bradietilley.dev/mahi/dev-main/cache) · [Queues](https://bradietilley.dev/mahi/dev-main/queues) · [Scheduling](https://bradietilley.dev/mahi/dev-main/scheduling) · [Events](https://bradietilley.dev/mahi/dev-main/events) · [Broadcasting](https://bradietilley.dev/mahi/dev-main/broadcasting) · [Storage](https://bradietilley.dev/mahi/dev-main/storage) · [Mail](https://bradietilley.dev/mahi/dev-main/mail) · [Notifications](https://bradietilley.dev/mahi/dev-main/notifications) · [Logging](https://bradietilley.dev/mahi/dev-main/logging) · [Redis](https://bradietilley.dev/mahi/dev-main/redis) · [Health](https://bradietilley.dev/mahi/dev-main/health) · [HTTP client](https://bradietilley.dev/mahi/dev-main/http-client)
 - [Console](https://bradietilley.dev/mahi/dev-main/console) · [Testing](https://bradietilley.dev/mahi/dev-main/testing) · [Dates & times](https://bradietilley.dev/mahi/dev-main/datetime)
 
-## Requirements
 
-- Node.js 22 or later
-- pnpm 9
+## Contributing
+
+See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for how to set up the monorepo,
+run the test suites, and how releases are cut. Security vulnerabilities should be
+reported privately per [SECURITY.md](.github/SECURITY.md).

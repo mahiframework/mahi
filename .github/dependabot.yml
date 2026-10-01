@@ -1,0 +1,40 @@
+version: 2
+
+updates:
+  # The monorepo's dependencies live in one pnpm workspace: framework packages,
+  # the docs tooling, and the root dev toolchain (turbo, typescript, vitest,
+  # eslint, prettier).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 5
+    open-pull-requests-limit: 5
+    groups:
+      # Bumping one of these cascades into the others — patch them together
+      # instead of stacking five pull requests on each other.
+      dev-tooling:
+        patterns:
+          - turbo
+          - typescript
+          - vite
+          - vitest
+          - eslint
+          - prettier
+          - "@typescript-eslint/*"
+          - "@stylistic/*"
+          - "@types/*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"
