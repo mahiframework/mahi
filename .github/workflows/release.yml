@@ -8,6 +8,14 @@ name: Release
 # Authentication is npm trusted publishing (OIDC): every package names this
 # repository and `release.yml` as its trusted publisher, so the runner mints a
 # short-lived credential from the `id-token` below. There is no npm token.
+#
+# A NEW package cannot be released by this workflow until it exists on the
+# registry: there is nothing for a trusted-publisher config to attach to, so
+# npm answers the publish with a 404. Publish it once by hand
+# (`pnpm publish --access public --no-git-checks` from its directory, using
+# pnpm so `workspace:*` deps are rewritten), add this repo and `release.yml`
+# as its trusted publisher, then tag. The `publish:check` step below enforces
+# this before anything is written.
 
 on:
   push:
@@ -77,6 +85,14 @@ jobs:
 
       - name: Tarballs contain only dist, README, LICENSE
         run: pnpm pack:check
+
+      # Trusted publishing cannot create a package that has never been
+      # published, and `pnpm publish -r` is not atomic, so a brand-new package
+      # would otherwise publish everything ahead of it and then 404, leaving
+      # the registry holding half a version. This refuses before anything is
+      # written. See the script for the one-time bootstrap it asks for.
+      - name: Every package already exists on the registry
+        run: pnpm publish:check
 
       # `pnpm publish -r` skips packages whose version is already on the
       # registry, so re-running a release (or a datetime-only bump) is safe.

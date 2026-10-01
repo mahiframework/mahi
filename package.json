@@ -19,7 +19,8 @@
     "metadata:check": "node scripts/sync-package-metadata.mjs --check",
     "version:set": "node scripts/set-version.mjs",
     "version:check": "node scripts/set-version.mjs --check",
-    "pack:check": "node scripts/check-pack.mjs"
+    "pack:check": "node scripts/check-pack.mjs",
+    "publish:check": "node scripts/check-publishable.mjs"
   },
   "devDependencies": {
     "@stylistic/eslint-plugin": "^5.10.0",
