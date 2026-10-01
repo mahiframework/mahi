@@ -93,6 +93,24 @@ export type FactoryCallback<T> = (row: T) => void | Promise<void>;
  * a row; apps wanting realistic fake names/emails/etc. add
  * `@faker-js/faker` themselves and call it from their own `definition()`.
  *
+ * ## Chaining mutates `this`
+ *
+ * `times()`/`state()`/`afterMaking()`/`afterCreating()` each mutate the
+ * factory and return the SAME instance (not a new cloned one), matching
+ * `QueryBuilder`'s ergonomics. See its docstring for the "why". So a
+ * factory held in a variable accumulates, and `times()` in particular
+ * sticks across terminal calls:
+ *
+ *   const factory = Post.factory();
+ *   await factory.times(3).create();  // three rows
+ *   await factory.create();           // three MORE, times(3) still set
+ *
+ * This rarely bites, because `Model.factory()` constructs a fresh factory
+ * on every call (that's what the override returns), so the usual
+ * `Post.factory().times(10).create()` is always independent. It only
+ * matters once a factory is held and reused. `clone()` is the explicit
+ * escape hatch for branching one.
+ *
  * ## Model events & timestamps
  *
  * `create()`/`createOne()` (and `times(n).create()`) route through the
@@ -143,6 +161,40 @@ export abstract class Factory<M extends AnyModelClass = AnyModelClass> {
     this.afterCreatingCallbacks.push(callback);
 
     return this;
+  }
+
+  /**
+   * Returns a new factory of the SAME (possibly custom) subclass with the
+   * same accumulated `times()`/`state()`/`afterMaking()`/`afterCreating()`
+   * state, mutating the clone (or the original) afterwards does not
+   * affect the other. Every chained call mutates `this` (see the class
+   * docstring's "Chaining mutates this" section), so `clone()` is the one
+   * explicit escape hatch for branching a factory into two independent
+   * variations from a shared base, matching `QueryBuilder.clone()`:
+   *
+   *   const base = Post.factory().state({ user_id: user.id });
+   *   const published = await base.clone().state({ published: true }).create();
+   *   const drafts = await base.clone().times(3).create();
+   *
+   * Copies off the prototype rather than calling `new this.constructor()`:
+   * a subclass is free to declare a constructor (and must at minimum set
+   * `protected model`), so re-running it would either need arguments this
+   * has no way to supply or discard the subclass's own fields. The
+   * `Object.assign()` carries `model`, `count` and every subclass field
+   * over; the array re-assignments after it then break the references
+   * that assign would otherwise leave shared. `state()` resolvers and
+   * lifecycle callbacks are copied by reference, they're treated as
+   * immutable inputs, so registering more on either side never reaches
+   * the other.
+   */
+  clone(): this {
+    const copy = Object.create(Object.getPrototypeOf(this)) as this;
+    Object.assign(copy, this);
+    copy.states = [...this.states];
+    copy.afterMakingCallbacks = [...this.afterMakingCallbacks];
+    copy.afterCreatingCallbacks = [...this.afterCreatingCallbacks];
+
+    return copy;
   }
 
   /** definition() -> every state() in call order -> the explicit overrides argument (always wins). */

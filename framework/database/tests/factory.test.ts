@@ -41,6 +41,24 @@ class WidgetFactory extends Factory<typeof Widget> {
   }
 }
 
+/**
+ * A factory subclass carrying constructor-set config, the case that
+ * forces `clone()` to copy off the prototype: re-running this
+ * constructor would need the `prefix` argument, which `clone()` has no
+ * way to supply.
+ */
+class PrefixedWidgetFactory extends Factory<typeof Widget> {
+  protected model = Widget;
+
+  constructor(private prefix: string) {
+    super();
+  }
+
+  protected definition(): WidgetAttributes {
+    return { id: randomUUID(), name: `${this.prefix}-widget`, active: 1 };
+  }
+}
+
 describe("Factory", () => {
   let app: Application;
 
@@ -268,6 +286,111 @@ describe("Factory", () => {
       .createQuietly();
 
     expect(created).toEqual([rows[0]!.id]);
+  });
+
+  it("every chainable method returns the same instance, not a copy", () => {
+    const factory = new WidgetFactory();
+
+    expect(factory.times(2)).toBe(factory);
+    expect(factory.state({ active: 0 })).toBe(factory);
+    expect(factory.afterMaking(() => {})).toBe(factory);
+    expect(factory.afterCreating(() => {})).toBe(factory);
+    expect(factory.inactive()).toBe(factory);
+  });
+
+  it("state() on a held factory persists for later builds off that same factory", async () => {
+    const factory = new WidgetFactory();
+    factory.state({ active: 0 });
+
+    expect((await factory.makeOne()).active).toBe(0);
+  });
+
+  it("times() sticks across terminal calls on a held factory", async () => {
+    const factory = new WidgetFactory().times(3);
+
+    expect(await factory.create()).toHaveLength(3);
+    expect(await factory.create()).toHaveLength(3);
+    expect((await Widget.all()).length).toBe(6);
+  });
+
+  it("clone() carries the accumulated states across", async () => {
+    const row = await new WidgetFactory().state({ active: 0 }).clone().makeOne();
+
+    expect(row.active).toBe(0);
+  });
+
+  it("clone() carries times() across", async () => {
+    expect(await new WidgetFactory().times(4).clone().make()).toHaveLength(4);
+  });
+
+  it("mutating a clone does not affect the original", async () => {
+    const base = new WidgetFactory();
+    const branch = base.clone().state({ active: 0 }).times(3);
+
+    expect(branch).not.toBe(base);
+    expect((await branch.makeOne()).active).toBe(0);
+    expect((await base.makeOne()).active).toBe(1);
+    expect(await base.make()).toHaveLength(1);
+  });
+
+  it("mutating the original does not affect an existing clone", async () => {
+    const base = new WidgetFactory();
+    const branch = base.clone();
+    base.state({ active: 0 }).times(5);
+
+    expect((await branch.makeOne()).active).toBe(1);
+    expect(await branch.make()).toHaveLength(1);
+  });
+
+  it("clone() preserves the factory subclass and its state methods", async () => {
+    const clone = new WidgetFactory().clone();
+
+    expect(clone).toBeInstanceOf(WidgetFactory);
+    expect((await clone.inactive().makeOne()).active).toBe(0);
+  });
+
+  it("clone() carries a subclass's constructor-set fields across", async () => {
+    const clone = new PrefixedWidgetFactory("alpha").state({ active: 0 }).clone();
+
+    expect(clone).toBeInstanceOf(PrefixedWidgetFactory);
+
+    const row = await clone.makeOne();
+    expect(row.name).toBe("alpha-widget");
+    expect(row.active).toBe(0);
+  });
+
+  it("clone() copies the callback arrays rather than sharing them", async () => {
+    const base = new WidgetFactory();
+    const branch = base.clone();
+
+    let baseCalls = 0;
+    let branchCalls = 0;
+    base.afterMaking(() => {
+      baseCalls++;
+    });
+    branch.afterMaking(() => {
+      branchCalls++;
+    });
+
+    await base.makeOne();
+    expect(baseCalls).toBe(1);
+    expect(branchCalls).toBe(0);
+
+    await branch.makeOne();
+    expect(baseCalls).toBe(1);
+    expect(branchCalls).toBe(1);
+  });
+
+  it("clone() keeps callbacks registered before the branch on both sides", async () => {
+    let calls = 0;
+    const base = new WidgetFactory().afterMaking(() => {
+      calls++;
+    });
+
+    await base.clone().makeOne();
+    await base.makeOne();
+
+    expect(calls).toBe(2);
   });
 });
 

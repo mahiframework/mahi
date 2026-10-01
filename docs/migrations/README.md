@@ -1325,10 +1325,11 @@ Post has no factory — override "static factory()" to return a Factory instance
 
 | Method | Returns | Notes |
 |---|---|---|
-| `times(n)` | `this` | Ignored by `makeOne`/`createOne`. |
+| `times(n)` | `this` | Ignored by `makeOne`/`createOne`. Persists on the instance. |
 | `state(partial \| resolver)` | `this` | Composes in call order. |
 | `afterMaking(callback)` | `this` | Stacks. |
 | `afterCreating(callback)` | `this` | Stacks. |
+| `clone()` | `this` | An independent copy. See below. |
 | `make(overrides?)` | `Promise<M[]>` | In-memory. **Always an array.** |
 | `makeOne(overrides?)` | `Promise<M>` | One instance, ignores `times()`. |
 | `create(overrides?)` | `Promise<M[]>` | Build + insert. **Always an array.** |
@@ -1338,6 +1339,46 @@ Post has no factory — override "static factory()" to return a Factory instance
 
 `make()` and `create()` always return an array even for `times(1)`. Use
 the `*One` variants when you want a single instance.
+
+### Every chainable method mutates `this`
+
+`times()`, `state()`, `afterMaking()` and `afterCreating()` return the
+**same** factory, not a new one, the same contract the query builder has
+(see [Queries](../queries/#every-chainable-method-mutates-this)). So a
+factory held in a variable accumulates, and `times()` sticks across
+terminal calls:
+
+```ts
+const factory = Post.factory();
+await factory.times(3).create();   // three rows
+await factory.create();            // three MORE, times(3) is still set
+```
+
+This is rarely a problem in practice, because `factory()` constructs a
+fresh factory on every call. The idiomatic form is always independent:
+
+```ts
+await Post.factory().times(10).create();
+await Post.factory().createOne();    // unaffected by the line above
+```
+
+It only matters once you hold a factory and reuse it, which is worth
+doing when several variations share an expensive or verbose base. `clone()`
+is the explicit escape hatch:
+
+```ts
+const base = Post.factory().state({ user_id: user.id });
+
+const published = await base.clone().state({ published: true }).create();
+const drafts = await base.clone().times(3).create();
+```
+
+`clone()` copies the accumulated `times()`/states/callbacks, so mutating
+either side afterwards never affects the other. It preserves the factory
+subclass (and therefore its own state methods, so
+`base.clone().deleted()` works) along with any constructor-set fields.
+State resolvers and lifecycle callbacks are shared by reference; only the
+arrays holding them are new.
 
 ### Attribute precedence
 

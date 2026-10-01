@@ -920,6 +920,10 @@ or the original doesn't affect the other. `EloquentBuilder.clone()`
 constructs off the builder's own constructor, so a custom builder subclass
 clones into its own type, and it also copies the queued eager-load names.
 
+`Factory` shares this contract, chaining mutates, with `clone()` as the
+escape hatch. See
+[Factories](../migrations/#every-chainable-method-mutates-this).
+
 ## `when()` / `unless()`
 
 Laravel's `Conditionable`, minus the `HigherOrderWhenProxy` magic form.
