@@ -10,9 +10,9 @@
 # `framework/testing/tests/engines.integration.test.ts`, which boots a
 # test application on each engine, `framework/redis/tests/`, whose
 # subject is cross-process atomicity and pub/sub fanout (things no
-# in-memory substitute reproduces), and
-# `framework/storage-sftp/tests/`, whose subject is a real SSH server's
-# behaviour.
+# in-memory substitute reproduces), `framework/storage-sftp/tests/`,
+# whose subject is a real SSH server's behaviour, and
+# `framework/storage-s3/tests/`, whose subject is a real S3 server's.
 #
 # When these are NOT running, those suites skip themselves, so `pnpm
 # test` stays green on a machine without docker. `pnpm test:integration`
@@ -76,6 +76,49 @@ services:
       interval: 3s
       timeout: 5s
       retries: 20
+
+  # The S3 driver's contract suite runs against a real S3 server. The
+  # protocol's awkward parts are all server behaviour: a multipart upload
+  # staying invisible until it completes (which is where the driver's
+  # atomicity comes from), `CommonPrefixes` under a delimiter, the
+  # continuation token on a truncated listing, and a server-side
+  # `CopyObject`. None of it is reproducible in-process.
+  #
+  # rustfs rather than MinIO: `minio/minio` is no longer pullable
+  # anonymously from Docker Hub, and rustfs is a single container with a
+  # real readiness endpoint. The bucket is created by `s3_setup` below,
+  # since the driver creates objects but never buckets.
+  #
+  # Published on 9400 rather than S3's conventional 9000, which php-fpm
+  # also defaults to. A host already running php-fpm keeps the port and
+  # Docker's bind silently loses every connection to it, which looks like
+  # a broken driver rather than a port conflict.
+  s3:
+    image: rustfs/rustfs:1.0.0
+    ports:
+      - "9400:9000"
+    environment:
+      RUSTFS_ACCESS_KEY: mahi
+      RUSTFS_SECRET_KEY: mahi-secret
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_CONSOLE_ENABLE: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:9000/health/ready || exit 1"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  # Creates the test bucket and exits. `--wait` treats a completed
+  # one-shot container as ready, so the test suites can depend on the
+  # bucket existing rather than racing to create it.
+  s3_setup:
+    image: rustfs/rustfs:1.0.0
+    depends_on:
+      s3:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "curl -fsS --aws-sigv4 'aws:amz:us-east-1:s3' -u mahi:mahi-secret
+      -X PUT http://s3:9000/mahi-test"
 
   redis:
     image: redis:7

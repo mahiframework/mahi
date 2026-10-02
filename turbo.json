@@ -7,7 +7,27 @@
     },
     "test": {
       "dependsOn": ["^build"],
-      "outputs": []
+      "outputs": [],
+      // `CI_STRICT_MODE` decides whether an unreachable service skips the
+      // integration suites or fails them, so it has to be part of the
+      // cache key. Without it here, a cached run from a machine with no
+      // services replays as a hit under `pnpm test:integration` and
+      // reports green while testing nothing — exactly what the strict gate
+      // exists to prevent. The service coordinates matter for the same
+      // reason: pointing a suite at a different host is a different run.
+      "env": [
+        "CI_STRICT_MODE",
+        "S3_ENDPOINT",
+        "S3_BUCKET",
+        "S3_ACCESS_KEY",
+        "S3_SECRET_KEY",
+        "S3_REGION",
+        "SFTP_HOST",
+        "SFTP_PORT",
+        "SFTP_USERNAME",
+        "SFTP_PASSWORD",
+        "SFTP_BASE"
+      ]
     },
     "lint": {
       "outputs": []

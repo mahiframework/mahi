@@ -126,6 +126,10 @@ const DESCRIPTIONS = {
     description: "Storage — a filesystem abstraction over local and cloud disks for Mahi.",
     keywords: ["mahi", "storage", "filesystem", "disk", "files"],
   },
+  "@mahiframework/storage-s3": {
+    description: "Storage (S3) — an S3 storage driver for Mahi, for files in object storage.",
+    keywords: ["mahi", "storage", "s3", "object-storage", "bucket"],
+  },
   "@mahiframework/storage-sftp": {
     description: "Storage (SFTP) — an SFTP storage driver for Mahi, for files on a remote host.",
     keywords: ["mahi", "storage", "sftp", "ssh", "remote"],
@@ -164,6 +168,7 @@ const DOC_SLUGS = {
   "@mahiframework/redis": "redis",
   "@mahiframework/schedule": "scheduling",
   "@mahiframework/storage": "storage",
+  "@mahiframework/storage-s3": "storage",
   "@mahiframework/storage-sftp": "storage",
   "@mahiframework/testing": "testing",
   "@mahiframework/validation": "validation",

@@ -6,7 +6,9 @@ import type { Connectable } from "@mahiframework/core";
 import {
   CommittingWriteStream,
   FileNotFoundException,
+  guessMimeType,
   joinPublicUrl,
+  toNodeReadable,
   type StorageDriver,
   type StreamSource,
 } from "@mahiframework/storage";
@@ -17,22 +19,6 @@ import {
   promisify,
   type SftpConnectionConfig,
 } from "./sftp-connection.js";
-
-/** Extension→MIME table, matching `@mahiframework/storage`'s own guesses. */
-const EXTENSION_MIME_TYPES: Record<string, string> = {
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  png: "image/png",
-  gif: "image/gif",
-  webp: "image/webp",
-  svg: "image/svg+xml",
-  json: "application/json",
-  txt: "text/plain",
-  html: "text/html",
-  css: "text/css",
-  js: "text/javascript",
-  pdf: "application/pdf",
-};
 
 export interface SftpDiskConfig extends SftpConnectionConfig {
   driver: "sftp";
@@ -358,7 +344,7 @@ export class SftpStorageDriver implements StorageDriver, Connectable {
   async mimeType(remotePath: string): Promise<string | undefined> {
     this.guard(remotePath);
 
-    return EXTENSION_MIME_TYPES[remotePath.split(".").pop()?.toLowerCase() ?? ""];
+    return guessMimeType(remotePath);
   }
 
   /**
@@ -537,19 +523,6 @@ function finishOnClose(stream: Writable): Writable {
   });
 
   return stream;
-}
-
-/** Normalize any accepted source into a Node `Readable`. */
-function toNodeReadable(source: StreamSource): Readable {
-  if (source instanceof Readable) {
-    return source;
-  }
-
-  if (typeof (source as ReadableStream<Uint8Array>).getReader === "function") {
-    return Readable.fromWeb(source as Parameters<typeof Readable.fromWeb>[0]);
-  }
-
-  return Readable.from(source as AsyncIterable<Uint8Array>);
 }
 
 /** Type-only re-export so `SFTPWrapper` stays internal to this module's signatures. */

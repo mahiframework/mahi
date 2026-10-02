@@ -8,6 +8,7 @@ import { joinPublicUrl } from "../public-url.js";
 import { CommittingWriteStream } from "../committing-write-stream.js";
 import { FileNotFoundException } from "../exceptions.js";
 import type { StorageDriver, StreamSource } from "../storage-driver.js";
+import { toNodeReadable } from "../stream-source.js";
 
 /**
  * Filesystem-backed `StorageDriver`, the only built-in driver in the
@@ -381,24 +382,4 @@ export class LocalStorageDriver implements StorageDriver {
 
     return stat;
   }
-}
-
-/**
- * Normalize any accepted stream source into a Node `Readable`. A Node
- * `Readable` passes through; a web `ReadableStream` is adapted via
- * `Readable.fromWeb`; anything else async-iterable goes through
- * `Readable.from`.
- */
-function toNodeReadable(source: StreamSource): Readable {
-  if (source instanceof Readable) {
-    return source;
-  }
-
-  if (typeof (source as ReadableStream<Uint8Array>).getReader === "function") {
-    // `Readable.fromWeb` wants node:stream/web's ReadableStream; the global
-    // (DOM) one is structurally identical at runtime.
-    return Readable.fromWeb(source as Parameters<typeof Readable.fromWeb>[0]);
-  }
-
-  return Readable.from(source as AsyncIterable<Uint8Array>);
 }

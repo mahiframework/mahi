@@ -618,6 +618,152 @@ video. When it stops being fine, point the disk's `url` at a CDN origin
 that reads from the same bucket, `url()` starts emitting CDN URLs, the
 catch-all route stops being hit, and no application code changes.
 
+## S3: files in object storage
+
+`@mahiframework/storage-s3` is a driver for S3 and anything speaking its
+protocol: AWS, Cloudflare R2, DigitalOcean Spaces, MinIO, Supabase,
+Backblaze. It is where uploads belong once an application runs on more
+than one machine, since a local disk is per-container state and a second
+replica can't read what the first one wrote.
+
+It is a separate package so an application that never uses S3 doesn't
+install the AWS SDK, which is 18 MB and 27 packages.
+
+```bash
+npm install @mahiframework/storage-s3 @aws-sdk/client-s3 @aws-sdk/lib-storage
+```
+
+The SDK packages are **optional peer dependencies**, imported on first
+use. A disk that is configured but never touched costs nothing — not the
+sockets, and not the SDK being parsed. If one is missing, the driver says
+so with the command that fixes it rather than failing with a
+module-not-found from deep inside a write.
+
+```ts
+// config/storage.ts
+import { env } from "@mahiframework/core";
+
+export function storageConfig(): StorageConfig {
+  return {
+    default: "uploads",
+    disks: {
+      uploads: {
+        driver: "s3",
+        bucket: env("S3_BUCKET", "app-uploads"),
+        region: env("AWS_REGION", "us-east-1"),
+      },
+      // A self-hosted or non-AWS endpoint.
+      media: {
+        driver: "s3",
+        bucket: "media",
+        endpoint: env("S3_ENDPOINT"),
+        credentials: {
+          accessKeyId: env("S3_KEY"),
+          secretAccessKey: env("S3_SECRET"),
+        },
+        url: env("CDN_URL"),
+      },
+    },
+  };
+}
+```
+
+```ts
+// config/app.ts — after StorageServiceProvider, which binds STORAGE_TOKEN.
+providers: [StorageServiceProvider, S3StorageServiceProvider];
+```
+
+Note that `credentials` is **optional**, and omitting it is usually
+right. Left out, the SDK's own chain applies: environment variables,
+shared config, SSO, IMDS on EC2, the projected token on EKS. Hardcoding
+keys into `config/storage.ts` is the wrong default anywhere with an
+instance role.
+
+| Key | Meaning |
+|---|---|
+| `driver` | `"s3"`. Required, it's what makes the provider claim the disk. |
+| `bucket` | The bucket. Required. |
+| `region` | Defaults to `us-east-1`. Meaningless to most compatible servers, but the SDK won't sign without one. |
+| `endpoint` | Omit for AWS. Set it for R2, Spaces, MinIO, and anything self-hosted. |
+| `forcePathStyle` | Bucket in the path rather than the hostname. Defaults to `true` when `endpoint` is set. |
+| `credentials` | Omitted, the SDK's credential chain applies. |
+| `root` | Key prefix, so one bucket can back several disks. |
+| `partSize` | Multipart part size in bytes. Default and minimum 5 MiB. |
+| `queueSize` | Parts uploaded concurrently within one object. Default 4. |
+| `pageSize` | Keys per listing request. Default and maximum 1000. |
+| `url` | Public prefix — a CDN, or the bucket's public endpoint. |
+
+### What it costs that a local disk doesn't
+
+The interface is identical. The storage model is not, and the driver
+documents rather than hides the differences:
+
+**Writes are atomic for free.** A multipart upload is invisible until it
+completes, so an aborted write leaves nothing at the key and no dangling
+upload. The local and SFTP drivers write to a temp sibling and rename to
+fake exactly this guarantee; here the protocol already provides it, so
+`writeStream`'s `finish` means the object is readable at its final key.
+
+**Directories don't exist.** `makeDirectory()` writes a zero-byte marker
+at `prefix/`, which is what makes an empty directory visible to
+`directories()`. Listings filter those markers out, so one never surfaces
+as a file. A directory implied only by a nested key is reported too, so
+`allDirectories()` is the same answer a filesystem would give.
+
+**`allFiles()` is paginated.** One request returns at most 1000 keys, so
+a large prefix is many sequential round trips into one array. It works,
+and it is not cheap; on a bucket with a million objects, prefer narrowing
+the directory over listing the root.
+
+**`copy()` is server-side and `move()` is not atomic.** `CopyObject`
+means the bytes never reach this process, so copying a 40 GB object costs
+no bandwidth — the opposite of the SFTP driver. There is no rename, so
+`move()` is a copy followed by a delete.
+
+**Appending rewrites the object.** S3 objects are immutable, so
+`writeStream(path, { flags: "a" })` downloads the existing bytes and
+re-uploads them with the new ones appended. Fine for a small file,
+expensive for a large one, and unavoidable.
+
+**`url()` throws** unless you configured a `url` prefix. Whether a bucket
+is publicly readable depends on its policy, which the driver can't read,
+so nothing is guessed. **`path()` always throws** — the bytes aren't on
+this machine.
+
+### Signed URLs for private objects
+
+A private bucket has no public URL, but it can have a time-limited one.
+`temporaryUrl()` is deliberately **not** on `StorageDriver`: a local disk
+and an SFTP disk cannot honour it, and putting it on the interface would
+mean three drivers implementing a method only to throw. Reach for the
+concrete class, as you would for `LocalStorageDriver.path()`:
+
+```ts
+import { S3StorageDriver } from "@mahiframework/storage-s3";
+
+const disk = Storage.disk("uploads") as S3StorageDriver;
+const url = await disk.temporaryUrl("invoices/2026-01.pdf", 300);  // 5 minutes
+```
+
+This needs `@aws-sdk/s3-request-presigner`, the third optional peer
+dependency, and is the only thing that does.
+
+### A disk per database row
+
+The same pattern as SFTP below, and for the same reason: buckets that
+live in **rows** rather than in config need a disk built on demand.
+
+```ts
+storage.extend(`tenant:${tenant.id}`, () => new S3StorageDriver({
+  bucket: tenant.bucket,
+  region: tenant.region,
+}));
+```
+
+`extend()` invalidates any driver cached under that name, and
+`forget(name)` drops the factory and releases the client's pooled
+sockets.
+
 ## SFTP: files on another machine
 
 `@mahiframework/storage-sftp` is a second driver, for files that live on
@@ -796,18 +942,23 @@ session for the life of the process.
 ## Writing a custom driver
 
 Implement the `StorageDriver` methods and register a factory with
-`extend()`. On object storage the mapping is: listing →
-paginated `ListObjectsV2`; `readStream` → `GetObject`'s body;
-`putStream`/`writeStream` → a multipart upload; `copy` → the server-side
-copy API; `path()` → throw (there is no on-disk path). Only the core six
-are shown below for brevity.
+`extend()`. S3, SFTP and FTP are already covered by their own packages;
+what follows is the shape for a backend that isn't — Azure Blob, GCS,
+WebDAV — using a hypothetical blob service. Only the core six are shown
+for brevity.
+
+The three shipped drivers are also worth reading as worked examples,
+since each one meets the contract differently: `storage-s3` gets write
+atomicity from the protocol, `storage-sftp` builds it from a
+temp-and-rename, and `storage-ftp` serialises everything because its
+client allows one command at a time.
 
 ```ts
 import { ServiceProvider } from "@mahiframework/core";
 import { StorageManager, STORAGE_TOKEN, joinPublicUrl, type StorageDriver } from "@mahiframework/storage";
 
-export class S3StorageDriver implements StorageDriver {
-  constructor(private config: { bucket: string; region: string; url?: string }) {}
+export class BlobStorageDriver implements StorageDriver {
+  constructor(private config: { container: string; url?: string }) {}
 
   async put(path: string, contents: Buffer | string): Promise<void> { /* ... */ }
   async get(path: string): Promise<Buffer> { /* ... */ }
@@ -825,15 +976,15 @@ export class S3StorageDriver implements StorageDriver {
   }
 
   path(): string {
-    throw new Error("The s3 driver has no on-disk path.");
+    throw new Error("The blob driver has no on-disk path.");
   }
 }
 
-export class S3ServiceProvider extends ServiceProvider {
+export class BlobServiceProvider extends ServiceProvider {
   boot(): void {
     const storage = this.app.make<StorageManager>(STORAGE_TOKEN);
-    storage.extend("media", (app) =>
-      new S3StorageDriver(storage.diskConfig("media")),
+    storage.extend("media", () =>
+      new BlobStorageDriver(storage.diskConfig("media")),
     );
   }
 }

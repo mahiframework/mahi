@@ -63,6 +63,7 @@ framework/            The framework packages (published as @mahiframework/*)
   schedule/             Schedule, ScheduledTask, cron matching, schedule:run/list/test/work
   cache/                CacheManager, ArrayCacheStore, FileCacheStore, Lock, RateLimiter, Limit
   storage/              StorageManager, LocalStorageDriver — Laravel-style "disk" abstraction
+  storage-s3/           S3StorageDriver — a disk in object storage (S3, R2, Spaces, MinIO)
   storage-sftp/         SftpStorageDriver — a disk on a remote host, over SSH
   encryption/           Encrypter (AES-256-GCM), Hasher (argon2), Signer (HMAC), key:generate, Crypt/Hash facades
   auth/                 AuthManager, TokenGuard, SessionGuard, DatabaseUserProvider, authenticate()/csrf(), Auth facade
