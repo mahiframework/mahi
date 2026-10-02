@@ -114,7 +114,10 @@ jobs:
       sftp:
         image: atmoz/sftp:alpine
         ports:
-          - 2222:22
+          # Quoted: unquoted `2222:22` is YAML sexagesimal and parses as the
+          # integer 133342, so the mapping silently published a port nothing
+          # was listening on and the suite skipped itself.
+          - "2222:22"
         env:
           SFTP_USERS: "mahi:mahi:1000:100:upload"
         options: >-
