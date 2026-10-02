@@ -26,7 +26,11 @@
         "SFTP_PORT",
         "SFTP_USERNAME",
         "SFTP_PASSWORD",
-        "SFTP_BASE"
+        "SFTP_BASE",
+        "FTP_HOST",
+        "FTP_PORT",
+        "FTP_USER",
+        "FTP_PASSWORD"
       ]
     },
     "lint": {

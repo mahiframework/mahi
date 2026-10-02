@@ -939,6 +939,113 @@ factory. Without it the only thing that ever calls `disconnect()` is
 `disconnectAll()` at shutdown, so a dropped disk would leak its SSH
 session for the life of the process.
 
+## FTP: files on a legacy or appliance host
+
+`@mahiframework/storage-ftp` is for hosts that speak nothing else: NAS
+boxes, cheap shared hosting, appliances. FTP and SFTP share four letters
+and nothing else — different protocols, different ports, different
+libraries — so the SFTP driver cannot talk to an FTP server and this is a
+separate package rather than an option on that one.
+
+```bash
+npm install @mahiframework/storage-ftp basic-ftp
+```
+
+`basic-ftp` is an **optional peer dependency**, imported on first use. It
+has no dependencies of its own.
+
+```ts
+// config/storage.ts
+import { env } from "@mahiframework/core";
+
+export function storageConfig(): StorageConfig {
+  return {
+    default: "public",
+    disks: {
+      public: { root: storage_path("app/public"), url: "/storage" },
+      archive: {
+        driver: "ftp",
+        host: env("ARCHIVE_HOST", "nas.local"),
+        user: env("ARCHIVE_USER", "archive"),
+        password: env("ARCHIVE_PASSWORD"),
+        secure: true,
+        root: "/backups",
+      },
+    },
+  };
+}
+```
+
+```ts
+// config/app.ts — after StorageServiceProvider, which binds STORAGE_TOKEN.
+providers: [StorageServiceProvider, FtpStorageServiceProvider];
+```
+
+| Key | Meaning |
+|---|---|
+| `driver` | `"ftp"`. Required, it's what makes the provider claim the disk. |
+| `host` / `port` | The FTP server. `port` defaults to 21. |
+| `user` | The login user. Required. Note: `user`, not `username` — that's the SFTP driver's key. |
+| `password` | The login password. |
+| `secure` | `true` for FTPS over explicit TLS, `"implicit"` for the legacy variant. **Omitted means cleartext.** |
+| `secureOptions` | TLS options, as in `tls.connect(options)`. |
+| `root` | The disk root. Relative paths resolve against the login directory. |
+| `timeout` | Per-command timeout in ms. Default 30000. |
+| `verbose` | Log the FTP conversation to stderr. For debugging a server's dialect. |
+| `url` | Public prefix, only if something *else* serves these files over HTTP. |
+
+### Use FTPS
+
+Plain FTP is **cleartext** — credentials and file contents both. Set
+`secure: true` wherever the server supports it. The driver doesn't refuse
+plain FTP, because LAN appliances and legacy hosts are the reason it
+exists, but that is a deliberate concession and not a default worth
+keeping over the internet.
+
+### What it costs, which is more than the other drivers
+
+FTP is the weakest backend of the three on every axis. All of it is
+protocol-level limitation rather than anything the driver can fix, and the
+driver surfaces the limits rather than papering over them:
+
+**Everything is serialised.** FTP's control connection carries one command
+at a time, and the client errors rather than corrupting the session if you
+try two. So there is no `concurrency` to tune and a recursive
+`allFiles()` is strictly sequential round trips — where the SFTP driver
+runs a bounded worker pool, this cannot.
+
+**`readStream({ end })` transfers the bytes it discards.** FTP's `REST`
+gives a start offset and the protocol has no end offset, so the limit is
+enforced client-side: the stream ends and the data connection closes once
+the range is satisfied, but the server has already begun sending the rest.
+This matters because `serveStoredFile()` issues exactly this call for an
+HTTP `Range` request.
+
+**`lastModified()` is a round trip per file.** Without `MLSD` a `LIST`
+response carries a human-formatted date with no year and no timezone,
+which `basic-ftp` refuses to parse rather than guess at, so the time comes
+from `MDTM` per file. `disk.ftp().supportsMlsd()` reports which case you
+are in.
+
+**`copy()` goes via local disk.** FTP has no server-side copy, and the
+download and upload cannot overlap on one connection, so the bytes land in
+a temp file in between. Memory stays flat; disk doesn't. `move()` is a
+server-side rename and is cheap at any size.
+
+**Atomic replace depends on the server.** Writes go to a temp sibling and
+rename into place, but the FTP spec doesn't require `RNFR`/`RNTO` to
+clobber an existing target. Where the server refuses, the driver falls back
+to delete-then-rename, which has a brief window where the path doesn't
+exist. That downgrade is reported rather than hidden:
+
+```ts
+const disk = Storage.disk("archive") as FtpStorageDriver;
+disk.ftp().replacesAtomically();  // true | false | undefined (not yet attempted)
+```
+
+**`url()` throws** without a configured prefix, and **`path()` always
+throws** — the bytes are on another machine.
+
 ## Writing a custom driver
 
 Implement the `StorageDriver` methods and register a factory with

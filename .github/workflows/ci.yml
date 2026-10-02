@@ -65,11 +65,11 @@ jobs:
       - name: Test (SQLite)
         run: pnpm test
 
-  # Full suite against real MySQL 8, Postgres 16, Redis 7, an SFTP server
-  # and an S3 server. CI_STRICT_MODE=true turns an unreachable service into
-  # a failure.
+  # Full suite against real MySQL 8, Postgres 16, Redis 7, and SFTP, S3 and
+  # FTP servers. CI_STRICT_MODE=true turns an unreachable service into a
+  # failure.
   integration:
-    name: integration (mysql / postgres / redis / sftp / s3)
+    name: integration (mysql / postgres / redis / sftp / s3 / ftp)
     runs-on: ubuntu-latest
     needs: check
     services:
@@ -141,6 +141,29 @@ jobs:
           RUSTFS_CONSOLE_ENABLE: "false"
         options: >-
           --health-cmd="curl -f http://127.0.0.1:9000/health/ready || exit 1"
+          --health-interval=3s
+          --health-timeout=5s
+          --health-retries=20
+      # The FTP driver's suite runs against a real FTP server. The passive
+      # port range has to be published or every data transfer hangs, and
+      # ADDRESS must be the address the *client* reaches, since the server
+      # advertises it in its PASV reply. The password is long because the
+      # image's `adduser` rejects a weak one and still starts, leaving an
+      # account that only fails at login.
+      ftp:
+        image: delfer/alpine-ftp-server
+        ports:
+          # Quoted: unquoted `2121:21` is YAML sexagesimal and parses as the
+          # integer 127281, which would publish a port nobody is listening on.
+          - "2121:21"
+          - "30000-30009:30000-30009"
+        env:
+          USERS: "mahi|mahipass123"
+          ADDRESS: 127.0.0.1
+          MIN_PORT: 30000
+          MAX_PORT: 30009
+        options: >-
+          --health-cmd="nc -z 127.0.0.1 21"
           --health-interval=3s
           --health-timeout=5s
           --health-retries=20

@@ -11,8 +11,9 @@
 # test application on each engine, `framework/redis/tests/`, whose
 # subject is cross-process atomicity and pub/sub fanout (things no
 # in-memory substitute reproduces), `framework/storage-sftp/tests/`,
-# whose subject is a real SSH server's behaviour, and
-# `framework/storage-s3/tests/`, whose subject is a real S3 server's.
+# whose subject is a real SSH server's behaviour,
+# `framework/storage-s3/tests/`, whose subject is a real S3 server's, and
+# `framework/storage-ftp/tests/`, whose subject is a real FTP server's.
 #
 # When these are NOT running, those suites skip themselves, so `pnpm
 # test` stays green on a machine without docker. `pnpm test:integration`
@@ -119,6 +120,34 @@ services:
     entrypoint: >
       /bin/sh -c "curl -fsS --aws-sigv4 'aws:amz:us-east-1:s3' -u mahi:mahi-secret
       -X PUT http://s3:9000/mahi-test"
+
+  # The FTP driver's contract suite runs against a real FTP server. What
+  # only a server shows: `LIST` carrying no parseable year (so
+  # `lastModified` has to use MDTM), `STOR` refusing to create parent
+  # directories, `REST` offering a start offset and no end, whether
+  # `RNFR`/`RNTO` will clobber an existing target, and passive-mode data
+  # connections at all.
+  #
+  # The passive port range must be published or every transfer hangs, and
+  # ADDRESS must be the address the *client* reaches, since the server
+  # advertises it in its PASV reply. The password is long because the
+  # image's `adduser` rejects a weak one and still starts, leaving an
+  # account that only fails at login.
+  ftp:
+    image: delfer/alpine-ftp-server
+    ports:
+      - "2121:21"
+      - "30000-30009:30000-30009"
+    environment:
+      USERS: "mahi|mahipass123"
+      ADDRESS: 127.0.0.1
+      MIN_PORT: 30000
+      MAX_PORT: 30009
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 21"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
 
   redis:
     image: redis:7
