@@ -1,0 +1,68 @@
+{
+  "name": "@mahiframework/impersonation",
+  "version": "0.1.4",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b && node ../../scripts/prune-dist.mjs",
+    "typecheck": "tsc -b && tsc -p tsconfig.test.json",
+    "lint": "eslint src tests",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mahiframework/auth": "workspace:*",
+    "@mahiframework/cli": "workspace:*",
+    "@mahiframework/core": "workspace:*",
+    "@mahiframework/database": "workspace:*",
+    "@mahiframework/datetime": "workspace:*",
+    "@mahiframework/events": "workspace:*",
+    "@mahiframework/facades": "workspace:*",
+    "@mahiframework/http": "workspace:*",
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@mahiframework/encryption": "workspace:*",
+    "@types/node": "^22.10.2",
+    "kysely": "^0.29.5",
+    "typescript": "^5.7.2",
+    "vite": "^8.0.0",
+    "vitest": "^4.1.11"
+  },
+  "license": "MIT",
+  "author": "Bradie Tilley",
+  "homepage": "https://github.com/mahiframework/mahi#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mahiframework/mahi.git",
+    "directory": "framework/impersonation"
+  },
+  "bugs": {
+    "url": "https://github.com/mahiframework/mahi/issues"
+  },
+  "engines": {
+    "node": ">=26"
+  },
+  "sideEffects": false,
+  "description": "Impersonation — \"log in as this user\" for Mahi, with an app-defined gate.",
+  "keywords": [
+    "mahi",
+    "impersonation",
+    "auth",
+    "admin"
+  ],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
