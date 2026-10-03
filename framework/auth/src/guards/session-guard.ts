@@ -304,6 +304,33 @@ export class SessionGuard<TUser = unknown> implements StatefulGuard<TUser> {
     return this.sessions.gc();
   }
 
+  /**
+   * The current request's session id, or null when there is no valid
+   * session cookie.
+   *
+   * The public counterpart to `TokenGuard.currentTokenId()`, and it
+   * exists for the same reason: something outside the guard needs a
+   * stable per-request identifier for "this client", not just "this
+   * user". Binding a step-up verification to one session needs exactly
+   * that, so a second concurrent session for the same user cannot
+   * consume a verification it never performed.
+   *
+   * Deliberately NOT the session's contents. A `SessionRecord` holds
+   * `{ id, userId, expiresAt }` and nothing else, and `user()` is
+   * already the way to read the identity; handing out the record here
+   * would invite callers to re-implement it. This returns the id only,
+   * and makes no promise that the session still exists server-side,
+   * since the cookie's signature verifying does not mean the row does.
+   * A caller that needs liveness should go through `user()`.
+   *
+   * No sliding renewal, no cookie re-issue: reading an identifier is not
+   * activity on the session, and renewing here would let an unrelated
+   * capability check extend a session's life.
+   */
+  sessionId(request: Request): string | null {
+    return this.readSessionId(request);
+  }
+
   private readSessionId(request: Request): string | null {
     const raw = request.cookie(this.cookieName, this.config.prefix);
 

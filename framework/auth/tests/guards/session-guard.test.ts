@@ -85,6 +85,9 @@ function mount(guard: SessionGuard<TestUser>): Hono {
 
     return HttpResponse.json({ id });
   });
+  router.get("/session-id", (request) => {
+    return HttpResponse.json({ sessionId: guard.sessionId(request) });
+  });
 
   return hono;
 }
@@ -473,5 +476,52 @@ describe("SessionGuard", () => {
       const me = await hono.request("/me", { headers: { Cookie: `session=${cookie}` } });
       await expect(me.json()).resolves.toEqual({ user: null });
     }
+  });
+
+  describe("sessionId()", () => {
+    it("returns the id established at login", async () => {
+      const login = await hono.request("/login", { method: "POST" });
+      const { id } = (await login.json()) as { id: string };
+      const cookie = cookieFrom(login)!;
+
+      const result = await hono.request("/session-id", {
+        headers: { Cookie: `session=${cookie}` },
+      });
+      await expect(result.json()).resolves.toEqual({ sessionId: id });
+    });
+
+    it("returns null without a cookie", async () => {
+      const result = await hono.request("/session-id");
+      await expect(result.json()).resolves.toEqual({ sessionId: null });
+    });
+
+    it("returns null for a tampered cookie rather than the raw payload", async () => {
+      // The signature is the whole guarantee: without this check a caller
+      // binding anything to the returned id would be binding to a value
+      // the client chose.
+      const login = await hono.request("/login", { method: "POST" });
+      const cookie = cookieFrom(login)!;
+      const tampered = cookie.replace(/.$/, (ch) => (ch === "A" ? "B" : "A"));
+
+      const result = await hono.request("/session-id", {
+        headers: { Cookie: `session=${tampered}` },
+      });
+      await expect(result.json()).resolves.toEqual({ sessionId: null });
+    });
+
+    it("does not renew the session it reads", async () => {
+      // Reading an identifier is not activity. If this slid the window,
+      // an unrelated capability check would keep an abandoned session
+      // alive indefinitely.
+      const login = await hono.request("/login", { method: "POST" });
+      const { id } = (await login.json()) as { id: string };
+      const before = (await store.read(id))!.expiresAt;
+
+      await hono.request("/session-id", {
+        headers: { Cookie: `session=${cookieFrom(login)!}` },
+      });
+
+      expect((await store.read(id))!.expiresAt).toBe(before);
+    });
   });
 });
