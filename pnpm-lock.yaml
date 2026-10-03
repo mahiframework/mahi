@@ -538,6 +538,46 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@22.20.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
 
+  framework/mfa:
+    dependencies:
+      '@mahiframework/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@mahiframework/cli':
+        specifier: workspace:*
+        version: link:../cli
+      '@mahiframework/core':
+        specifier: workspace:*
+        version: link:../core
+      '@mahiframework/database':
+        specifier: workspace:*
+        version: link:../database
+      '@mahiframework/datetime':
+        specifier: workspace:*
+        version: link:../datetime
+      '@mahiframework/encryption':
+        specifier: workspace:*
+        version: link:../encryption
+      '@mahiframework/facades':
+        specifier: workspace:*
+        version: link:../facades
+      '@mahiframework/http':
+        specifier: workspace:*
+        version: link:../http
+    devDependencies:
+      hono:
+        specifier: ^4.6.14
+        version: 4.13.3
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vite:
+        specifier: ^8.0.0
+        version: 8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@22.20.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
+
   framework/notifications:
     dependencies:
       '@mahiframework/core':
