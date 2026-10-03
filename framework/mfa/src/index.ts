@@ -30,6 +30,20 @@ export { runWithMfa, currentMfaState, requireMfaState } from "./mfa-context.js";
 export type { MfaState } from "./mfa-context.js";
 
 export {
+  MfaEvent,
+  fireMfaEvent,
+  ChallengeIssued,
+  ChallengeThrottled,
+  IntentLocked,
+  MethodConfirmed,
+  MethodEnrolled,
+  RecoveryCodeUsed,
+  RecoveryCodesGenerated,
+  VerificationFailed,
+  Verified,
+} from "./events/index.js";
+
+export {
   MfaRequiredError,
   MfaEnrollmentRequiredError,
   MfaLockedError,

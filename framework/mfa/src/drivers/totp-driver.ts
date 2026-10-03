@@ -10,6 +10,9 @@ import type {
   VerifyResult,
 } from "../mfa-driver.js";
 import { MfaMethod } from "../models/mfa-method.js";
+import { fireMfaEvent } from "../events/fire-mfa-event.js";
+import { MethodConfirmed } from "../events/method-confirmed.js";
+import { MethodEnrolled } from "../events/method-enrolled.js";
 import { generateSecret, verifyCode } from "../totp/totp.js";
 import { otpauthUri } from "../totp/otpauth-uri.js";
 
@@ -76,6 +79,11 @@ export class TotpDriver implements MfaDriver {
    * The row is written unconfirmed, so this call alone changes nothing
    * about whether the user is considered enrolled. The plaintext secret
    * is returned here and nowhere else.
+   *
+   * Dispatches `MethodEnrolled`, which deliberately reports a factor that
+   * is not yet usable: an abandoned hostile enrollment is exactly what an
+   * interrupted attacker leaves behind, and a log that only recorded
+   * confirmation would never see it. The secret is not on the event.
    */
   async enroll(userId: string, label?: string): Promise<TotpEnrollment> {
     const secret = generateSecret();
@@ -91,6 +99,8 @@ export class TotpDriver implements MfaDriver {
       last_used_timestep: null,
       created_at: DateTime.now(),
     });
+
+    await fireMfaEvent(new MethodEnrolled(userId, this.name, methodId, label ?? null));
 
     return {
       methodId,
@@ -111,6 +121,12 @@ export class TotpDriver implements MfaDriver {
    *
    * Also sets the replay floor from the accepted step, so the very code
    * used to confirm cannot then be replayed to satisfy a verification.
+   *
+   * Dispatches `MethodConfirmed` on success only. Every `false` return
+   * here is silent, because they are not distinguished from one another:
+   * a wrong code, a row belonging to someone else and an already-confirmed
+   * row all return the same thing, so an event could not say which
+   * happened.
    */
   async confirm(userId: string, methodId: string, code: string): Promise<boolean> {
     const method = await MfaMethod.find(methodId);
@@ -140,6 +156,8 @@ export class TotpDriver implements MfaDriver {
       confirmed_at: DateTime.now(),
       last_used_timestep: result.step,
     });
+
+    await fireMfaEvent(new MethodConfirmed(userId, this.name, methodId));
 
     return true;
   }

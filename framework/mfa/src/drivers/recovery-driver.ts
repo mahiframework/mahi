@@ -11,6 +11,9 @@ import type {
 } from "../mfa-driver.js";
 import { encodeBase32 } from "../totp/base32.js";
 import { MfaRecoveryCode } from "../models/mfa-recovery-code.js";
+import { fireMfaEvent } from "../events/fire-mfa-event.js";
+import { RecoveryCodeUsed } from "../events/recovery-code-used.js";
+import { RecoveryCodesGenerated } from "../events/recovery-codes-generated.js";
 
 /**
  * Single-use recovery codes: the way back in when the phone is gone.
@@ -60,9 +63,17 @@ export class RecoveryDriver implements MfaDriver {
    * Regenerating deletes the previous set, used or not: a user
    * regenerates because they believe the old list is compromised or
    * lost, so leaving any of it live would defeat the exercise.
+   *
+   * Dispatches `RecoveryCodesGenerated` with how many rows were replaced,
+   * which is what tells a first-time generation (`0`) from a regeneration.
+   * The distinction matters: a regeneration the user did not perform is an
+   * attacker cutting off their recovery path. The codes are not on the
+   * event.
    */
   async generate(userId: string): Promise<string[]> {
-    await MfaRecoveryCode.query().where("user_id", "=", userId).delete();
+    // The delete's own row count, rather than a preceding `count()`: it is
+    // the number this call actually replaced, and it costs no extra query.
+    const replaced = await MfaRecoveryCode.query().where("user_id", "=", userId).delete();
 
     const now = DateTime.now();
     const codes: string[] = [];
@@ -82,6 +93,8 @@ export class RecoveryDriver implements MfaDriver {
         created_at: now,
       });
     }
+
+    await fireMfaEvent(new RecoveryCodesGenerated(userId, codes.length, replaced));
 
     return codes;
   }
@@ -132,6 +145,14 @@ export class RecoveryDriver implements MfaDriver {
     // SINGLE USE. Marked rather than deleted so the user can still be
     // told how many they have burned, which is the signal to regenerate.
     await MfaRecoveryCode.update(matched, { used_at: DateTime.now() });
+
+    // `codes` was already the unused set, so the remainder is arithmetic
+    // rather than a second query. The count AFTER consuming is what a
+    // "regenerate soon" listener needs, and 0 is the urgent case: the user
+    // now has no recovery path at all.
+    await fireMfaEvent(
+      new RecoveryCodeUsed(context.intent.user_id, context.intent.id, codes.length - 1),
+    );
 
     return { status: "verified" };
   }

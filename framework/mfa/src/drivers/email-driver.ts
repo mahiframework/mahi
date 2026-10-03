@@ -10,6 +10,9 @@ import type {
   VerifyResult,
 } from "../mfa-driver.js";
 import { MfaChallenge } from "../models/mfa-challenge.js";
+import { ChallengeIssued } from "../events/challenge-issued.js";
+import { ChallengeThrottled } from "../events/challenge-throttled.js";
+import { fireMfaEvent } from "../events/fire-mfa-event.js";
 
 /**
  * A one-time code sent to the user's email address.
@@ -87,6 +90,10 @@ export class EmailDriver implements MfaDriver {
         Math.ceil(DateTime.now().diffInSeconds(recent.created_at.addSeconds(this.throttleSeconds))),
       );
 
+      await fireMfaEvent(
+        new ChallengeThrottled(context.intent.user_id, this.name, context.intent.id, retryAfter),
+      );
+
       return { status: "throttled", retryAfterSeconds: retryAfter };
     }
 
@@ -97,8 +104,10 @@ export class EmailDriver implements MfaDriver {
     const now = DateTime.now();
     const expiresAt = now.addMinutes(this.expiresInMinutes);
 
+    const challengeId = randomUUID();
+
     await MfaChallenge.create({
-      id: randomUUID(),
+      id: challengeId,
       intent_id: context.intent.id,
       driver: this.name,
       code: await this.hasher.make(code),
@@ -108,6 +117,18 @@ export class EmailDriver implements MfaDriver {
       consumed_at: null,
       created_at: now,
     });
+
+    // Neither the code nor the magic link is on the event: both are the
+    // credential, and they are returned below for the caller to deliver.
+    await fireMfaEvent(
+      new ChallengeIssued(
+        context.intent.user_id,
+        this.name,
+        context.intent.id,
+        challengeId,
+        expiresAt,
+      ),
+    );
 
     return {
       status: "issued",

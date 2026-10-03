@@ -7,6 +7,10 @@ import type { MfaConfig, WhenUnenrolled } from "./mfa-config.js";
 import type { MfaDriver, ChallengeResult, VerifyResult } from "./mfa-driver.js";
 import { MfaIntent, type MfaIntentStatus } from "./models/mfa-intent.js";
 import { UnknownMfaDriverError } from "./errors.js";
+import { fireMfaEvent } from "./events/fire-mfa-event.js";
+import { IntentLocked } from "./events/intent-locked.js";
+import { VerificationFailed } from "./events/verification-failed.js";
+import { Verified } from "./events/verified.js";
 
 /**
  * How the manager reaches `@mahiframework/auth` without importing the
@@ -296,6 +300,13 @@ export class MfaManager extends Manager<MfaDriver> {
    * the driver's own result so the caller can distinguish "wrong code"
    * from "expired" from "no challenge", all of which are 4xx but mean
    * different next steps.
+   *
+   * Dispatches `Verified` on success, and `VerificationFailed` (plus
+   * `IntentLocked` on the failure that crosses the limit) for a wrong
+   * code. The other outcomes dispatch nothing, matching which of them
+   * count against `maxAttempts`: an expired or missing challenge is not a
+   * guess, so an event there would make the stream disagree with
+   * `attempts`.
    */
   async verify(intent: MfaIntent, code: string): Promise<VerifyResult> {
     if (intent.status === "locked") {
@@ -304,7 +315,9 @@ export class MfaManager extends Manager<MfaDriver> {
 
     if (intent.status === "verified") {
       // Idempotent: re-submitting the code that already worked is a
-      // double-click, not an error.
+      // double-click, not an error. No event: `Verified` already fired for
+      // this intent, and firing again would count clicks rather than
+      // step-ups.
       return { status: "verified" };
     }
 
@@ -329,6 +342,10 @@ export class MfaManager extends Manager<MfaDriver> {
 
     if (result.status === "verified") {
       await this.markVerified(intent);
+      await fireMfaEvent(
+        new Verified(intent.user_id, driverName, intent.id, intent.purpose),
+        this.app,
+      );
 
       return result;
     }
@@ -338,9 +355,40 @@ export class MfaManager extends Manager<MfaDriver> {
     // let a slow user lock themselves out.
     if (result.status === "invalid-code") {
       await this.countFailure(intent);
+      await this.fireFailure(intent, driverName);
     }
 
     return result;
+  }
+
+  /**
+   * Dispatch the failure pair, after `countFailure()` has written.
+   *
+   * Two events out of one write. `countFailure()` fuses the attempt
+   * increment and the possible lock into a single `UPDATE`, so the lock has
+   * to be recovered by reading the status it left behind rather than by
+   * being told. Splitting them is worth it: a listener alerting on lockouts
+   * would otherwise have to subscribe to every failure and learn
+   * `maxAttempts` to interpret the counter.
+   *
+   * `remaining` is derived here rather than on the event so a listener can
+   * warn on the last attempt without reading config, and is floored at 0
+   * because `maxAttempts` can be lowered while an intent is live.
+   */
+  private async fireFailure(intent: MfaIntent, driverName: string): Promise<void> {
+    const remaining = Math.max(0, this.maxAttempts - intent.attempts);
+
+    await fireMfaEvent(
+      new VerificationFailed(intent.user_id, driverName, intent.id, intent.attempts, remaining),
+      this.app,
+    );
+
+    if (intent.status === "locked") {
+      await fireMfaEvent(
+        new IntentLocked(intent.user_id, driverName, intent.id, intent.attempts),
+        this.app,
+      );
+    }
   }
 
   /** Stamp the verification and open the sudo window. */

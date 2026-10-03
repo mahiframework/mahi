@@ -380,6 +380,116 @@ for (const testCase of mfaDriverContract({ /* ... */ })) {
 All three built-ins pass the same cases, which is what stops them
 drifting into subtly different factors behind one interface.
 
+## Events
+
+Every state transition dispatches an event, so the things an application
+wants to do around a second factor — notify the user that one was added,
+alert on a burst of failures, warn when recovery codes run low — are
+listeners rather than controller edits.
+
+| Event | Dispatched when | Fields beyond `userId` |
+|---|---|---|
+| `MethodEnrolled` | `enroll()` wrote an **unconfirmed** method | `driver`, `methodId`, `label` |
+| `MethodConfirmed` | `confirm()` proved it; now usable | `driver`, `methodId` |
+| `ChallengeIssued` | a code was minted for delivery | `driver`, `intentId`, `challengeId`, `expiresAt` |
+| `ChallengeThrottled` | a resend was refused per-mailbox | `driver`, `intentId`, `retryAfterSeconds` |
+| `Verified` | an intent became verified | `driver`, `intentId`, `purpose` |
+| `VerificationFailed` | a wrong code was submitted | `driver`, `intentId`, `attempts`, `remaining` |
+| `IntentLocked` | that failure hit `maxAttempts` | `driver`, `intentId`, `attempts` |
+| `RecoveryCodesGenerated` | a set was generated | `count`, `replaced` |
+| `RecoveryCodeUsed` | a code was consumed | `intentId`, `remaining` |
+
+Register them from a provider:
+
+```ts
+listeners(): ReadonlyArray<ListenerRegistration> {
+  return [
+    [MethodConfirmed, NotifyFactorAdded],
+    [IntentLocked, AlertOnLockout],
+    [RecoveryCodeUsed, WarnWhenCodesRunLow],
+  ];
+}
+```
+
+### Observing all of them at once
+
+Every event extends `MfaEvent`, and listeners match with `instanceof`, so
+one registration covers the subsystem including events added later:
+
+```ts
+events.listen(MfaEvent, RecordSecurityActivity);
+```
+
+A package that cannot import `@mahiframework/mfa` subscribes by name
+instead — the pattern matches the same set:
+
+```ts
+events.listen("mfa.*", RecordSecurityActivity);
+```
+
+### No secret, code, or recovery code is ever on an event
+
+Four values in this package are credentials: the TOTP secret, the emailed
+code, the magic link, and a generated recovery code. None appears on any
+event. Each is returned by the method that mints it, to its one caller,
+which displays or delivers it.
+
+This is not belt-and-braces. The models declare `hidden`, which protects
+serialisation, but an event payload bypasses that entirely — a listener
+that persists what it receives would write the credential to disk. Events
+carry ids, driver names, counts and expiries.
+
+### A throwing listener fails the operation
+
+Dispatch is in-band and awaited, and errors are **not** caught. A listener
+that throws fails the enrollment or verification that dispatched it.
+
+This matches [authentication](../authentication/) and diverges from
+[queue job events](../queues/), which swallow. MFA is an authentication
+subsystem and is held to the same standard: a listener can refuse an
+action by throwing, and one that cannot record a second-factor change
+stops the change it failed to record. The cost is that **an unhandled
+error in any MFA listener breaks MFA**, so a listener doing anything
+failure-prone must catch its own errors.
+
+### What is deliberately not dispatched
+
+- **No intent-created event.** `createIntent()` returns an existing live
+  intent when one matches, so it is idempotent by reuse and an event there
+  would fire on every page load that re-entered the flow.
+- **No intent-expired event.** Expiry is enforced on read; there is no
+  write at the moment it happens, so there is nothing to observe.
+  `mfa:gc` reports an aggregate count instead.
+- **`Verified` fires once per intent, not per submission.** Re-submitting
+  a code that already worked short-circuits, so a listener counts step-ups
+  rather than double-clicks.
+- **`VerificationFailed` fires only for a genuinely wrong code**, matching
+  exactly which outcomes count against `maxAttempts`. An expired or
+  missing challenge is not a guess, and an event there would make the
+  stream disagree with `attempts`.
+- **Nothing on a failed confirmation.** `confirm()` returns `false` for a
+  wrong code, a row belonging to someone else and an already-confirmed row
+  alike, so an event could not say which happened.
+- **No method-removed event**, because the package has no removal path. An
+  app that deletes an `MfaMethod` row itself should record that itself.
+
+### `IntentLocked` is not an account lockout
+
+The lock is per intent. The user starts a new intent and tries again. That
+is deliberate — a per-user lock would let an attacker lock a victim out of
+step-up entirely — so a listener must not report it to the user as "your
+account is locked".
+
+### Without `EventsServiceProvider`
+
+Dispatch is a no-op when nothing is bound at `EVENTS_TOKEN`, so an
+application that never registers `EventsServiceProvider` gets working MFA
+and no events. `@mahiframework/events` is nonetheless a declared
+dependency: it was already an unavoidable transitive one (`mfa` →
+`auth` → `events`), so naming it adds nothing to the install graph and
+buys `AbstractEvent` — which is what makes `Event.suppress()` silence
+these events and gives them a stable `eventName`.
+
 ## Garbage collection
 
 Every read path enforces expiry, so a stale row is never honoured — but
@@ -404,3 +514,7 @@ schedule.command("mfa:gc").daily();
 - **`mfaVerified()` ignores `whenUnenrolled`.** It reports verification,
   not permission.
 - **Recovery codes are shown once.** There is no way to read them back.
+- **An MFA event listener that throws breaks MFA.** Dispatch is in-band
+  and uncaught; catch your own errors.
+- **`MethodEnrolled` does not mean enrolled.** It fires for the
+  unconfirmed row; `MethodConfirmed` is the usable transition.

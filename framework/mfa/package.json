@@ -23,6 +23,7 @@
     "@mahiframework/database": "workspace:*",
     "@mahiframework/datetime": "workspace:*",
     "@mahiframework/encryption": "workspace:*",
+    "@mahiframework/events": "workspace:*",
     "@mahiframework/facades": "workspace:*",
     "@mahiframework/http": "workspace:*"
   },
