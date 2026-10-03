@@ -1505,6 +1505,31 @@ listeners(): ReadonlyArray<ListenerRegistration> {
 }
 ```
 
+### `Login` also fires when impersonation starts and stops
+
+`@mahiframework/impersonation` establishes a real session through
+`Auth.login()` in both directions, so `start()` dispatches a `Login` for
+the impersonated user and `stop()` dispatches one for the admin returning
+to their own account. That is accurate — a session genuinely was
+established — but an audit log reading `Login` alone would record an
+impersonation as an ordinary sign-in.
+
+Pair it with the impersonation events, which fire alongside and carry both
+parties:
+
+```ts
+listeners(): ReadonlyArray<ListenerRegistration> {
+  return [
+    [Login, RecordSignIn],
+    [ImpersonationStarted, RecordImpersonation],
+  ];
+}
+```
+
+Or resolve the impersonator inside the `Login` listener with
+`Impersonation.rootImpersonator(request)`. See
+[Impersonation](../impersonation/).
+
 ### Observing all of them at once
 
 Every event extends `AuthEvent`, and listeners match with `instanceof`,
@@ -1591,10 +1616,16 @@ listener, audit row and queued job in the application.
   so a one-time "welcome" action does not run on every page refresh.
 - **Nothing fires on a failed reset or a stale verification hash.** Those
   are indistinguishable from probes.
-- **No event marks impersonation.** `actingAs()` sets a process-wide
-  override with no marker in the auth state, so `Authenticated` reports
-  `viaActingAs` and nothing more. An audit log that must attribute an
-  admin's actions correctly needs its own impersonation mechanism.
+- **No auth event marks impersonation.** `viaActingAs` on `Authenticated`
+  reports only that the user came from an `actingAs()` override rather
+  than a credential check, which is how `TestClient.actingAs()`
+  authenticates. It does not identify an impersonator, because
+  `actingAs()` is a process-wide override with no marker in the auth
+  state. Real impersonation is
+  [`@mahiframework/impersonation`](../impersonation/), which dispatches
+  its own `ImpersonationStarted`/`ImpersonationFinished` and exposes
+  `Impersonation.rootImpersonator(request)` for exactly the
+  "attribute this action to the admin behind it" case.
 
 ### Without `EventsServiceProvider`
 
