@@ -26,7 +26,7 @@
     "@mahiframework/facades": "workspace:*",
     "@mahiframework/http": "workspace:*",
     "commander": "^12.1.0",
-    "hono": "^4.6.14",
+    "hono": "^4.13.10",
     "kysely": "^0.29.5"
   },
   "devDependencies": {
