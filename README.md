@@ -69,6 +69,7 @@ framework/            The framework packages (published as @mahiframework/*)
   encryption/           Encrypter (AES-256-GCM), Hasher (argon2), Signer (HMAC), key:generate, Crypt/Hash facades
   auth/                 AuthManager, TokenGuard, SessionGuard, DatabaseUserProvider, authenticate()/csrf(), Auth facade
   authorization/        GateRegistry, Policy, requireAuth/requireGuest, can() middleware, Gate facade
+  impersonation/        ImpersonationManager, app-defined gate, opt-in routes, Impersonation facade
   facades/              Facade<T> mixin factory — base for the Events/Bus/Crypt/Hash facades
   cli/                  ConsoleKernel, Command, built-in commands (migrate, db:seed, make:*, ...)
   pipeline/             Pipeline, Hub — send a value through an ordered list of pipes

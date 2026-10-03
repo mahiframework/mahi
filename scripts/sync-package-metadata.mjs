@@ -88,6 +88,10 @@ const DESCRIPTIONS = {
     description: "HTTP — the router, request/response, middleware, and kernel for Mahi.",
     keywords: ["mahi", "http", "router", "middleware", "kernel"],
   },
+  "@mahiframework/impersonation": {
+    description: 'Impersonation — "log in as this user" with an app-defined gate, for Mahi.',
+    keywords: ["mahi", "impersonation", "auth", "admin"],
+  },
   "@mahiframework/mail": {
     description: "Mail — mailables and transports for sending email from Mahi.",
     keywords: ["mahi", "mail", "email", "mailable", "smtp"],
@@ -171,6 +175,7 @@ const DOC_SLUGS = {
   "@mahiframework/health": "health",
   "@mahiframework/http-client": "http-client",
   "@mahiframework/http": "routing",
+  "@mahiframework/impersonation": "impersonation",
   "@mahiframework/mail": "mail",
   "@mahiframework/mfa": "mfa",
   "@mahiframework/notifications": "notifications",
