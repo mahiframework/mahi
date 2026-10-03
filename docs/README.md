@@ -106,6 +106,7 @@ framework to do something it didn't anticipate.
 
 - [Authentication](./authentication/): guards, tokens, sessions, passwords
 - [Authorization](./authorization/): gates, policies, abilities
+- [Multi-factor auth](./mfa/): TOTP, email codes, recovery codes, step-up
 - [Encryption & hashing](./encryption/): `Crypt`, `Hash`, signed URLs
 
 ### Infrastructure

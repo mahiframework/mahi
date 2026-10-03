@@ -17,6 +17,10 @@ Authentication is the *identity* half. The *permission* half,
 "may this user do this to this thing", lives in
 [Authorization](../authorization/).
 
+Second factors are a separate package. `@mahiframework/auth` has no TOTP,
+no one-time codes and no step-up re-verification; those are in
+[Multi-factor auth](../mfa/), which an app installs when it wants them.
+
 ## Configuration
 
 `config/auth.ts` returns an `AuthConfig`:

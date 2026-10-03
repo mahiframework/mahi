@@ -92,6 +92,10 @@ const DESCRIPTIONS = {
     description: "Mail — mailables and transports for sending email from Mahi.",
     keywords: ["mahi", "mail", "email", "mailable", "smtp"],
   },
+  "@mahiframework/mfa": {
+    description: "MFA — TOTP, email code, and recovery-code multi-factor verification for Mahi.",
+    keywords: ["mahi", "mfa", "2fa", "totp", "authentication"],
+  },
   "@mahiframework/notifications": {
     description: "Notifications — multi-channel notifications for Mahi.",
     keywords: ["mahi", "notifications", "notify", "channels"],
@@ -168,6 +172,7 @@ const DOC_SLUGS = {
   "@mahiframework/http-client": "http-client",
   "@mahiframework/http": "routing",
   "@mahiframework/mail": "mail",
+  "@mahiframework/mfa": "mfa",
   "@mahiframework/notifications": "notifications",
   "@mahiframework/queue": "queues",
   "@mahiframework/redis": "redis",
