@@ -88,6 +88,9 @@ function mount(guard: SessionGuard<TestUser>): Hono {
   router.get("/session-id", (request) => {
     return HttpResponse.json({ sessionId: guard.sessionId(request) });
   });
+  router.get("/session-remaining", async (request) => {
+    return HttpResponse.json({ remaining: await guard.sessionLifetimeRemaining(request) });
+  });
 
   return hono;
 }
@@ -518,6 +521,78 @@ describe("SessionGuard", () => {
       const before = (await store.read(id))!.expiresAt;
 
       await hono.request("/session-id", {
+        headers: { Cookie: `session=${cookieFrom(login)!}` },
+      });
+
+      expect((await store.read(id))!.expiresAt).toBe(before);
+    });
+  });
+
+  describe("sessionLifetimeRemaining()", () => {
+    it("reports roughly the configured lifetime for an ordinary session", async () => {
+      const login = await hono.request("/login", { method: "POST" });
+
+      const result = await hono.request("/session-remaining", {
+        headers: { Cookie: `session=${cookieFrom(login)!}` },
+      });
+      const { remaining } = (await result.json()) as { remaining: number };
+
+      // 120 minutes, give or take the milliseconds the request took.
+      expect(remaining).toBeGreaterThan(119 * 60_000);
+      expect(remaining).toBeLessThanOrEqual(120 * 60_000);
+    });
+
+    it("distinguishes a remembered session from an ordinary one", async () => {
+      // The reason this method exists. Remember-me here is not a flag but
+      // a longer expiry, so this is the only evidence that a session was
+      // remembered, which is what lets a caller replacing the session
+      // restore it in kind.
+      const remembering = new SessionGuard<TestUser>(
+        new StubUserProvider(),
+        store,
+        new Signer(Buffer.alloc(32, 7)),
+        { secure: false, lifetimeMinutes: 120, rememberMinutes: 60 * 24 * 30 },
+      );
+      const rememberingApp = mount(remembering);
+
+      const login = await rememberingApp.request("/login-remember", { method: "POST" });
+
+      const result = await rememberingApp.request("/session-remaining", {
+        headers: { Cookie: `session=${cookieFrom(login)!}` },
+      });
+      const { remaining } = (await result.json()) as { remaining: number };
+
+      // 30 days, comfortably past the 120-minute ordinary lifetime, which
+      // is the threshold a caller compares against.
+      expect(remaining).toBeGreaterThan(120 * 60_000);
+      expect(remaining).toBeGreaterThan(29 * 24 * 60 * 60_000);
+    });
+
+    it("returns null without a cookie", async () => {
+      const result = await hono.request("/session-remaining");
+      await expect(result.json()).resolves.toEqual({ remaining: null });
+    });
+
+    it("returns null once the session is gone server-side", async () => {
+      // Unlike `sessionId()`, this one answers liveness: it reads the
+      // store, so a revoked session reports null rather than a stale
+      // lifetime.
+      const login = await hono.request("/login", { method: "POST" });
+      const { id } = (await login.json()) as { id: string };
+      await store.destroy(id);
+
+      const result = await hono.request("/session-remaining", {
+        headers: { Cookie: `session=${cookieFrom(login)!}` },
+      });
+      await expect(result.json()).resolves.toEqual({ remaining: null });
+    });
+
+    it("does not renew the session it reads", async () => {
+      const login = await hono.request("/login", { method: "POST" });
+      const { id } = (await login.json()) as { id: string };
+      const before = (await store.read(id))!.expiresAt;
+
+      await hono.request("/session-remaining", {
         headers: { Cookie: `session=${cookieFrom(login)!}` },
       });
 

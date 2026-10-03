@@ -331,6 +331,38 @@ export class SessionGuard<TUser = unknown> implements StatefulGuard<TUser> {
     return this.readSessionId(request);
   }
 
+  /**
+   * How long the current session has left, or null when there is no live
+   * session server-side.
+   *
+   * The narrow exception to `sessionId()`'s rule against handing out the
+   * record: remember-me in this framework is not a flag but a LONGER
+   * EXPIRY (see `login()`), so the expiry is the only evidence that a
+   * session was remembered, and a caller that replaces a session, which
+   * `login()` always does, cannot otherwise restore it in kind. Returning
+   * the remaining lifetime rather than the whole `SessionRecord` keeps
+   * `userId` behind `user()` where it belongs.
+   *
+   * Costs a store read, and unlike `sessionId()` it does answer liveness:
+   * an expired or deleted session reads as null. No sliding renewal, for
+   * the same reason `sessionId()` does none.
+   */
+  async sessionLifetimeRemaining(request: Request): Promise<number | null> {
+    const sessionId = this.readSessionId(request);
+
+    if (sessionId === null) {
+      return null;
+    }
+
+    const session = await this.sessions.read(sessionId);
+
+    if (session === null) {
+      return null;
+    }
+
+    return new Date(session.expiresAt).getTime() - Date.now();
+  }
+
   private readSessionId(request: Request): string | null {
     const raw = request.cookie(this.cookieName, this.config.prefix);
 
