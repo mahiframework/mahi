@@ -5,6 +5,12 @@ import type { StatefulGuard } from "../guard.js";
 import type { UserProvider } from "../user-provider.js";
 import type { SessionStore } from "../session/session-store.js";
 import { currentAuthState } from "../auth-context.js";
+import { userKey } from "../user-key.js";
+import { CurrentDeviceLogout } from "../events/current-device-logout.js";
+import { fireAuthEvent } from "../events/fire-auth-event.js";
+import { Login } from "../events/login.js";
+import { Logout } from "../events/logout.js";
+import { OtherDeviceLogout } from "../events/other-device-logout.js";
 
 export interface SessionGuardConfig {
   provider?: string;
@@ -120,6 +126,16 @@ export class SessionGuard<TUser = unknown> implements StatefulGuard<TUser> {
     return this.config.cookie ?? "session";
   }
 
+  /**
+   * This guard's config name, the value events and the ambient auth scope
+   * both report. Defaults to `"session"`, the driver name, which is also
+   * what `config.name` falls back to when the app names its guard after
+   * the driver.
+   */
+  private get guardName(): string {
+    return this.config.name ?? "session";
+  }
+
   private get lifetimeMinutes(): number {
     return this.config.lifetimeMinutes ?? 120;
   }
@@ -224,8 +240,15 @@ export class SessionGuard<TUser = unknown> implements StatefulGuard<TUser> {
 
     if (state !== undefined) {
       state.user = user;
-      state.guard = this.config.name ?? "session";
+      state.guard = this.guardName;
     }
+
+    // After the session row, the cookie and the ambient scope, so a
+    // listener observing this can rely on the login being complete and
+    // can itself call `Auth.user()`.
+    await fireAuthEvent(
+      new Login(userId, user, sessionId, options.remember === true, this.guardName),
+    );
 
     return sessionId;
   }
@@ -233,6 +256,14 @@ export class SessionGuard<TUser = unknown> implements StatefulGuard<TUser> {
   /** Destroy the current session and clear the cookie. */
   async logout(request: Request): Promise<void> {
     const sessionId = this.readSessionId(request);
+
+    // Read the ambient user BEFORE the scope is cleared below, and without
+    // loading one: `logout()` needs no user to destroy a session, and
+    // adding a query so an event could carry one would cost every logout
+    // a read for the benefit of a listener that may not exist. Null on a
+    // logout route that never ran `authenticate()`.
+    const state = currentAuthState();
+    const user = state?.user ?? null;
 
     if (sessionId !== null) {
       await this.sessions.destroy(sessionId);
@@ -245,17 +276,31 @@ export class SessionGuard<TUser = unknown> implements StatefulGuard<TUser> {
 
     // Clear the ambient scope too: code running later in this same
     // request must not still see the user it just logged out.
-    const state = currentAuthState();
-
     if (state !== undefined) {
       state.user = null;
       state.guard = null;
     }
+
+    await fireAuthEvent(new Logout(userKey(user), user, sessionId, this.guardName));
   }
 
-  /** Invalidate every session for a user. Requires the database store. */
-  async logoutEverywhere(userId: string): Promise<void> {
+  /**
+   * Invalidate every session for a user. Requires the database store.
+   *
+   * `reason` reaches the `CurrentDeviceLogout` event unchanged. It exists
+   * because the most frequent caller is not a user action at all:
+   * `PasswordBroker.reset()` revokes credentials on a successful reset,
+   * and an audit log reporting that as "signed out of all devices" is
+   * misleading. Defaults to `"requested"`, so an application calling this
+   * directly needs no change.
+   */
+  async logoutEverywhere(
+    userId: string,
+    reason: "requested" | "password_reset" = "requested",
+  ): Promise<void> {
     await this.sessions.destroyForUser(userId);
+
+    await fireAuthEvent(new CurrentDeviceLogout(userId, reason, this.guardName));
   }
 
   /**
@@ -295,6 +340,12 @@ export class SessionGuard<TUser = unknown> implements StatefulGuard<TUser> {
     }
 
     await this.sessions.destroyForUserExcept(session.userId, sessionId);
+
+    // Only on success. Every `return false` above is a failed password
+    // check or a missing session, which destroyed nothing; reporting one
+    // as a logout would put a "you were signed out" row in an audit log
+    // for an act that did not happen.
+    await fireAuthEvent(new OtherDeviceLogout(session.userId, sessionId, this.guardName));
 
     return true;
   }

@@ -43,8 +43,10 @@ export function hasVerifiedEmail(user: Verifiable, column: string = DEFAULT_COLU
  *
  * Idempotent at the storage layer, calling it twice simply rewrites the
  * timestamp; callers that must not "re-verify" should guard with
- * `hasVerifiedEmail()` first (that's also where a `Verified` event would
- * be dispatched, if/when events grow one).
+ * `hasVerifiedEmail()` first. `EmailVerificationBroker.verify()` does
+ * exactly that, and dispatches `EmailVerified` only on the transition.
+ * This function fires nothing: it is the raw write, and a caller stamping
+ * the column directly has not necessarily verified anything.
  */
 export async function markEmailAsVerified(
   model: AnyModelClass,

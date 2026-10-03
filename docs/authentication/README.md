@@ -1468,7 +1468,160 @@ schedule(schedule: Schedule): void {
 
 See [Scheduling](../scheduling/).
 
+## Events
+
+Every security-relevant act dispatches an event. They exist so the
+concerns that always accrete around authentication — audit logs, failed
+login alerting, "new device" notifications, forced re-verification — can
+be written once, in a listener, instead of being bolted onto every
+controller that happens to touch auth.
+
+| Event | Dispatched when | Notable fields |
+|---|---|---|
+| `Attempted` | credentials verified, either outcome | `credentials`, `succeeded`, `user`, `guard` |
+| `Failed` | credentials rejected | `credentials`, `guard` |
+| `Authenticated` | a request resolved a user | `userId`, `user`, `guard`, `viaActingAs` |
+| `Login` | a session was established | `userId`, `user`, `sessionId`, `remember`, `guard` |
+| `Logout` | a session was destroyed | `userId?`, `user?`, `sessionId?`, `guard` |
+| `OtherDeviceLogout` | "sign out everywhere else" succeeded | `userId`, `keptSessionId` |
+| `CurrentDeviceLogout` | every session destroyed, including this one | `userId`, `reason` |
+| `TokenCreated` | a personal access token was issued | `userId`, `tokenId`, `name` |
+| `TokenRevoked` | one or all tokens revoked | `tokenId?`, `userId?`, `all`, `reason` |
+| `PasswordResetLinkSent` | a reset token was minted | `email`, `user` |
+| `PasswordReset` | a password was reset via token | `email`, `user` |
+| `EmailVerificationSent` | a verification link was minted | `userId`, `email` |
+| `EmailVerified` | an address became verified | `userId`, `email` |
+| `CsrfTokenMismatch` | `csrf()` rejected a request | `method`, `path` |
+
+Register listeners the usual way, from a provider:
+
+```ts
+listeners(): ReadonlyArray<ListenerRegistration> {
+  return [
+    [Failed, ThrottleRepeatedFailures],
+    [Login, NotifyOnNewDevice],
+    [PasswordReset, RecordSecurityActivity],
+  ];
+}
+```
+
+### Observing all of them at once
+
+Every event extends `AuthEvent`, and listeners match with `instanceof`,
+so one registration covers the subsystem:
+
+```ts
+events.listen(AuthEvent, RecordSecurityActivity);
+```
+
+Prefer this to enumerating the table above. An explicit list silently
+misses whichever event is added next, which for a security log is the
+failure mode that matters. The name-pattern form works too, and is what a
+package that cannot import `@mahiframework/auth` should use:
+
+```ts
+events.listen("auth.*", RecordSecurityActivity);
+```
+
+### A throwing listener fails the operation
+
+Auth events are dispatched **in-band and awaited**, and errors are **not**
+caught. A listener that throws fails the login, logout or reset that
+dispatched it.
+
+This is deliberate, and it is the opposite of
+[queue job events](../queues/), which swallow listener errors so a
+crashing observer cannot fail a job. The reasoning is that a queue worker
+which loses an observer has lost telemetry, whereas an audit listener that
+cannot write has lost the record of a security-relevant act — and under a
+regime where that record is mandatory, proceeding as if nothing happened
+is the worse outcome. It also means a listener can refuse an action by
+throwing, which is how a lockout policy written in application code can
+actually stop a login.
+
+The cost is equally real: **an unhandled error in any auth listener is an
+authentication outage.** A listener doing anything failure-prone (an
+outbound HTTP call, a third-party SDK) must catch its own errors:
+
+```ts
+export class NotifyOnNewDevice implements Listener<Login> {
+  constructor(private app: Application) {}
+
+  async handle(event: Login): Promise<void> {
+    try {
+      await this.pager.notify(event.userId);
+    } catch (error) {
+      // Never let telemetry break a login.
+      this.app.logger.error("new-device notification failed", { error });
+    }
+  }
+}
+```
+
+### Credentials and tokens are never on an event
+
+`Attempted` and `Failed` carry `credentials` with the secret stripped
+(`password`, `password_confirmation`, `secret`, `token`), so the
+identifying column survives for "47 attempts against this address" and the
+password does not.
+
+For the same reason `TokenCreated` carries the token **id** and not the
+plaintext, `PasswordResetLinkSent` omits the reset token, and
+`EmailVerificationSent` omits the signed URL. Each of those is a
+credential or a capability, and an event spreads its payload to every
+listener, audit row and queued job in the application.
+
+### What is deliberately not dispatched
+
+- **No `-ing` events.** There is no `Authenticating` or `LoggingOut`. They
+  would be a second, weaker authorization layer beside the one the
+  framework already has, and "deny by throwing from a listener" yields an
+  error no route can turn into a sensible response. Decide in a guard, a
+  middleware or a gate.
+- **`Attempted`/`Failed` cannot tell "no such account" from "wrong
+  password."** `attempt()` deliberately does not know, and an event that
+  leaked the difference would re-create the account-enumeration oracle its
+  constant-work hash exists to remove.
+- **`PasswordResetLinkSent` does not fire for an unknown address**, for
+  the same reason: `sendResetLink()` returns `{ status: "sent" }` either
+  way, and an event firing only for real accounts would record at the
+  event layer exactly what the response shape conceals. To detect an
+  enumeration sweep, count requests with `throttle()` middleware instead.
+- **`EmailVerified` fires only on the transition**, not on a repeat click,
+  so a one-time "welcome" action does not run on every page refresh.
+- **Nothing fires on a failed reset or a stale verification hash.** Those
+  are indistinguishable from probes.
+- **No event marks impersonation.** `actingAs()` sets a process-wide
+  override with no marker in the auth state, so `Authenticated` reports
+  `viaActingAs` and nothing more. An audit log that must attribute an
+  admin's actions correctly needs its own impersonation mechanism.
+
+### Without `EventsServiceProvider`
+
+Dispatch is a no-op when nothing is bound at `EVENTS_TOKEN`, so an
+application that never registers `EventsServiceProvider` is unaffected.
+`@mahiframework/events` is nevertheless a declared dependency of
+`@mahiframework/auth`: it was already an unavoidable transitive one
+through `@mahiframework/database`, so naming it adds nothing to the
+install graph and buys compile-time types.
+
+### `onPasswordReset()` still works
+
+`PasswordBroker.onPasswordReset()` predates these events, carries the same
+`{ user, email }` payload, and is still called — alongside `PasswordReset`
+— so nothing using it needs to change. Prefer the event for new code: it
+is observable from a provider's `listeners()` hook without a reference to
+the broker.
+
 ## Testing
+
+Pass `{ fakeEvents: true }` to `createTestApplication()` and assert on
+the recording dispatcher:
+
+```ts
+testApp.events!.assertDispatched(Failed, (event) => event.credentials.email === email);
+testApp.events!.assertNotDispatched(Login);
+```
 
 `Auth.runAs()` is the supported way to establish an identity without a
 request:
@@ -1499,6 +1652,7 @@ so no database round-trip is needed. See [Testing](../testing/).
 
 ## Related
 
+- [Events](../events/): dispatching, listeners, the `listeners()` hook
 - [Authorization](../authorization/): gates, policies, `can()`, `authorize()`
 - [Encryption & hashing](../encryption/): `Hash`, `Signer`, signed URLs
 - [Routing](../routing/): where `authenticate()` and `csrf()` are attached

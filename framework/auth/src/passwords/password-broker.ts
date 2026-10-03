@@ -3,6 +3,9 @@ import { DateTime } from "@mahiframework/datetime";
 import type { Hasher } from "@mahiframework/encryption";
 import type { UserProvider } from "../user-provider.js";
 import { PasswordResetToken } from "./password-reset-token.model.js";
+import { fireAuthEvent } from "../events/fire-auth-event.js";
+import { PasswordReset } from "../events/password-reset.js";
+import { PasswordResetLinkSent } from "../events/password-reset-link-sent.js";
 
 export interface PasswordBrokerConfig {
   /**
@@ -26,9 +29,12 @@ export interface PasswordBrokerConfig {
  * Told when a password is successfully reset, so the rest of the app can
  * react (notify the user, write an audit record).
  *
- * A callback rather than an event-bus dependency: `@mahiframework/auth` does not
- * depend on `@mahiframework/events`, and the one consumer that needs this is the
- * app itself.
+ * Superseded by the `PasswordReset` event, which carries the same
+ * `{ user, email }` payload and needs no wiring. This remains supported,
+ * and is dispatched alongside the event, so applications already calling
+ * `onPasswordReset()` need change nothing. Prefer the event for new code:
+ * it is observable from a service provider's `listeners()` hook rather
+ * than requiring a reference to the broker.
  */
 export type PasswordResetListener = (event: {
   user: unknown;
@@ -40,14 +46,24 @@ export type PasswordResetListener = (event: {
  * optional: an app with no sessions, or no personal access tokens, simply
  * doesn't wire the corresponding one.
  */
+/**
+ * Why credentials are being revoked, passed through to the
+ * `CurrentDeviceLogout`/`TokenRevoked` events the revocation dispatches.
+ *
+ * It exists because a password reset is by far the most frequent cause of
+ * mass revocation, and an audit log reporting it as "signed out of all
+ * devices" describes a user action that never happened.
+ */
+export type RevocationReason = "requested" | "password_reset";
+
 export interface CredentialRevoker {
   /** Destroy every session belonging to the user. */
-  destroyForUser(userId: string): Promise<void>;
+  destroyForUser(userId: string, reason?: RevocationReason): Promise<void>;
 }
 
 export interface TokenRevoker {
   /** Revoke every personal access token belonging to the user. */
-  revokeAllTokens(userId: string): Promise<void>;
+  revokeAllTokens(userId: string, reason?: RevocationReason): Promise<void>;
 }
 
 /**
@@ -173,6 +189,13 @@ export class PasswordBroker<TUser extends object = Record<string, unknown>> {
       "created_at",
     ]);
 
+    // Only on this path, so the event never fires for an unknown address.
+    // That is deliberate: the return value hides the distinction, and an
+    // event firing only for real accounts would re-create at the event
+    // layer the enumeration oracle the response shape removes. See
+    // `PasswordResetLinkSent`.
+    await fireAuthEvent(new PasswordResetLinkSent(email, user));
+
     return { status: "sent", email, token };
   }
 
@@ -251,6 +274,12 @@ export class PasswordBroker<TUser extends object = Record<string, unknown>> {
       await listener({ user, email });
     }
 
+    // After revocation, so a listener observing this can rely on every
+    // prior session and token already being gone. The revocation itself
+    // dispatched `CurrentDeviceLogout`/`TokenRevoked` with
+    // `reason: "password_reset"`.
+    await fireAuthEvent(new PasswordReset(email, user));
+
     return { status: "reset" };
   }
 
@@ -274,8 +303,8 @@ export class PasswordBroker<TUser extends object = Record<string, unknown>> {
     const userId = String(id);
 
     for (const revoke of [
-      async () => this.sessions?.destroyForUser(userId),
-      async () => this.tokens?.revokeAllTokens(userId),
+      async () => this.sessions?.destroyForUser(userId, "password_reset"),
+      async () => this.tokens?.revokeAllTokens(userId, "password_reset"),
     ]) {
       try {
         await revoke();

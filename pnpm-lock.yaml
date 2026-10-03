@@ -62,6 +62,9 @@ importers:
       '@mahiframework/encryption':
         specifier: workspace:*
         version: link:../encryption
+      '@mahiframework/events':
+        specifier: workspace:*
+        version: link:../events
       '@mahiframework/facades':
         specifier: workspace:*
         version: link:../facades

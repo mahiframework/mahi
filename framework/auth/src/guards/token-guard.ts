@@ -8,6 +8,9 @@ import {
   type PersonalAccessTokenAttributes,
 } from "../models/personal-access-token.js";
 import { hashToken, splitToken, verifyTokenHash } from "./token-hash.js";
+import { fireAuthEvent } from "../events/fire-auth-event.js";
+import { TokenCreated } from "../events/token-created.js";
+import { TokenRevoked } from "../events/token-revoked.js";
 
 export interface TokenGuardConfig {
   /** Which user provider to resolve users from. */
@@ -18,6 +21,13 @@ export interface TokenGuardConfig {
    * either way, so switching later is purely a config change.
    */
   expiresInMinutes?: number | null;
+  /**
+   * The guard's own config name, reported by the `TokenCreated` event so a
+   * listener can tell which configured guard issued a token when an app
+   * has more than one. Set by `AuthServiceProvider` when it resolves the
+   * guard; defaults to `"token"`. Mirrors `SessionGuardConfig.name`.
+   */
+  name?: string;
 }
 
 export interface NewAccessToken {
@@ -98,17 +108,42 @@ export class TokenGuard<TUser = unknown> implements Guard<TUser> {
       created_at: now,
     });
 
+    // The event carries the token ID, never the plaintext: that is the
+    // credential itself, and an event is exactly the wrong place for it.
+    // See `TokenCreated`.
+    await fireAuthEvent(new TokenCreated(userId, id, name, this.config.name ?? "token"));
+
     return { token: `${id}|${secret}`, record };
   }
 
-  /** Revoke a single token by id, e.g. the one used by the current request. */
+  /**
+   * Revoke a single token by id, e.g. the one used by the current request.
+   *
+   * The `TokenRevoked` event carries a null `userId`: this method takes
+   * only a token id and does not read the row it deletes. Adding a lookup
+   * so the event could name an owner would put a query in a revocation
+   * path for the benefit of a listener that may not exist.
+   */
   async revokeToken(id: string): Promise<void> {
     await PersonalAccessToken.delete(id);
+
+    await fireAuthEvent(new TokenRevoked(id, null, false));
   }
 
-  /** Revoke every token belonging to a user ("log out everywhere"). */
-  async revokeAllTokens(userId: string): Promise<void> {
+  /**
+   * Revoke every token belonging to a user ("log out everywhere").
+   *
+   * `reason` reaches the event unchanged, for the same purpose it serves
+   * on `SessionGuard.logoutEverywhere()`: the dominant caller is
+   * `PasswordBroker.reset()`, not a user request.
+   */
+  async revokeAllTokens(
+    userId: string,
+    reason: "requested" | "password_reset" = "requested",
+  ): Promise<void> {
     await PersonalAccessToken.query().where("user_id", userId).delete();
+
+    await fireAuthEvent(new TokenRevoked(null, userId, true, reason));
   }
 
   /**

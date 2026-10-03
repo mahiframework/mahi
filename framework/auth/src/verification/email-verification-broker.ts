@@ -3,6 +3,9 @@ import type { AnyModelClass } from "@mahiframework/database";
 import { signedUrl, type SignedUrlOptions } from "@mahiframework/http";
 import type { UserProvider } from "../user-provider.js";
 import { hasVerifiedEmail, markEmailAsVerified } from "./email-verification.js";
+import { fireAuthEvent } from "../events/fire-auth-event.js";
+import { EmailVerificationSent } from "../events/email-verification-sent.js";
+import { EmailVerified } from "../events/email-verified.js";
 
 export interface EmailVerificationConfig {
   /** Minutes a verification link stays valid. Defaults to 60, as Laravel's does. */
@@ -156,7 +159,13 @@ export class EmailVerificationBroker<TUser extends object = Record<string, unkno
       return { status: "invalid-user" };
     }
 
-    return { status: "sent", url: this.verificationUrl(userId, email, signerOptions) };
+    const url = this.verificationUrl(userId, email, signerOptions);
+
+    // The URL is NOT on the event: it is a capability, and anyone holding
+    // it can verify the address. See `EmailVerificationSent`.
+    await fireAuthEvent(new EmailVerificationSent(userId, email, user));
+
+    return { status: "sent", url };
   }
 
   /**
@@ -191,6 +200,11 @@ export class EmailVerificationBroker<TUser extends object = Record<string, unkno
     }
 
     await markEmailAsVerified(this.model, userId, this.column);
+
+    // Only on this path. `already-verified` changed nothing, and firing
+    // there would make a one-time "welcome, you're verified" action run on
+    // every refresh of the confirmation page.
+    await fireAuthEvent(new EmailVerified(userId, email, user));
 
     return { status: "verified" };
   }

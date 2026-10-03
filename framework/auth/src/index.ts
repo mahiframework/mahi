@@ -23,6 +23,28 @@ export {
 } from "./auth-context.js";
 export type { AuthState } from "./auth-context.js";
 
+export { userKey } from "./user-key.js";
+
+export {
+  AuthEvent,
+  UserAuthEvent,
+  Attempted,
+  Authenticated,
+  CsrfTokenMismatch,
+  CurrentDeviceLogout,
+  EmailVerificationSent,
+  EmailVerified,
+  Failed,
+  Login,
+  Logout,
+  OtherDeviceLogout,
+  PasswordReset,
+  PasswordResetLinkSent,
+  TokenCreated,
+  TokenRevoked,
+} from "./events/index.js";
+export { fireAuthEvent, safeCredentials } from "./events/fire-auth-event.js";
+
 export { isStatefulGuard } from "./guard.js";
 export type { Guard, StatefulGuard } from "./guard.js";
 export type { Credentials, UserProvider } from "./user-provider.js";
@@ -54,6 +76,7 @@ export type {
   PasswordResetListener,
   CredentialRevoker,
   TokenRevoker,
+  RevocationReason,
 } from "./passwords/password-broker.js";
 export { PasswordResetToken } from "./passwords/password-reset-token.model.js";
 

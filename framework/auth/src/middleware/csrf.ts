@@ -2,6 +2,8 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { app } from "@mahiframework/core";
 import { SIGNER_TOKEN, type Signer } from "@mahiframework/encryption";
 import { HttpError, type CookieOptions, type HttpPipe } from "@mahiframework/http";
+import { CsrfTokenMismatch } from "../events/csrf-token-mismatch.js";
+import { fireAuthEvent } from "../events/fire-auth-event.js";
 
 export interface CsrfOptions {
   /** Cookie holding the token. Readable by JS by design. See below. */
@@ -100,6 +102,12 @@ export function csrf(options: CsrfOptions = {}): HttpPipe {
         existing === null ||
         !tokensMatch(presentedToken(request, headerName, fieldName), existing)
       ) {
+        // Awaited before the throw, so a listener sees the rejection in
+        // order. A listener that throws replaces the 403 with its own
+        // error: the documented cost of in-band dispatch, and it matters
+        // more here than elsewhere because this is already an error path.
+        await fireAuthEvent(new CsrfTokenMismatch(request.method(), request.path()));
+
         throw HttpError.forbidden("CSRF token mismatch.");
       }
     }

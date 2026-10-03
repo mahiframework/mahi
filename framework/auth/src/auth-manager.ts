@@ -3,7 +3,11 @@ import type { Hasher } from "@mahiframework/encryption";
 import type { Request } from "@mahiframework/http";
 import { isStatefulGuard, type Guard, type StatefulGuard } from "./guard.js";
 import type { Credentials, UserProvider } from "./user-provider.js";
-import { PasswordBroker, type PasswordBrokerConfig } from "./passwords/password-broker.js";
+import {
+  PasswordBroker,
+  type PasswordBrokerConfig,
+  type RevocationReason,
+} from "./passwords/password-broker.js";
 import {
   EmailVerificationBroker,
   type EmailVerificationConfig,
@@ -18,6 +22,11 @@ import {
   user as contextUser,
   userOrNull as contextUserOrNull,
 } from "./auth-context.js";
+import { userKey } from "./user-key.js";
+import { Attempted } from "./events/attempted.js";
+import { Authenticated } from "./events/authenticated.js";
+import { Failed } from "./events/failed.js";
+import { fireAuthEvent, safeCredentials } from "./events/fire-auth-event.js";
 
 export interface AuthConfig {
   default: string;
@@ -470,11 +479,18 @@ export class AuthManager extends Manager<Guard> {
    * guards are named by the app (`web`, `api`) and the broker only cares
    * that *something* can revoke. Returns undefined when nothing can, in
    * which case that half of the revocation is a no-op.
+   *
+   * The adapter forwards the broker's `reason` through to the guard, so
+   * the `CurrentDeviceLogout`/`TokenRevoked` events a password reset
+   * triggers are distinguishable from a user-requested mass logout. A
+   * guard method that takes only a user id ignores the extra argument,
+   * which is why this stays a positional pass-through rather than a
+   * capability probe.
    */
   private credentialRevoker<T extends string>(
     method: string,
     as: T,
-  ): Record<T, (userId: string) => Promise<void>> | undefined {
+  ): Record<T, (userId: string, reason?: RevocationReason) => Promise<void>> | undefined {
     for (const name of Object.keys(this.config.guards)) {
       let guard: Guard;
       try {
@@ -487,9 +503,13 @@ export class AuthManager extends Manager<Guard> {
 
       if (typeof candidate === "function") {
         return {
-          [as]: (userId: string) =>
-            (candidate as (id: string) => Promise<void>).call(guard, userId),
-        } as Record<T, (userId: string) => Promise<void>>;
+          [as]: (userId: string, reason?: RevocationReason) =>
+            (candidate as (id: string, reason?: RevocationReason) => Promise<void>).call(
+              guard,
+              userId,
+              reason,
+            ),
+        } as Record<T, (userId: string, reason?: RevocationReason) => Promise<void>>;
       }
     }
 
@@ -509,14 +529,22 @@ export class AuthManager extends Manager<Guard> {
    * An acting-as override (see `actingAs()`) short-circuits the guard: the
    * request authenticates as the overridden user without touching the
    * network/session, which is what `TestClient.actingAs()` relies on.
+   *
+   * Dispatches `Authenticated` when a user was resolved, which is once per
+   * authenticated REQUEST rather than once per login. An anonymous
+   * request dispatches nothing: see that event's docstring, and note it is
+   * a hot path.
    */
   async resolve(request: Request, guardName?: string): Promise<unknown | null> {
     const override = contextActingAs();
 
     if (override !== null) {
       const state = requireAuthState();
+      const name = override.guard ?? guardName ?? this.getDefaultDriver();
       state.user = override.user;
-      state.guard = override.guard ?? guardName ?? this.getDefaultDriver();
+      state.guard = name;
+
+      await this.fireAuthenticated(override.user, name, true);
 
       return override.user;
     }
@@ -528,7 +556,35 @@ export class AuthManager extends Manager<Guard> {
     state.user = user;
     state.guard = user === null ? null : name;
 
+    if (user !== null) {
+      await this.fireAuthenticated(user, name, false);
+    }
+
     return user;
+  }
+
+  /**
+   * Dispatch `Authenticated` for a resolved user.
+   *
+   * The id is read off the user object rather than taken as a parameter
+   * because neither `resolve()` path has one in hand: a guard returns the
+   * user, not its key, and an acting-as override carries only the object.
+   * `String(user.id)` is the same assumption `id()` already makes, and a
+   * user object without a readable `id` yields `null`, which a listener
+   * must tolerate rather than the resolution failing over telemetry.
+   */
+  private async fireAuthenticated(
+    user: unknown,
+    guard: string,
+    viaActingAs: boolean,
+  ): Promise<void> {
+    const id = userKey(user);
+
+    if (id === null) {
+      return;
+    }
+
+    await fireAuthEvent(new Authenticated(id, user, guard, viaActingAs), this.app);
   }
 
   user<TUser = unknown>(): TUser {
@@ -584,6 +640,15 @@ export class AuthManager extends Manager<Guard> {
    * Verify credentials without touching the request. Returns the user on
    * success, null on failure. It does NOT log anyone in; the caller
    * decides what to issue (a token, a session).
+   *
+   * Dispatches `Attempted` for both outcomes and, additionally, `Failed`
+   * for a failure. Both are dispatched AFTER the constant-work hash on
+   * the miss path, so the timing-equalisation this method exists to
+   * provide is unaffected by whether a listener is registered.
+   *
+   * Note that the events cannot distinguish "no such account" from "wrong
+   * password", because this method deliberately does not either. See
+   * `Attempted`.
    */
   async attempt<TUser = unknown>(
     credentials: Credentials,
@@ -594,12 +659,40 @@ export class AuthManager extends Manager<Guard> {
 
     if (user === null) {
       await this.hasher.make(credentials["password"] ?? "");
+      await this.fireAttempt(credentials, false);
 
       return null;
     }
 
     const valid = await users.validateCredentials(user, credentials);
 
+    await this.fireAttempt(credentials, valid, valid ? user : null);
+
     return valid ? (user as TUser) : null;
+  }
+
+  /**
+   * Dispatch the attempt pair: `Attempted` always, `Failed` additionally
+   * on failure.
+   *
+   * Two events for one outcome is redundant by design. `Attempted` is for
+   * a listener that wants every attempt (a rate limiter, an audit log);
+   * `Failed` is for one that wants only failures (alerting, lockout) and
+   * would otherwise have to register on `Attempted` and branch. Laravel
+   * ships the same pair for the same reason.
+   */
+  private async fireAttempt(
+    credentials: Credentials,
+    succeeded: boolean,
+    user: unknown | null = null,
+  ): Promise<void> {
+    const safe = safeCredentials(credentials);
+    const guard = this.getDefaultDriver();
+
+    await fireAuthEvent(new Attempted(safe, succeeded, user, guard), this.app);
+
+    if (!succeeded) {
+      await fireAuthEvent(new Failed(safe, guard), this.app);
+    }
   }
 }

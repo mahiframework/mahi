@@ -12,6 +12,7 @@
     { "path": "../database" },
     { "path": "../datetime" },
     { "path": "../encryption" },
+    { "path": "../events" },
     { "path": "../facades" },
     { "path": "../http" }
   ]

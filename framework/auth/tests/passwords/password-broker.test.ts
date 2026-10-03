@@ -200,8 +200,13 @@ describe("PasswordBroker", () => {
           status: "reset",
         });
 
-        expect(destroyForUser).toHaveBeenCalledWith("alice");
-        expect(revokeAllTokens).toHaveBeenCalledWith("alice");
+        // The reason rides along so the CurrentDeviceLogout/TokenRevoked
+        // events a reset triggers are distinguishable from a user-
+        // requested "sign out everywhere". An audit log reporting a reset
+        // as a voluntary mass logout describes something that didn't
+        // happen.
+        expect(destroyForUser).toHaveBeenCalledWith("alice", "password_reset");
+        expect(revokeAllTokens).toHaveBeenCalledWith("alice", "password_reset");
       });
 
       it("revokes nothing when the reset fails", async () => {

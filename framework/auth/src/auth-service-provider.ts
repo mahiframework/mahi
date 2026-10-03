@@ -60,7 +60,10 @@ export class AuthServiceProvider extends ServiceProvider {
       manager.extend("token", () => {
         const guardConfig = manager.guardConfig() as TokenGuardConfig;
 
-        return new TokenGuard(manager.userProvider(guardConfig.provider), guardConfig);
+        return new TokenGuard(manager.userProvider(guardConfig.provider), {
+          name: manager.resolvingGuardName(),
+          ...guardConfig,
+        });
       });
 
       manager.extend("session", () => {
