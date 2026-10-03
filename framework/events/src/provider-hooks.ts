@@ -1,4 +1,4 @@
-import type { EventClass } from "./event.js";
+import type { EventMatcher } from "./event.js";
 import type { ListenerClass, ListenerFn } from "./listener.js";
 import type { WildcardListener } from "./event-dispatcher.js";
 
@@ -17,7 +17,7 @@ import type { WildcardListener } from "./event-dispatcher.js";
  * `dispatcher.listen()`, where inference does work.
  */
 export type ListenerRegistration =
-  | readonly [EventClass, ListenerClass | ListenerFn]
+  | readonly [EventMatcher, ListenerClass | ListenerFn]
   | readonly [string, ListenerClass | WildcardListener];
 
 declare module "@mahiframework/core" {

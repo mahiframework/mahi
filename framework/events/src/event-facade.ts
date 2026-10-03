@@ -1,5 +1,5 @@
 import { Facade } from "@mahiframework/facades";
-import type { AbstractEvent, EventClass } from "./event.js";
+import type { AbstractEvent, EventClass, EventMatcher } from "./event.js";
 import type { EventDispatcher, WildcardListener } from "./event-dispatcher.js";
 import type { ListenerClass, ListenerFn } from "./listener.js";
 import { EVENTS_TOKEN } from "./events-service-provider.js";
@@ -58,14 +58,14 @@ export class Events extends Facade<EventDispatcher>(() => EVENTS_TOKEN) {
    * class form unless you genuinely need to match a family of events by
    * name.
    */
-  static listen<E extends AbstractEvent>(eventClass: EventClass<E>, handler: ListenerFn<E>): void;
+  static listen<E extends AbstractEvent>(eventClass: EventMatcher<E>, handler: ListenerFn<E>): void;
   static listen<E extends AbstractEvent>(
-    eventClass: EventClass<E>,
+    eventClass: EventMatcher<E>,
     listenerClass: ListenerClass<E>,
   ): void;
   static listen(pattern: string, listener: ListenerClass | WildcardListener): void;
   static listen(
-    eventClassOrPattern: EventClass | string,
+    eventClassOrPattern: EventMatcher | string,
     listenerOrHandler: ListenerClass | ListenerFn | WildcardListener,
   ): void {
     // Cast: the overload set above is the public contract, but the

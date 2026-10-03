@@ -684,7 +684,17 @@ listener has already run. Callbacks must catch their own errors.
 
 **`instanceof` matching means base-class listeners catch subclasses**,
 including a listener on `AbstractEvent`, which catches everything in the
-app.
+app. **The base class may be abstract**, which is what makes the useful
+version of this work: `listen(AuthEvent, ...)` observes every
+authentication event, and `listen(ModelLifecycleEvent, ...)` every model
+write. `listen()` only ever tests dispatched events against the class with
+`instanceof`, so it accepts an `EventMatcher` (possibly abstract) rather
+than the `EventClass` (necessarily concrete) that `dispatchesEvents` maps
+need, since those are instantiated.
+
+Prefer a family base to enumerating subclasses. An explicit list silently
+misses whichever subclass is added next, which for an audit log is the
+failure mode that matters.
 
 **`*` in a pattern matches dots.** `model.*` matches
 `model.posts.created`, not just `model.posts`.

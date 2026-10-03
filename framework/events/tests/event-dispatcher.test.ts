@@ -395,6 +395,73 @@ describe("EventDispatcher", () => {
     });
   });
 
+  describe("abstract base classes as matchers", () => {
+    // `listen()` never constructs the class it is given, it only tests
+    // dispatched events against it with `instanceof`. Requiring a concrete
+    // constructor for a key that is never called broke the documented
+    // "observe everything" pattern, and with it the useful shape for an
+    // audit log: one registration on a family base rather than an explicit
+    // list that silently misses whichever subclass is added next.
+    abstract class DomainEvent extends AbstractEvent {}
+    class OrderPlaced extends DomainEvent {}
+    class OrderShipped extends DomainEvent {}
+
+    it("catches every subclass through an abstract base", async () => {
+      const seen: string[] = [];
+      const dispatcher = new EventDispatcher(new Application());
+      dispatcher.listen(DomainEvent, (event) => {
+        seen.push(event.eventName);
+      });
+
+      await dispatcher.dispatch(new OrderPlaced());
+      await dispatcher.dispatch(new OrderShipped());
+
+      expect(seen).toEqual(["OrderPlaced", "OrderShipped"]);
+    });
+
+    it("catches everything through AbstractEvent itself", async () => {
+      const seen: string[] = [];
+      const dispatcher = new EventDispatcher(new Application());
+      dispatcher.listen(AbstractEvent, (event) => {
+        seen.push(event.eventName);
+      });
+
+      await dispatcher.dispatch(new OrderPlaced());
+      await dispatcher.dispatch(new UserRegistered("a@example.com"));
+
+      expect(seen).toEqual(["OrderPlaced", "UserRegistered"]);
+    });
+
+    it("does not catch an unrelated event through an abstract base", async () => {
+      const seen: string[] = [];
+      const dispatcher = new EventDispatcher(new Application());
+      dispatcher.listen(DomainEvent, () => {
+        seen.push("ran");
+      });
+
+      await dispatcher.dispatch(new UserRegistered("a@example.com"));
+
+      expect(seen).toEqual([]);
+    });
+
+    it("accepts a listener class against an abstract base", async () => {
+      const seen: string[] = [];
+
+      class RecordDomainEvent implements Listener<DomainEvent> {
+        handle(event: DomainEvent) {
+          seen.push(event.eventName);
+        }
+      }
+
+      const dispatcher = new EventDispatcher(new Application());
+      dispatcher.listen(DomainEvent, RecordDomainEvent);
+
+      await dispatcher.dispatch(new OrderShipped());
+
+      expect(seen).toEqual(["OrderShipped"]);
+    });
+  });
+
   describe("stable event names", () => {
     it("dispatches two same-named classes in different modules independently", async () => {
       // Simulate two modules that each declare a `Created` event; a stable

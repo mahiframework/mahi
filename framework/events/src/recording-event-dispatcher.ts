@@ -1,5 +1,5 @@
 import { inTransaction, type Application } from "@mahiframework/core";
-import { AbstractEvent, dispatchesAfterCommit, type EventClass } from "./event.js";
+import { AbstractEvent, dispatchesAfterCommit, type EventMatcher } from "./event.js";
 import { EventDispatcher } from "./event-dispatcher.js";
 
 /** A recorded dispatch: the event, and whether it was an after-commit dispatch. */
@@ -86,7 +86,7 @@ export class RecordingEventDispatcher extends EventDispatcher {
    * a predicate on the event instance.
    */
   dispatched<E extends AbstractEvent>(
-    eventClass?: EventClass<E>,
+    eventClass?: EventMatcher<E>,
     filter?: (event: E) => boolean,
   ): E[] {
     let matches = (
@@ -104,7 +104,7 @@ export class RecordingEventDispatcher extends EventDispatcher {
 
   /** Whether an event of `eventClass` was dispatched (optionally matching `filter`). */
   hasDispatched<E extends AbstractEvent>(
-    eventClass: EventClass<E>,
+    eventClass: EventMatcher<E>,
     filter?: (event: E) => boolean,
   ): boolean {
     return this.dispatched(eventClass, filter).length > 0;
@@ -115,7 +115,7 @@ export class RecordingEventDispatcher extends EventDispatcher {
    * `filter`, at least one matching event must exist. Throws on failure.
    */
   assertDispatched<E extends AbstractEvent>(
-    eventClass: EventClass<E>,
+    eventClass: EventMatcher<E>,
     filter?: (event: E) => boolean,
   ): void {
     if (!this.hasDispatched(eventClass, filter)) {
@@ -132,7 +132,7 @@ export class RecordingEventDispatcher extends EventDispatcher {
    * assert no *matching* event exists. Throws on failure.
    */
   assertNotDispatched<E extends AbstractEvent>(
-    eventClass: EventClass<E>,
+    eventClass: EventMatcher<E>,
     filter?: (event: E) => boolean,
   ): void {
     if (this.hasDispatched(eventClass, filter)) {
@@ -153,7 +153,7 @@ export class RecordingEventDispatcher extends EventDispatcher {
    * `assertNotDispatched()` only covers the zero case.
    */
   assertDispatchedTimes<E extends AbstractEvent>(
-    eventClass: EventClass<E>,
+    eventClass: EventMatcher<E>,
     times: number,
     filter?: (event: E) => boolean,
   ): void {
@@ -179,7 +179,7 @@ export class RecordingEventDispatcher extends EventDispatcher {
    * could otherwise observe before (or despite) a rollback.
    */
   assertDispatchedAfterCommit<E extends AbstractEvent>(
-    eventClass: EventClass<E>,
+    eventClass: EventMatcher<E>,
     filter?: (event: E) => boolean,
   ): void {
     const matches = this.recorded.filter(

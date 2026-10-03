@@ -107,6 +107,31 @@ export type EventClass<E extends AbstractEvent = AbstractEvent> = (new (...args:
 };
 
 /**
+ * An event class used only as a MATCHING key, which may be abstract.
+ *
+ * `EventClass` requires a concrete constructor because its other use is
+ * construction: `dispatchesEvents` maps are instantiated as
+ * `new EventClass(payload)`. `listen()` never constructs the event class
+ * it is given, it only tests dispatched events against it with
+ * `instanceof`, and an abstract class is a perfectly good right-hand
+ * operand there.
+ *
+ * Insisting on a concrete constructor for a key that is never called made
+ * the framework's own documented "observe everything" pattern,
+ * `listen(AbstractEvent, ...)`, fail to typecheck, along with the same
+ * shape over any abstract family base (`@mahiframework/auth`'s
+ * `AuthEvent`, `@mahiframework/database`'s `ModelLifecycleEvent`). Those
+ * are precisely the registrations an audit log wants, since enumerating
+ * every subclass silently misses whichever one is added next.
+ */
+export type EventMatcher<E extends AbstractEvent = AbstractEvent> = (abstract new (
+  ...args: any[]
+) => E) & {
+  eventName?: string;
+  shouldDispatchAfterCommit?: boolean;
+};
+
+/**
  * Opt an event class into after-commit dispatch, Laravel's
  * `ShouldDispatchAfterCommit`. Set the **static** marker and every
  * `Events.dispatch(new OrderPlaced(...))` inside a `DB.transaction()`
@@ -133,7 +158,11 @@ export function dispatchesAfterCommit(event: AbstractEvent): boolean {
  * `static eventName` when declared, otherwise the class's runtime name.
  * Used to key listener registrations and queued-listener ids so they don't
  * collide across modules or break under name-mangling minifiers.
+ *
+ * Takes an `EventMatcher`, the wider of the two class types, because it
+ * reads statics only and never constructs. An abstract family base
+ * (`AuthEvent`, `ModelLifecycleEvent`) is a legitimate argument.
  */
-export function eventClassName(eventClass: EventClass): string {
+export function eventClassName(eventClass: EventMatcher): string {
   return eventClass.eventName ?? eventClass.name;
 }

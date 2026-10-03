@@ -1,17 +1,23 @@
 import { afterCommit, type Application } from "@mahiframework/core";
-import { AbstractEvent, dispatchesAfterCommit, eventClassName, type EventClass } from "./event.js";
+import {
+  AbstractEvent,
+  dispatchesAfterCommit,
+  eventClassName,
+  type EventClass,
+  type EventMatcher,
+} from "./event.js";
 import type { Listener, ListenerClass, ListenerFn } from "./listener.js";
 import { matchesPattern } from "./event-suppression.js";
 
 interface ClassRegistration {
   kind: "class";
-  eventClass: EventClass;
+  eventClass: EventMatcher;
   listenerClass: ListenerClass;
 }
 
 interface ClosureRegistration {
   kind: "closure";
-  eventClass: EventClass;
+  eventClass: EventMatcher;
   handler: ListenerFn;
 }
 
@@ -69,7 +75,7 @@ interface QueuedListenerEntry {
  */
 export type AfterDispatchCallback = (event: AbstractEvent) => void | Promise<void>;
 
-function queuedListenerId(eventClass: EventClass, listenerClass: ListenerClass): string {
+function queuedListenerId(eventClass: EventMatcher, listenerClass: ListenerClass): string {
   return `${eventClassName(eventClass)}:${listenerClass.listenerName ?? listenerClass.name}`;
 }
 
@@ -105,13 +111,16 @@ export class EventDispatcher {
    * `E` infer from the event class, which is what makes `event.email`
    * typed at the call site.
    */
-  listen<E extends AbstractEvent>(eventClass: EventClass<E>, handler: ListenerFn<E>): void;
+  listen<E extends AbstractEvent>(eventClass: EventMatcher<E>, handler: ListenerFn<E>): void;
   /**
    * Register a listener class against an event class. Listeners are
    * instantiated fresh (with the Application passed to their constructor)
    * each time a matching event is dispatched.
    */
-  listen<E extends AbstractEvent>(eventClass: EventClass<E>, listenerClass: ListenerClass<E>): void;
+  listen<E extends AbstractEvent>(
+    eventClass: EventMatcher<E>,
+    listenerClass: ListenerClass<E>,
+  ): void;
   /**
    * Register a wildcard listener against an event-name pattern.
    * `"model.posts.*"` matches `"model.posts.created"`; a bare `"*"` matches
@@ -127,7 +136,7 @@ export class EventDispatcher {
    */
   listen(pattern: string, listener: ListenerClass | WildcardListener): void;
   listen(
-    eventClassOrPattern: EventClass | string,
+    eventClassOrPattern: EventMatcher | string,
     listenerOrHandler: ListenerClass | ListenerFn | WildcardListener,
   ): void {
     if (typeof eventClassOrPattern === "string") {

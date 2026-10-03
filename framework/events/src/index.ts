@@ -1,5 +1,5 @@
 export { AbstractEvent, eventClassName, dispatchesAfterCommit } from "./event.js";
-export type { EventClass } from "./event.js";
+export type { EventClass, EventMatcher } from "./event.js";
 
 export type { Listener, ListenerClass, ListenerFn } from "./listener.js";
 
