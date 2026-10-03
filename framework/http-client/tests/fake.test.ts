@@ -55,9 +55,9 @@ describe("stub response coercions", () => {
     expect(response.body()).toBe("");
   });
 
-  it("rejects a number outside 100-599, pointing at the body form", () => {
+  it("rejects a number outside 100-599, pointing at the body form", async () => {
     Http.fake({ "*": 42 });
-    expect(Http.get("https://x.test/")).rejects.toThrow(/between 100 and 599/);
+    await expect(Http.get("https://x.test/")).rejects.toThrow(/between 100 and 599/);
   });
 
   it("treats a string as a raw body with a 200", async () => {

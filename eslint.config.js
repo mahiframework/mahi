@@ -26,6 +26,50 @@ export default [
     },
   },
   {
+    // TYPE-AWARE RULES, framework sources and tests only.
+    //
+    // Everything above is syntactic and needs no program; this block asks
+    // the parser for real types, which is why it is scoped rather than
+    // global. `tsconfig.test.json` is the right project for it: it is the
+    // only one per package covering `src` AND `tests` (the emitting
+    // `tsconfig.json` cannot include `tests` without emitting them into
+    // `dist`). Every framework package has one.
+    //
+    // `scripts/` and `create-mahi/template/` are deliberately out: the
+    // former is plain `.mjs`, and the latter is a scaffold whose files
+    // belong to no project in this repo and would parse-error.
+    //
+    // no-floating-promises is the rule this exists for. An unawaited
+    // promise is invisible to `tsc` and to a passing test suite, and the
+    // two failure modes it catches are both silent:
+    //
+    //   - A guard that never runs. `requireMfa()` returns a promise, so
+    //     a missing `await` continues past an unverified check as though
+    //     it had passed, which is an auth bypass that no happy-path test
+    //     can see.
+    //   - An assertion that never asserts. `expect(p).rejects.toThrow()`
+    //     without `await` reports green whatever the promise does, so the
+    //     test is decoration. Turning this on found exactly one, in
+    //     `http-client/tests/fake.test.ts`.
+    //
+    // `void` is the documented escape for a deliberately fire-and-forget
+    // call, so suppressing it stays explicit and greppable.
+    files: ["framework/*/src/**/*.ts", "framework/*/tests/**/*.ts"],
+    languageOptions: {
+      parser: tsParser,
+      parserOptions: {
+        project: ["framework/*/tsconfig.test.json"],
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    plugins: {
+      "@typescript-eslint": tsPlugin,
+    },
+    rules: {
+      "@typescript-eslint/no-floating-promises": "error",
+    },
+  },
+  {
     // Model files. `interface Post extends PostTable {}` alongside
     // `class Post extends Model` is THE documented way to type a model's
     // instance attributes (docs/models/README.md, "The two type
