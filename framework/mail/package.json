@@ -19,7 +19,7 @@
   "dependencies": {
     "@mahiframework/core": "workspace:*",
     "@mahiframework/facades": "workspace:*",
-    "nodemailer": "^6.9.16"
+    "nodemailer": "^10.0.10"
   },
   "devDependencies": {
     "@types/nodemailer": "^6.4.17",
