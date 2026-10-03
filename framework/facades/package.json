@@ -20,9 +20,9 @@
     "@mahiframework/core": "workspace:*"
   },
   "devDependencies": {
-    "typescript": "^5.7.2",
-    "vite": "^8.0.0",
-    "vitest": "^4.1.11"
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1",
+    "vitest": "^5.0.2"
   },
   "license": "MIT",
   "author": "Bradie Tilley",

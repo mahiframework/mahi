@@ -25,12 +25,12 @@
   },
   "devDependencies": {
     "@hono/node-server": "^1.13.7",
-    "@types/node": "^22.10.2",
+    "@types/node": "^26.6.3",
     "@types/ws": "^8.18.1",
     "hono": "^4.6.14",
-    "typescript": "^5.7.2",
-    "vite": "^8.0.0",
-    "vitest": "^4.1.11",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1",
+    "vitest": "^5.0.2",
     "ws": "^8.21.3"
   },
   "license": "MIT",
