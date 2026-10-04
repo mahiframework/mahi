@@ -41,6 +41,7 @@ import type {
   MorphTo,
   MorphToMany,
   Computed,
+  Extended,
   Key,
   Loaded,
 } from "../src/index.js";
@@ -396,6 +397,84 @@ class RenamedTimestampsModel extends Model<{
   softDeletes: { column: "archived_at" },
 }) {}
 void RenamedTimestampsModel;
+
+// ---------------------------------------------------------------------
+// `Extended<>`: columns an APP merges onto a PACKAGE-owned model.
+//
+// The cast lint is attached to the `Model<A>()(config)` call, which for
+// a package model lives in the package. A merged-in DateTime/boolean
+// column would therefore fail the lint at a line the app cannot edit.
+// `Extended<>` exempts it; the cast moves to the app's subclass.
+// See `docs/extending-models/`.
+// ---------------------------------------------------------------------
+
+// Stands in for a package-owned model whose attributes interface the
+// app has merged two cast-requiring columns into.
+interface PackageOwned {
+  id: string;
+  name: string;
+  archived_at: Extended<DateTime | null>;
+  is_default: Extended<boolean>;
+}
+
+// No cast declared for either, and the lint stays quiet. Without
+// `Extended<>` this is the exact failure `BadDateTimeModel` pins above.
+class PackageOwnedModel extends Model<PackageOwned>()({
+  table: "package_owned",
+  primaryKey: "id",
+  timestamps: false,
+}) {}
+void PackageOwnedModel;
+
+// The marker is erased on read: the instance sees the declared type.
+async function extendedUnwrapsOnRead() {
+  const row = await PackageOwnedModel.findOrFail("x");
+  expectTypeOf(row.archived_at).toEqualTypeOf<DateTime | null>();
+  expectTypeOf(row.is_default).toEqualTypeOf<boolean>();
+  expectTypeOf(row.name).toEqualTypeOf<string>();
+}
+void extendedUnwrapsOnRead;
+
+// ...and on write.
+async function extendedUnwrapsOnWrite() {
+  await PackageOwnedModel.create({
+    id: "1",
+    name: "admin",
+    archived_at: null,
+    is_default: true,
+  });
+
+  // @ts-expect-error archived_at is DateTime | null, not number
+  await PackageOwnedModel.create({ id: "2", name: "a", archived_at: 1, is_default: true });
+}
+void extendedUnwrapsOnWrite;
+
+// An `Extended<>` column is a real column everywhere else: castable,
+// and usable as the primary key / in `fillable` / `hidden`.
+class ExtendedIsStillAColumn extends Model<PackageOwned>()({
+  table: "package_owned",
+  primaryKey: "id",
+  timestamps: false,
+  casts: { archived_at: Cast.datetime(), is_default: Cast.boolean() },
+  fillable: ["name", "archived_at"],
+  hidden: ["is_default"],
+}) {}
+void ExtendedIsStillAColumn;
+
+// The exemption is scoped to `Extended<>` columns only: a plain
+// cast-requiring column on the SAME model still fails the lint.
+interface MixedExtension {
+  id: string;
+  archived_at: Extended<DateTime | null>;
+  published_at: DateTime | null; // not Extended: still linted
+}
+// @ts-expect-error DateTime column `published_at` needs a Cast.datetime()
+class MixedExtensionModel extends Model<MixedExtension>()({
+  table: "mixed",
+  primaryKey: "id",
+  timestamps: false,
+}) {}
+void MixedExtensionModel;
 
 // `primaryKey` naming a relation is rejected by `ModelConfig` itself
 // (the field is typed `ColumnKeys<A>`), not by a lint rule, so the

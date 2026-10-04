@@ -22,6 +22,7 @@ import type { Collection } from "@mahiframework/core";
 declare const RELATION_BRAND: unique symbol;
 declare const COMPUTED_BRAND: unique symbol;
 declare const ATTRIBUTES_BRAND: unique symbol;
+declare const EXTENDED_BRAND: unique symbol;
 
 /**
  * A phantom carrying a model instance's *unresolved* attributes map `A`.
@@ -135,6 +136,52 @@ export type MorphedByMany<R, Pivot = NoPivot, B = unknown> = RelationMarker<
  */
 export type Computed<T> = { readonly [COMPUTED_BRAND]: T };
 
+/**
+ * A column added to a *package-owned* model by the consuming
+ * application, via declaration merging on the package's exported
+ * attributes interface.
+ *
+ *   declare module "@mahiframework/rbac" {
+ *     interface RoleAttributes {
+ *       archived_at: Extended<DateTime | null>;
+ *     }
+ *   }
+ *
+ * Reads and writes as `T` (the marker is unwrapped by
+ * `ResolvedAttributes` and `WritableAttributes`, exactly as `Computed<>`
+ * is), and a `Cast` registered for it on a subclass applies normally.
+ * The one thing it does NOT do is participate in `ModelLint`.
+ *
+ * That exemption is the entire point. The rules demanding a
+ * `Cast.datetime()`/`Cast.boolean()` are checked against the config
+ * passed to `Model<A>()({ … })`, and for a package model that call
+ * lives in the *package's* source. A merged-in `DateTime` column
+ * therefore fails the lint at a line the app cannot edit, naming a
+ * column that file has never heard of. `Extended<>` moves
+ * responsibility for the cast to the subclass that declares it, which
+ * is the only place that can.
+ *
+ * The cast is still *needed*. This suppresses the compiler's reminder,
+ * not the runtime consequence, so register it on the subclass:
+ *
+ *   class AppRole extends Role {
+ *     static override casts = { ...Role.casts, archived_at: Cast.datetime() };
+ *   }
+ *
+ * A plain `string`/`number` column needs no cast and so needs no
+ * marker either. See `docs/extending-models/`.
+ */
+export type Extended<T> = { readonly [EXTENDED_BRAND]: T };
+
+/** `true` when `V` is an app-merged `Extended<>` column. */
+export type IsExtendedMarker<V> = [V] extends [Extended<any>] ? true : false;
+
+/** The declared type behind an `Extended<>` marker. */
+export type ExtendedValueOf<V> = V extends Extended<infer T> ? T : never;
+
+/** `V` with any `Extended<>` wrapper removed; a plain column passes through. */
+export type Unextend<V> = [V] extends [Extended<any>] ? ExtendedValueOf<V> : V;
+
 /** `true` when `V` is any relation marker. */
 export type IsRelationMarker<V> = V extends RelationMarker<any, any, any, any, any> ? true : false;
 /** `true` when `V` is a `Computed<>` marker. */
@@ -149,6 +196,13 @@ export type ColumnKeys<A> = {
       : K;
 }[keyof A] &
   string;
+
+/*
+ * `Extended<>` is deliberately absent above: it marks a plain column,
+ * so it must stay in `ColumnKeys` to be castable, fillable, hidden,
+ * selectable and writable. Only `ModelLint` singles it out, via
+ * `ExtendedColumnKeys` below.
+ */
 
 /** The relation-marker keys of `A`. */
 export type RelationKeys<A> = {
@@ -168,8 +222,18 @@ export type ComputedKeys<A> = {
 }[keyof A] &
   string;
 
+/**
+ * The plain-column keys of `A` that an app merged in as `Extended<>`.
+ * These are real columns in every respect but one: `ModelLint` skips
+ * them, because the config call that the lint checks lives in the
+ * package, not the app. See `Extended<>`.
+ */
+export type ExtendedColumnKeys<A> = {
+  [K in ColumnKeys<A>]: IsExtendedMarker<A[K]> extends true ? K : never;
+}[ColumnKeys<A>];
+
 /** The plain columns of `A` as an ordinary object type (model-facing types). */
-export type Columns<A> = { [K in ColumnKeys<A>]: A[K] };
+export type Columns<A> = { [K in ColumnKeys<A>]: Unextend<A[K]> };
 
 /** The related instance type a single relation marker points at. */
 export type RelatedOf<V> = V extends RelationMarker<any, infer R, any, any, any> ? R : never;
@@ -206,7 +270,7 @@ export type ResolvedAttributes<A> = {
     ? LoadedValueOf<A[K]>
     : IsComputedMarker<A[K]> extends true
       ? ComputedValueOf<A[K]>
-      : A[K];
+      : Unextend<A[K]>;
 };
 
 /** The relation markers of `A`, keyed by relation name, the map `Relations<M>` exposes. */

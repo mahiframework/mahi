@@ -10,12 +10,14 @@ import type {
   ColumnKeys,
   Computed,
   ComputedKeys,
+  ExtendedColumnKeys,
   HasAttributes,
   KindOf,
   LoadedValueOf,
   RelationKeys,
   RelatedOf,
   ResolvedAttributes,
+  Unextend,
 } from "./markers.js";
 import type { AccessorDefinition, AccessorMap } from "./accessors.js";
 import type { KeyStrategy, ResolvedKeyType } from "./key-strategy.js";
@@ -3771,7 +3773,7 @@ export type Model = BaseModel;
 export type AnyModelClass = typeof BaseModel;
 
 /** The plain-column attribute shape of `A` (no relations, no computed). */
-export type ModelAttributes<A> = { [K in ColumnKeys<A>]: A[K] };
+export type ModelAttributes<A> = { [K in ColumnKeys<A>]: Unextend<A[K]> };
 
 /**
  * The attribute shape accepted on **write** (`create()`, `update()`,
@@ -3791,14 +3793,15 @@ export type WritableAttributes<A, C> = {
   [K in ColumnKeys<A>]: C extends { casts: infer M }
     ? K extends keyof M
       ? NonNullable<M[K]> extends Cast<infer ModelType, infer DbType>
-        ? // `Extract<A[K], null | undefined>` re-adds the column's own
-          // nullability: a cast's `ModelType`/`DbType` describe the
-          // non-null value (every built-in short-circuits on `null`), so
-          // a nullable column would otherwise stop accepting `null`.
-          ModelType | DbType | Extract<A[K], null | undefined>
-        : A[K]
-      : A[K]
-    : A[K];
+        ? // `Extract<Unextend<A[K]>, null | undefined>` re-adds the
+          // column's own nullability: a cast's `ModelType`/`DbType`
+          // describe the non-null value (every built-in short-circuits
+          // on `null`), so a nullable column would otherwise stop
+          // accepting `null`.
+          ModelType | DbType | Extract<Unextend<A[K]>, null | undefined>
+        : Unextend<A[K]>
+      : Unextend<A[K]>
+    : Unextend<A[K]>;
 };
 
 /** The primary-key column of a config `C` over attributes `A` (default `"id"`). */
@@ -3927,7 +3930,7 @@ export interface ModelConfig<A> {
   keyType?: "increment" | "uuid" | KeyStrategy;
   timestamps?: boolean | { createdAt?: ColumnKeys<A> | null; updatedAt?: ColumnKeys<A> | null };
   softDeletes?: boolean | { column: ColumnKeys<A> };
-  casts?: { [K in ColumnKeys<A>]?: Cast<A[K], any> };
+  casts?: { [K in ColumnKeys<A>]?: Cast<Unextend<A[K]>, any> };
   fillable?: ColumnKeys<A>[];
   guarded?: (ColumnKeys<A> | "*")[];
   hidden?: (keyof A & string)[];
@@ -3947,15 +3950,18 @@ export type ModelTypeError<Msg extends string> = { readonly [MODEL_TYPE_ERROR]: 
  * timestamp/soft-delete column). Those need an explicit `Cast.boolean()`
  * because SQLite/MySQL return `0`/`1`.
  */
-type BooleanColumnsNeedingCast<A, Casts> = {
-  [K in ColumnKeys<A>]: A[K] extends boolean
-    ? boolean extends A[K]
-      ? K extends keyof Casts
-        ? never
-        : K
-      : never
-    : never;
-}[ColumnKeys<A>];
+type BooleanColumnsNeedingCast<A, Casts> = Exclude<
+  {
+    [K in ColumnKeys<A>]: A[K] extends boolean
+      ? boolean extends A[K]
+        ? K extends keyof Casts
+          ? never
+          : K
+        : never
+      : never;
+  }[ColumnKeys<A>],
+  ExtendedColumnKeys<A>
+>;
 
 /** Reserved instance-member names a column may not collide with. */
 export type ReservedKeys =
@@ -4001,7 +4007,7 @@ type DateTimeColumnsNeedingCast<A, C extends ModelConfig<A>, Casts> = Exclude<
         : K
       : never;
   }[ColumnKeys<A>],
-  ImplicitlyCastColumns<A, C>
+  ImplicitlyCastColumns<A, C> | ExtendedColumnKeys<A>
 >;
 
 /**
@@ -4112,6 +4118,12 @@ type Rule<Offenders, Msg extends string> = [Offenders] extends [never]
  * 3. a column colliding with a reserved instance member;
  * 4. `keyType` disagreeing with the primary key's declared type;
  * 5. a non-nullable soft-delete column (`restore()` writes `null`).
+ *
+ * Rules 1 and 2 skip `Extended<>` columns. Those are merged in by a
+ * consuming application, so they are not visible to, and not fixable
+ * at, the `Model<A>()(config)` call this lint is attached to, which
+ * lives in the package that owns the model. Their casts belong on the
+ * app's subclass instead. See `Extended<>` in `markers.ts`.
  */
 type ModelLint<A, C extends ModelConfig<A>> = Rule<
   BooleanColumnsNeedingCast<A, DeclaredCasts<C>>,
