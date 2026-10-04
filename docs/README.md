@@ -97,6 +97,7 @@ framework to do something it didn't anticipate.
 
 - [Getting started](./database/): connections, the query builder, transactions
 - [Models](./models/): attributes, casts, events, serialization
+- [Extending package models](./extending-models/): subclassing and swapping a package's models
 - [Relationships](./relationships/): defining and eager-loading relations
 - [Queries](./queries/): the fluent query builder in depth
 - [Migrations](./migrations/): schema, seeders, factories

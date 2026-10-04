@@ -481,6 +481,12 @@ per isolate from `bootIfNotBooted()` (called by `query()` and
 `queryWithoutScopes()`), parents first, and re-entry from a query issued
 during boot is a no-op. You do not call `super.boot()`.
 
+Subclassing is also how you take over a model a **package** owns, such
+as `@mahiframework/mfa`'s `MfaMethod`. Because the finders are
+this-polymorphic, that needs far less machinery than Laravel's
+`config('...')::find()` indirection. See
+[Extending package models](../extending-models/).
+
 ## Static finders and writers
 
 | Method | Returns |
