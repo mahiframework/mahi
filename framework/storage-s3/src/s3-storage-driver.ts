@@ -7,6 +7,7 @@ import {
   toNodeReadable,
   type StorageDriver,
   type StreamSource,
+  type TemporaryUrlBuilder,
 } from "@mahiframework/storage";
 import {
   S3Connection,
@@ -23,13 +24,21 @@ export interface S3DiskConfig extends S3ConnectionConfig {
    * nothing is derived automatically: without a prefix `url()` throws.
    */
   url?: string;
+  /**
+   * How `temporaryUrl()` should work. S3 presigns natively, so this is
+   * only needed to *override* that: `"proxy"` routes downloads through
+   * this application's temporary-URL route instead, keeping a bucket that
+   * should never be reachable from the internet unreachable. Requires
+   * `serveTemporaryDiskFile()` to be mounted.
+   */
+  temporaryUrls?: "proxy";
 }
 
 /**
  * `StorageDriver` over S3 and anything speaking its protocol: AWS,
  * Cloudflare R2, DigitalOcean Spaces, MinIO, Supabase, Backblaze.
  *
- * The same 21 methods and the same contract suite as the local driver,
+ * The same 22 methods and the same contract suite as the local driver,
  * but a bucket is a flat key/value store rather than a filesystem, and
  * four of the contract's guarantees need deliberate work because of it:
  *
@@ -56,12 +65,15 @@ export interface S3DiskConfig extends S3ConnectionConfig {
  */
 export class S3StorageDriver implements StorageDriver {
   private readonly connection: S3Connection;
+  private readonly temporaryUrlBuilder?: TemporaryUrlBuilder;
 
   constructor(
     config: S3ConnectionConfig,
     private readonly urlPrefix?: string,
+    options: { temporaryUrl?: TemporaryUrlBuilder } = {},
   ) {
     this.connection = new S3Connection(config);
+    this.temporaryUrlBuilder = options.temporaryUrl;
   }
 
   /**
@@ -152,17 +164,27 @@ export class S3StorageDriver implements StorageDriver {
   }
 
   /**
-   * A presigned URL granting time-limited read access to a private object.
+   * A presigned URL granting time-limited read access to a private
+   * object.
    *
-   * Not part of `StorageDriver`: a local disk and an SFTP disk cannot
-   * honour it, and putting it on the interface would mean three drivers
-   * implementing a method only to throw. Reach for the concrete class, the
-   * way `LocalStorageDriver.path()` is reached for.
+   * The native strategy, and the better one: the bucket itself validates
+   * the signature, so the bytes go straight from S3 to the client and
+   * never pass through this process. Drivers that cannot sign fall back
+   * to a signed route this application serves.
+   *
+   * An application that would rather keep the bucket wholly unreachable
+   * can force that fallback by passing a `temporaryUrl` builder, in which
+   * case every download is proxied.
    *
    * @param expiresIn Lifetime in seconds. Defaults to 5 minutes.
    */
   async temporaryUrl(objectPath: string, expiresIn = 300): Promise<string> {
     const key = this.key(objectPath);
+
+    if (this.temporaryUrlBuilder !== undefined) {
+      return this.temporaryUrlBuilder(this.guard(objectPath), expiresIn);
+    }
+
     const sdk = await this.connection.commands();
     const { getSignedUrl } = await loadPresigner();
 

@@ -36,6 +36,9 @@ describe.skipIf(S3_UNAVAILABLE)("S3StorageDriver (integration)", () => {
   describe("StorageDriver contract", () => {
     for (const testCase of storageDriverContract({
       hasPath: false,
+      // S3 signs its own links, so the contract holds this driver to
+      // producing one without any application-side fallback wired.
+      hasTemporaryUrl: true,
       largeFileBytes: 512 * 1024,
     })) {
       it(testCase.name, async () => {
@@ -51,6 +54,7 @@ describe.skipIf(S3_UNAVAILABLE)("S3StorageDriver (integration)", () => {
   describe("StorageDriver contract (with a url prefix)", () => {
     for (const testCase of storageDriverContract({
       hasPath: false,
+      hasTemporaryUrl: true,
       urlPrefix: "https://cdn.example.com/media",
       largeFileBytes: 512 * 1024,
     })) {

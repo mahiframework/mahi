@@ -1,5 +1,5 @@
 import { ServiceProvider, STORAGE_TOKEN } from "@mahiframework/core";
-import type { StorageConfig, StorageManager } from "@mahiframework/storage";
+import { signedDiskUrls, type StorageConfig, type StorageManager } from "@mahiframework/storage";
 import { S3StorageDriver } from "./s3-storage-driver.js";
 import { isS3DiskConfig } from "./s3-disk-config.js";
 
@@ -28,7 +28,17 @@ export class S3StorageServiceProvider extends ServiceProvider {
         continue;
       }
 
-      storage.extend(name, () => new S3StorageDriver(disk, disk.url));
+      storage.extend(
+        name,
+        () =>
+          new S3StorageDriver(disk, disk.url, {
+            // S3 signs natively, so the fallback is NOT the default here.
+            // `temporaryUrls: "proxy"` opts into routing downloads through
+            // this application instead, for a bucket that should stay
+            // unreachable from the internet.
+            temporaryUrl: disk.temporaryUrls === "proxy" ? signedDiskUrls(name) : undefined,
+          }),
+      );
     }
   }
 

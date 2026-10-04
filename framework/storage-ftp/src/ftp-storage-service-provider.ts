@@ -1,5 +1,5 @@
 import { ServiceProvider, STORAGE_TOKEN } from "@mahiframework/core";
-import type { StorageConfig, StorageManager } from "@mahiframework/storage";
+import { signedDiskUrls, type StorageConfig, type StorageManager } from "@mahiframework/storage";
 import { FtpStorageDriver } from "./ftp-storage-driver.js";
 import { isFtpDiskConfig } from "./ftp-disk-config.js";
 
@@ -29,7 +29,13 @@ export class FtpStorageServiceProvider extends ServiceProvider {
         continue;
       }
 
-      storage.extend(name, () => new FtpStorageDriver(disk, disk.url));
+      storage.extend(
+        name,
+        () =>
+          new FtpStorageDriver(disk, disk.url, {
+            temporaryUrl: disk.temporaryUrls === true ? signedDiskUrls(name) : undefined,
+          }),
+      );
     }
   }
 

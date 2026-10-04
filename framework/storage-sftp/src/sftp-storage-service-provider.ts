@@ -1,5 +1,5 @@
 import { ServiceProvider, STORAGE_TOKEN } from "@mahiframework/core";
-import type { StorageConfig, StorageManager } from "@mahiframework/storage";
+import { signedDiskUrls, type StorageConfig, type StorageManager } from "@mahiframework/storage";
 import { SftpStorageDriver } from "./sftp-storage-driver.js";
 import { isSftpDiskConfig } from "./sftp-disk-config.js";
 
@@ -29,7 +29,13 @@ export class SftpStorageServiceProvider extends ServiceProvider {
         continue;
       }
 
-      storage.extend(name, () => new SftpStorageDriver(disk, disk.url));
+      storage.extend(
+        name,
+        () =>
+          new SftpStorageDriver(disk, disk.url, {
+            temporaryUrl: disk.temporaryUrls === true ? signedDiskUrls(name) : undefined,
+          }),
+      );
     }
   }
 

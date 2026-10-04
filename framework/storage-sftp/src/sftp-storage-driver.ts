@@ -11,6 +11,7 @@ import {
   toNodeReadable,
   type StorageDriver,
   type StreamSource,
+  type TemporaryUrlBuilder,
 } from "@mahiframework/storage";
 import type { SFTPWrapper, Stats } from "ssh2";
 import {
@@ -29,13 +30,20 @@ export interface SftpDiskConfig extends SftpConnectionConfig {
    * `url()` throws.
    */
   url?: string;
+  /**
+   * Allow `temporaryUrl()` on this disk, served by the stock
+   * temporary-URL route. SFTP cannot sign a link itself, so this is the
+   * only way to get one — and the bytes are proxied through this process.
+   * Requires `serveTemporaryDiskFile()` to be mounted.
+   */
+  temporaryUrls?: boolean;
 }
 
 /**
  * `StorageDriver` over SFTP, for files that live on another machine: a
  * NAS, a seedbox, a media server that isn't mounted locally.
  *
- * The same 21 methods as the local driver and the same contract suite,
+ * The same 22 methods as the local driver and the same contract suite,
  * but three of its guarantees cost real work over a network, and two of
  * them can't be met at all:
  *
@@ -66,12 +74,15 @@ export interface SftpDiskConfig extends SftpConnectionConfig {
  */
 export class SftpStorageDriver implements StorageDriver, Connectable {
   private readonly connection: SftpConnection;
+  private readonly temporaryUrlBuilder?: TemporaryUrlBuilder;
 
   constructor(
     config: SftpConnectionConfig,
     private readonly urlPrefix?: string,
+    options: { temporaryUrl?: TemporaryUrlBuilder } = {},
   ) {
     this.connection = new SftpConnection(config);
+    this.temporaryUrlBuilder = options.temporaryUrl;
   }
 
   /** Open the SSH session up front, from a provider's `boot()`. */
@@ -161,6 +172,27 @@ export class SftpStorageDriver implements StorageDriver, Connectable {
       `The sftp driver has no on-disk path for [${remotePath}] — the file is on another machine. ` +
         "Use readStream()/get() to read it, or serveStoredFile() to serve it.",
     );
+  }
+
+  /**
+   * A signed, time-limited link at the application's temporary-URL route,
+   * which streams the file back over this connection.
+   *
+   * SFTP has no signing of its own — nothing like S3's presigned URLs —
+   * so this needs the fallback wired: `temporaryUrls: true` on the disk,
+   * and the route mounted. Note the bytes are proxied through this
+   * process, unlike a presigned bucket link.
+   */
+  async temporaryUrl(remotePath: string, expiresIn = 300): Promise<string> {
+    if (this.temporaryUrlBuilder === undefined) {
+      throw new Error(
+        `This disk cannot make temporary URLs for [${remotePath}] — SFTP has no signed-link ` +
+          "mechanism of its own. Set `temporaryUrls: true` on the disk in `config/storage.ts` " +
+          'and mount the route (`router.get("/storage/temporary/*", serveTemporaryDiskFile())`).',
+      );
+    }
+
+    return this.temporaryUrlBuilder(this.guard(remotePath), expiresIn);
   }
 
   // ── Listing ──────────────────────────────────────────────────────────

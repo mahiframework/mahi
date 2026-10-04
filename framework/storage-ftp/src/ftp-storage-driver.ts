@@ -14,6 +14,7 @@ import {
   toNodeReadable,
   type StorageDriver,
   type StreamSource,
+  type TemporaryUrlBuilder,
 } from "@mahiframework/storage";
 import {
   FtpConnection,
@@ -33,13 +34,21 @@ export interface FtpDiskConfig extends FtpConnectionConfig {
    * over HTTP. FTP serves no HTTP, so without this `url()` throws.
    */
   url?: string;
+  /**
+   * Allow `temporaryUrl()` on this disk, served by the stock
+   * temporary-URL route. FTP cannot sign a link itself, so this is the
+   * only way to get one — and the bytes are proxied through this process,
+   * serialised behind any other operation on the connection. Requires
+   * `serveTemporaryDiskFile()` to be mounted.
+   */
+  temporaryUrls?: boolean;
 }
 
 /**
  * `StorageDriver` over FTP, for hosts that speak nothing else: NAS boxes,
  * cheap shared hosting, appliances.
  *
- * The same 21 methods and the same contract suite as every other driver,
+ * The same 22 methods and the same contract suite as every other driver,
  * but FTP is the weakest backend of the three and the driver is explicit
  * about where, rather than papering over it:
  *
@@ -66,12 +75,15 @@ export interface FtpDiskConfig extends FtpConnectionConfig {
  */
 export class FtpStorageDriver implements StorageDriver, Connectable {
   private readonly connection: FtpConnection;
+  private readonly temporaryUrlBuilder?: TemporaryUrlBuilder;
 
   constructor(
     config: FtpConnectionConfig,
     private readonly urlPrefix?: string,
+    options: { temporaryUrl?: TemporaryUrlBuilder } = {},
   ) {
     this.connection = new FtpConnection(config);
+    this.temporaryUrlBuilder = options.temporaryUrl;
   }
 
   /** Open the control connection up front, from a provider's `boot()`. */
@@ -156,6 +168,27 @@ export class FtpStorageDriver implements StorageDriver, Connectable {
       `The ftp driver has no on-disk path for [${remotePath}] — the file is on another machine. ` +
         "Use readStream()/get() to read it, or serveStoredFile() to serve it.",
     );
+  }
+
+  /**
+   * A signed, time-limited link at the application's temporary-URL route,
+   * which streams the file back over this connection.
+   *
+   * FTP has no signing of its own, so this needs the fallback wired:
+   * `temporaryUrls: true` on the disk, and the route mounted. The bytes
+   * are proxied through this process, and because the connection is
+   * serialised, concurrent downloads queue behind one another.
+   */
+  async temporaryUrl(remotePath: string, expiresIn = 300): Promise<string> {
+    if (this.temporaryUrlBuilder === undefined) {
+      throw new Error(
+        `This disk cannot make temporary URLs for [${remotePath}] — FTP has no signed-link ` +
+          "mechanism of its own. Set `temporaryUrls: true` on the disk in `config/storage.ts` " +
+          'and mount the route (`router.get("/storage/temporary/*", serveTemporaryDiskFile())`).',
+      );
+    }
+
+    return this.temporaryUrlBuilder(this.guard(remotePath), expiresIn);
   }
 
   // ── Listing ──────────────────────────────────────────────────────────
