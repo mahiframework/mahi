@@ -1,5 +1,12 @@
-import { app } from "@mahiframework/core";
-import { Signer, SIGNER_TOKEN } from "@mahiframework/encryption";
+import {
+  app,
+  buildSignedUrl,
+  verifySignedPayload,
+  EXPIRES_PARAM,
+  SIGNATURE_PARAM,
+  SIGNER_TOKEN,
+} from "@mahiframework/core";
+import type { Signer } from "@mahiframework/encryption";
 import type { Request } from "./request.js";
 import { HttpError } from "./http-error.js";
 import type { HttpPipe } from "./middleware/pipeline-middleware.js";
@@ -19,9 +26,17 @@ import type { HttpPipe } from "./middleware/pipeline-middleware.js";
  * stay secret, only tamper-evident, this uses `Signer` (HMAC), not
  * `Encrypter`; key rotation is handled by `Signer.verify()`.
  *
+ * The canonicalisation itself lives in `@mahiframework/core`
+ * (`signed-payload.ts`), because `@mahiframework/storage` signs temporary
+ * disk URLs with the same scheme and the two sides must hash an identical
+ * string. What stays here is the HTTP-shaped surface: resolving the
+ * container's signer, and the `Request`-typed middleware.
+ *
  * Directly needed by email-verification / password-reset / one-click
  * unsubscribe / invite links.
  */
+
+export { SIGNATURE_PARAM, EXPIRES_PARAM };
 
 export interface SignedUrlOptions {
   /** Seconds from now until the link expires. Omit for a non-expiring signature. */
@@ -32,9 +47,6 @@ export interface SignedUrlOptions {
   now?: number;
 }
 
-export const SIGNATURE_PARAM = "signature";
-export const EXPIRES_PARAM = "expires";
-
 /**
  * Resolves the signer and narrows it to the `"url"` purpose, so signed
  * URLs use a key derived exclusively for them. This is what stops a URL
@@ -44,40 +56,6 @@ export const EXPIRES_PARAM = "expires";
  */
 export function resolveSigner(explicit?: Signer): Signer {
   return (explicit ?? app().make<Signer>(SIGNER_TOKEN)).for("url");
-}
-
-/**
- * Canonical `path?sortedQuery` string that both sign and verify hash. The
- * `signature` param is always excluded; every other param (including
- * `expires`) participates, sorted by key for a stable ordering.
- */
-export function canonicalPayload(path: string, params: Record<string, string>): string {
-  const search = new URLSearchParams();
-
-  for (const key of Object.keys(params).sort()) {
-    if (key === SIGNATURE_PARAM) {
-      continue;
-    }
-
-    search.set(key, params[key]!);
-  }
-
-  const query = search.toString();
-
-  return query ? `${path}?${query}` : path;
-}
-
-/**
- * Compute just the HMAC signature for a canonical payload, shared by
- * `signedUrl()` (path-based) and the URL generator's `signedRoute()`
- * (named-route based). `Signer.sign()` returns `${payload}.${hmac}`; we
- * slice off and return only the hmac, which callers carry as a
- * `signature` query param.
- */
-export function computeSignature(payload: string, signer: Signer): string {
-  const signed = signer.sign(payload);
-
-  return signed.slice(payload.length + 1);
 }
 
 /**
@@ -93,21 +71,10 @@ export function signedUrl(
   params: Record<string, string> = {},
   options: SignedUrlOptions = {},
 ): string {
-  const signer = resolveSigner(options.signer);
-  const allParams: Record<string, string> = { ...params };
-
-  if (options.expiresInSeconds !== undefined) {
-    const now = options.now ?? Math.floor(Date.now() / 1000);
-    allParams[EXPIRES_PARAM] = String(now + options.expiresInSeconds);
-  }
-
-  const payload = canonicalPayload(path, allParams);
-  const signature = computeSignature(payload, signer);
-
-  const search = new URLSearchParams(allParams);
-  search.set(SIGNATURE_PARAM, signature);
-
-  return `${path}?${search.toString()}`;
+  return buildSignedUrl(path, params, resolveSigner(options.signer), {
+    expiresInSeconds: options.expiresInSeconds,
+    now: options.now,
+  });
 }
 
 export interface VerifySignatureOptions {
@@ -120,39 +87,7 @@ export interface VerifySignatureOptions {
  * `true`/`false`. `validateSignature()` builds on this.
  */
 export function hasValidSignature(request: Request, options: VerifySignatureOptions = {}): boolean {
-  const signer = resolveSigner(options.signer);
-
-  // Rebuilt from the RAW query string, not `request.query()`. The parsed
-  // bag expands bracket notation (`ids[]=1` becomes an array), so
-  // canonicalising it would hash a different string than the one that
-  // was signed for any link carrying a bracketed param, a signature
-  // that verifies in a unit test and fails in production.
-  const query: Record<string, string> = {};
-
-  for (const [key, value] of new URLSearchParams(request.queryString())) {
-    query[key] = value;
-  }
-
-  const signature = query[SIGNATURE_PARAM];
-
-  if (!signature) {
-    return false;
-  }
-
-  const expires = query[EXPIRES_PARAM];
-
-  if (expires !== undefined) {
-    const expiresAt = Number(expires);
-    const now = options.now ?? Math.floor(Date.now() / 1000);
-
-    if (!Number.isFinite(expiresAt) || now > expiresAt) {
-      return false;
-    }
-  }
-
-  const payload = canonicalPayload(request.path(), query);
-
-  return signer.verify(`${payload}.${signature}`) === payload;
+  return verifySignedPayload(request, resolveSigner(options.signer), { now: options.now });
 }
 
 /**

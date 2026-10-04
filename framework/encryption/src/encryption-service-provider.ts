@@ -1,4 +1,4 @@
-import { ServiceProvider } from "@mahiframework/core";
+import { ServiceProvider, SIGNER_TOKEN } from "@mahiframework/core";
 import { Encrypter } from "./encrypter.js";
 import { Hasher, type HasherOptions } from "./hasher.js";
 import { Signer } from "./signer.js";
@@ -7,7 +7,11 @@ import { KeyGenerateCommand } from "./commands/key-generate.js";
 
 export const ENCRYPTER_TOKEN = "encrypter";
 export const HASHER_TOKEN = "hasher";
-export const SIGNER_TOKEN = "signer";
+
+// Canonical definition in `@mahiframework/core`'s `well-known-tokens`
+// (resolved cross-package by `http`, `storage` and `broadcasting`);
+// re-exported so this package's public API is unchanged.
+export { SIGNER_TOKEN };
 
 type EncryptionEnv = { APP_KEY: string | undefined; APP_PREVIOUS_KEYS?: string };
 

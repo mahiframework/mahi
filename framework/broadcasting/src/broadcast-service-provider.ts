@@ -1,6 +1,7 @@
 import {
   ServiceProvider,
   BROADCAST_TOKEN,
+  SIGNER_TOKEN,
   afterCommit,
   type Application,
 } from "@mahiframework/core";
@@ -36,9 +37,6 @@ export { BROADCAST_TOKEN };
 
 /** The container token the shared `ChannelRegistry` singleton is bound under. */
 export const CHANNEL_REGISTRY_TOKEN = "broadcast.channels";
-
-/** The `signer` token from `@mahiframework/encryption`, resolved softly by string. */
-const SIGNER_TOKEN = "signer";
 
 /** How long a `POST /broadcasting/auth` grant is valid, in ms. */
 const GRANT_TTL_MS = 60_000;

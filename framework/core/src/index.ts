@@ -43,7 +43,23 @@ export {
   EVENTS_TOKEN,
   BROADCAST_TOKEN,
   STORAGE_TOKEN,
+  SIGNER_TOKEN,
 } from "./well-known-tokens.js";
+
+export {
+  SIGNATURE_PARAM,
+  EXPIRES_PARAM,
+  canonicalPayload,
+  computeSignature,
+  buildSignedUrl,
+  verifySignedPayload,
+} from "./signed-payload.js";
+export type {
+  SignerLike,
+  SignedRequestLike,
+  BuildSignedUrlOptions,
+  VerifySignedPayloadOptions,
+} from "./signed-payload.js";
 
 export { Log } from "./log-facade.js";
 

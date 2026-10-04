@@ -55,3 +55,15 @@ export const BROADCAST_TOKEN = "broadcast";
 
 /** `StorageManager`, owned by `@mahiframework/storage`. */
 export const STORAGE_TOKEN = "storage";
+
+/**
+ * `Signer`, owned by `@mahiframework/encryption`.
+ *
+ * Resolved by string from `@mahiframework/http` (signed route links),
+ * `@mahiframework/storage` (temporary disk URLs) and
+ * `@mahiframework/broadcasting` (channel-auth grants). Those last two
+ * deliberately avoid a compile-time dependency on `encryption`, whose
+ * `argon2` dependency is a native build nothing else needs — they type
+ * the resolved value structurally as `SignerLike` instead.
+ */
+export const SIGNER_TOKEN = "signer";
