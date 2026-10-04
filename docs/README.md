@@ -109,6 +109,7 @@ framework to do something it didn't anticipate.
 - [Multi-factor auth](./mfa/): TOTP, email codes, recovery codes, step-up
 - [Impersonation](./impersonation/): acting as another user, gated
 - [Encryption & hashing](./encryption/): `Crypt`, `Hash`, signed URLs
+- [Activity logs](./activity-logs/): resource, security and custom activity records
 
 ### Infrastructure
 
@@ -157,6 +158,7 @@ Mahi is a set of packages, not a monolith. Install what you use.
 | `@mahiframework/mail` | Mailables, SMTP/log transports |
 | `@mahiframework/notifications` | Multi-channel notifications |
 | `@mahiframework/encryption` | Encrypter, hasher, signer |
+| `@mahiframework/activity-logs` | Resource/security/custom activity records |
 | `@mahiframework/redis` | Redis-backed cache/queue/broadcast drivers |
 | `@mahiframework/cli` | Console kernel, `make:*` generators, migration commands |
 | `@mahiframework/testing` | Test application, HTTP client, database assertions |

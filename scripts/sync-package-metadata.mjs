@@ -29,6 +29,10 @@ const BUILD_SCRIPT = "tsc -b && node ../../scripts/prune-dist.mjs";
 
 // Per-package description + keywords. `create-mahi` keeps its own description.
 const DESCRIPTIONS = {
+  "@mahiframework/activity-logs": {
+    description: "Activity logs — resource, security and custom activity records for Mahi.",
+    keywords: ["mahi", "activity", "audit", "log"],
+  },
   "@mahiframework/auth": {
     description:
       "Authentication — session and token guards, password brokers, and user providers for Mahi.",
@@ -163,6 +167,7 @@ const DESCRIPTIONS = {
 
 // Package → docs/<slug> for the README "documentation" link, where one exists.
 const DOC_SLUGS = {
+  "@mahiframework/activity-logs": "activity-logs",
   "@mahiframework/auth": "authentication",
   "@mahiframework/authorization": "authorization",
   "@mahiframework/broadcasting": "broadcasting",
