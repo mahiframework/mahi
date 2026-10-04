@@ -10,7 +10,7 @@ import {
   hostsFromUrl,
 } from "@mahiframework/http";
 import type { Schedule } from "@mahiframework/schedule";
-import { servePublicDisk } from "@mahiframework/storage";
+import { servePublicDisk, serveTemporaryDiskFile } from "@mahiframework/storage";
 import type { Env } from "../../config/env.js";
 // `AuthGcCommand` is invoked directly by the scheduled task below rather
 // than re-registered via `commands()`, `AuthServiceProvider` already
@@ -160,11 +160,20 @@ export class AppServiceProvider extends ServiceProvider {
   routes(router: Router): void {
     registerAuthRoutes(router);
 
+    // Signed, expiring links to files on a PRIVATE disk, which is what
+    // `Storage.temporaryUrl(path)` returns for any disk configured with
+    // `temporaryUrls: true`. The handler verifies the signature itself,
+    // so no middleware is required here, and refuses any disk that did
+    // not opt in. Registered before the `/storage/*` catch-all below,
+    // which would otherwise swallow this more specific path.
+    router.get("/storage/temporary/*", serveTemporaryDiskFile()).name("storage.temporary");
+
     // Serve the `public` storage disk at its configured `url` prefix
     // (`/storage/*`), so `Storage.disk("public").url(path)` resolves to a
     // real download. The `default` disk is `local` (private) and is
-    // deliberately NOT served here, stream from it through your own
-    // authorised route with `serveStoredFile` when a file needs a check.
+    // deliberately NOT served here; hand out a `temporaryUrl()` for a
+    // one-off download, or stream it through your own authorised route
+    // with `serveStoredFile` when a file needs a real permission check.
     router.get("/storage/*", servePublicDisk("public")).name("storage.public");
   }
 

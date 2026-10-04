@@ -64,9 +64,10 @@ merely implement. `copy()` on S3 is a server-side copy API call; on the
 filesystem it's a `copyFile`. `files(directory)` is cheap on a filesystem
 and a paginated, eventually-consistent, potentially enormous listing via
 `ListObjectsV2` on object storage. `readStream`/`putStream` map to
-`GetObject`'s body and a multipart upload. `path()` and `temporaryUrl()`
-don't exist for a local disk / a remote disk respectively. The interface
-is the same; the correctness bar per backend is not.
+`GetObject`'s body and a multipart upload. `path()` has no answer on a
+remote disk and throws there, and `temporaryUrl()` is a presigned link on
+S3 but a signed route this application serves on everything else. The
+interface is the same; the correctness bar per backend is not.
 
 If you're on the `local` disk and want something the interface doesn't
 expose, you still have the concrete driver as an escape hatch.
@@ -143,8 +144,13 @@ The plugin's own `extend("s3", ...)` owns those.
 ## `LocalStorageDriver`
 
 ```ts
-new LocalStorageDriver(root: string, urlPrefix?: string)
+new LocalStorageDriver(root: string, urlPrefix?: string, options?: LocalStorageDriverOptions)
 ```
+
+`options.temporaryUrl` supplies the builder behind `temporaryUrl()`. The
+service provider passes it when the disk sets `temporaryUrls: true`; a
+driver constructed by hand (as every test does) simply has no temporary
+URLs, which keeps it usable with no container at all.
 
 Every method funnels through one private `resolve()`:
 
@@ -618,6 +624,80 @@ video. When it stops being fine, point the disk's `url` at a CDN origin
 that reads from the same bucket, `url()` starts emitting CDN URLs, the
 catch-all route stops being hit, and no application code changes.
 
+## Temporary URLs for private files
+
+`url()` throws on a private disk, because there is no public address for
+the file. `temporaryUrl()` is the answer when you need to hand someone
+*one* file for a *short* time — an invoice, an export, a receipt — without
+making the disk public or writing a bespoke authorised route.
+
+```ts
+const url = await Storage.temporaryUrl("invoices/2026-01.pdf");        // default disk, 5 minutes
+const url = await Storage.temporaryUrl("exports/q1.csv", 900, "local"); // 15 minutes, named disk
+const url = await Storage.disk("local").temporaryUrl("receipt.pdf");    // straight off the driver
+```
+
+Two strategies, one result. A backend that signs links natively does
+that: an S3 disk returns a presigned URL and the bytes never touch your
+application. Every other disk returns a signed link to a route your
+application serves, which verifies the signature and streams the file.
+Either way you get an absolute, expiring URL, and calling code does not
+have to know which kind of disk produced it.
+
+### Wiring the fallback
+
+Two things, both in the scaffold already:
+
+```ts
+// config/storage.ts — opt the disk in.
+local: { root: storage_path("app/private"), temporaryUrls: true },
+```
+
+```ts
+// AppServiceProvider.routes() — mount the route, BEFORE any /storage/* catch-all.
+router.get("/storage/temporary/*", serveTemporaryDiskFile()).name("storage.temporary");
+```
+
+The opt-in is per disk and deliberate. The signature is already the
+authorisation, so this is defence in depth: the config is the list of
+disks reachable over HTTP at all, which bounds what a leaked `APP_KEY`
+could reach. A disk without it throws from `temporaryUrl()` rather than
+handing back a link that would 404.
+
+Links are absolute, so they need an origin: the active request's, or
+`http.url` (`APP_URL`) when there isn't one — a queue job emailing a link
+has no request, which is exactly when a relative URL would silently be
+wrong.
+
+### What the signature covers
+
+The HMAC covers the **disk name, the file path and the expiry together**.
+A link cannot be edited to read a different file, to read the same path
+on a different disk, or to last longer. It is signed with `APP_KEY`,
+HKDF-narrowed to the `"url"` purpose, so it shares no key with session
+cookies.
+
+The handler verifies the signature itself rather than relying on
+`validateSignature()` middleware. Forgetting to attach middleware should
+not turn the route into an unauthenticated read of every disk; attaching
+it as well is harmless.
+
+Range requests work, so a video or a large PDF is seekable through a
+temporary URL.
+
+### What it is not
+
+**It is not an authorisation check.** Anyone holding the link can read
+the file until it expires — the same model as a presigned S3 URL, or the
+email-verification links the framework already mints. Keep lifetimes
+short, and when a download must be tied to *who* is asking, write a route
+that checks the user and calls `serveStoredFile` instead.
+
+**The fallback proxies the bytes.** A local disk is reading from the same
+machine, so that is free. An SFTP or FTP disk pulls the file over the
+wire and pushes it to the client, and on FTP every download serialises
+behind other operations on that connection.
+
 ## S3: files in object storage
 
 `@mahiframework/storage-s3` is a driver for S3 and anything speaking its
@@ -732,21 +812,24 @@ this machine.
 
 ### Signed URLs for private objects
 
-A private bucket has no public URL, but it can have a time-limited one.
-`temporaryUrl()` is deliberately **not** on `StorageDriver`: a local disk
-and an SFTP disk cannot honour it, and putting it on the interface would
-mean three drivers implementing a method only to throw. Reach for the
-concrete class, as you would for `LocalStorageDriver.path()`:
+A private bucket has no public URL, but it can have a time-limited one,
+and on S3 that is a **presigned** link the bucket itself validates — the
+bytes go straight from S3 to the client without passing through your
+application:
 
 ```ts
-import { S3StorageDriver } from "@mahiframework/storage-s3";
-
-const disk = Storage.disk("uploads") as S3StorageDriver;
-const url = await disk.temporaryUrl("invoices/2026-01.pdf", 300);  // 5 minutes
+const url = await Storage.temporaryUrl("invoices/2026-01.pdf", 300, "uploads");
 ```
 
 This needs `@aws-sdk/s3-request-presigner`, the third optional peer
 dependency, and is the only thing that does.
+
+`temporaryUrl()` is on `StorageDriver`, so the same call works on every
+disk — see [Temporary URLs](#temporary-urls-for-private-files) for how
+the non-S3 disks honour it. If you would rather the bucket stayed
+unreachable from the internet entirely, set `temporaryUrls: "proxy"` on
+the disk and downloads are routed through your application instead, at
+the cost of the bytes making the extra hop.
 
 ### A disk per database row
 
@@ -848,6 +931,12 @@ file with no such server, put a route in front of it with
 **`path()` always throws.** The bytes are on another machine. Returning a
 remote path that `node:fs` would then fail to open is worse than
 refusing.
+
+**`temporaryUrl()` needs the fallback route.** SFTP has no presigning of
+its own, so set `temporaryUrls: true` on the disk and mount
+`serveTemporaryDiskFile()`. The file is then pulled over SSH and streamed
+to the client by your application. See
+[Temporary URLs](#temporary-urls-for-private-files).
 
 **Recursive listing is bounded.** `allFiles()` is one `readdir` per
 directory, and they share a single SSH channel, so `concurrency` caps
@@ -1046,6 +1135,13 @@ disk.ftp().replacesAtomically();  // true | false | undefined (not yet attempted
 **`url()` throws** without a configured prefix, and **`path()` always
 throws** — the bytes are on another machine.
 
+**`temporaryUrl()` needs the fallback route**, as with SFTP: set
+`temporaryUrls: true` and mount `serveTemporaryDiskFile()`. Note the
+download is proxied through your application *and* serialised behind
+every other operation on the connection, so handing out several links at
+once means several queued transfers. See
+[Temporary URLs](#temporary-urls-for-private-files).
+
 ## Writing a custom driver
 
 Implement the `StorageDriver` methods and register a factory with
@@ -1065,7 +1161,13 @@ import { ServiceProvider } from "@mahiframework/core";
 import { StorageManager, STORAGE_TOKEN, joinPublicUrl, type StorageDriver } from "@mahiframework/storage";
 
 export class BlobStorageDriver implements StorageDriver {
-  constructor(private config: { container: string; url?: string }) {}
+  constructor(
+    private config: { container: string; url?: string },
+    // The fallback builder, when the application wired one. A driver
+    // can't build it itself: the link addresses a *disk name*, which only
+    // the provider knows.
+    private temporaryUrlBuilder?: TemporaryUrlBuilder,
+  ) {}
 
   async put(path: string, contents: Buffer | string): Promise<void> { /* ... */ }
   async get(path: string): Promise<Buffer> { /* ... */ }
@@ -1084,6 +1186,15 @@ export class BlobStorageDriver implements StorageDriver {
 
   path(): string {
     throw new Error("The blob driver has no on-disk path.");
+  }
+
+  // If the backend presigns, do that. Otherwise delegate to the fallback,
+  // and throw when there isn't one — a link that 404s is worse.
+  async temporaryUrl(path: string, expiresIn = 300): Promise<string> {
+    if (!this.temporaryUrlBuilder) {
+      throw new Error("This disk cannot make temporary URLs — set `temporaryUrls: true`.");
+    }
+    return this.temporaryUrlBuilder(path, expiresIn);
   }
 }
 
@@ -1147,7 +1258,7 @@ constructible standalone. For a full-application test, set
 
 ### The driver contract suite
 
-`StorageDriver` is 21 methods, and most of them carry a guarantee the
+`StorageDriver` is 22 methods, and most of them carry a guarantee the
 signature doesn't show: listings are sorted, a missing directory is `[]`
 rather than an error, `readStream` rejects *before* the first chunk, a
 truncating stream write is atomic. A driver can satisfy every type and
@@ -1177,13 +1288,14 @@ test-runner dependency.
 storageDriverContract({
   urlPrefix: "/storage",  // assert url() returns prefix + path; omitted, assert it THROWS
   hasPath: false,         // the bytes aren't local, so assert path() throws
+  hasTemporaryUrl: true,  // this disk can sign one; omitted, assert temporaryUrl() REJECTS
   largeFileBytes: 512 * 1024,  // default 8 MiB; lower it when each chunk costs a round trip
 });
 ```
 
-`LocalStorageDriver` and `SftpStorageDriver` both run it, which is what
-stops a local and a remote disk from quietly becoming two different
-abstractions behind one interface.
+Every driver runs it — local, S3, SFTP and FTP — which is what stops a
+local and a remote disk from quietly becoming two different abstractions
+behind one interface.
 
 ## Gotchas
 
