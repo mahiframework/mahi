@@ -40,6 +40,27 @@ describe("LocalStorageDriver", () => {
     }
   });
 
+  /**
+   * The same contract again with the temporary-URL fallback wired, which
+   * is how a private local disk gets a shareable link. The builder is a
+   * stand-in for `signedDiskUrls(name)`: the contract only asserts the
+   * *shape* of what comes back, and the real signing is covered in
+   * `temporary-url.test.ts` where a container and a signer exist.
+   */
+  describe("StorageDriver contract (temporary urls)", () => {
+    for (const testCase of storageDriverContract({ hasTemporaryUrl: true })) {
+      it(testCase.name, async () => {
+        await testCase.run(
+          new LocalStorageDriver(tmpDir, undefined, {
+            temporaryUrl: async (filePath, expiresIn) =>
+              `https://app.test/storage/temporary/private/${filePath}` +
+              `?expires=${Math.floor(Date.now() / 1000) + expiresIn}&signature=stub`,
+          }),
+        );
+      });
+    }
+  });
+
   it("path() returns an absolute filesystem path under the root", async () => {
     await driver.put("a.txt", "x");
     const p = driver.path("a.txt");

@@ -11,6 +11,16 @@ export interface LocalDiskConfig {
   driver?: "local";
   root: string;
   url?: string;
+  /**
+   * Allow `temporaryUrl()` on this disk, served by the stock
+   * temporary-URL route.
+   *
+   * Opt-in, and the signature is already the authorisation, so this is
+   * defence in depth: it is the list of disks reachable over HTTP at all,
+   * which bounds what a leaked `APP_KEY` could reach. Requires
+   * `serveTemporaryDiskFile()` to be mounted.
+   */
+  temporaryUrls?: boolean;
 }
 
 export type DiskConfig = LocalDiskConfig | { driver: string; [key: string]: unknown };
@@ -81,6 +91,16 @@ export class StorageManager extends Manager<StorageDriver> {
    */
   path(path: string, disk?: string): string {
     return this.disk(disk).path(path);
+  }
+
+  /**
+   * Time-limited URL for `path` on the named (or default) disk,
+   * `disk().temporaryUrl(path, expiresIn)`. Laravel's
+   * `Storage::temporaryUrl()`, and the answer for a private disk, where
+   * `url()` throws.
+   */
+  temporaryUrl(path: string, expiresIn?: number, disk?: string): Promise<string> {
+    return this.disk(disk).temporaryUrl(path, expiresIn);
   }
 }
 

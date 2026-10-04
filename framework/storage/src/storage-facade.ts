@@ -123,4 +123,13 @@ export class Storage extends Facade<StorageManager>(() => STORAGE_TOKEN) {
   static path(path: string, disk?: string): string {
     return this.instance().path(path, disk);
   }
+
+  /**
+   * Time-limited URL for `path` on the named (or default) disk. See
+   * `StorageManager.temporaryUrl()`. Laravel's
+   * `Storage::temporaryUrl()`.
+   */
+  static temporaryUrl(path: string, expiresIn?: number, disk?: string): Promise<string> {
+    return this.instance().temporaryUrl(path, expiresIn, disk);
+  }
 }

@@ -1,10 +1,31 @@
 import { Readable } from "node:stream";
 import { guessMimeType } from "./mime-types.js";
-import { app } from "@mahiframework/core";
+import { app, type SignedRequestLike } from "@mahiframework/core";
 import { pathFromPublicUrl } from "./public-url.js";
 import type { StorageDriver } from "./storage-driver.js";
 import { STORAGE_TOKEN } from "./storage-service-provider.js";
 import { isLocalDiskConfig, StorageManager } from "./storage-manager.js";
+import { hasValidDiskSignature, TEMPORARY_URL_PREFIX } from "./temporary-url.js";
+
+/**
+ * The slice of a request `servePublicDisk` needs. Structural rather than
+ * `@mahiframework/http`'s `Request`, so this package stays free of an
+ * HTTP dependency.
+ *
+ * `headers()` is a method returning a plain record, matching http's
+ * `Request.headers()` exactly — a `Headers` property would look tidier
+ * here and would not accept the one type that actually calls this.
+ * Optional, because `serveStoredFile` works without them; supplying them
+ * is what unlocks `Range` and conditional GET.
+ */
+export interface PublicDiskRequest {
+  path(): string;
+  headers?: () => Record<string, string>;
+  signal?: AbortSignal;
+}
+
+/** As `PublicDiskRequest`, plus the raw query the signature is carried in. */
+export type TemporaryDiskRequest = PublicDiskRequest & SignedRequestLike;
 
 export interface ServeStoredFileOptions {
   cacheControl?: string;
@@ -227,21 +248,136 @@ function bindAbort(stream: Readable, signal: AbortSignal | undefined): void {
 export function servePublicDisk(
   diskName: string,
   options: ServeStoredFileOptions = {},
-): (request: { path(): string }) => Promise<Response> {
+): (request: PublicDiskRequest) => Promise<Response> {
   return async (request) => {
     const storage = app().make<StorageManager>(STORAGE_TOKEN);
     const config = storage.diskConfig(diskName);
+    const url = diskUrlPrefix(config);
 
-    if (!isLocalDiskConfig(config) || config.url === undefined || config.url === "") {
+    // Any disk with a `url` prefix, not just a local one. A bucket or a
+    // remote host whose files this application also fronts is served the
+    // same way — `serveStoredFile` only needs a `StorageDriver`, and
+    // gating on the driver's kind refused a configuration that works.
+    if (url === undefined) {
       throw new Error(`Disk [${diskName}] has no url configured — cannot serve it publicly.`);
     }
 
-    const relative = pathFromPublicUrl(request.path(), config.url);
+    const relative = pathFromPublicUrl(request.path(), url);
 
     if (relative === null) {
       return new Response("Not Found", { status: 404 });
     }
 
-    return serveStoredFile(storage.disk(diskName), relative, options);
+    return serveStoredFile(storage.disk(diskName), relative, {
+      ...options,
+      request: options.request ?? requestParts(request),
+    });
+  };
+}
+
+/**
+ * Route handler for the stock temporary-URL route, the fallback behind
+ * `temporaryUrl()` on every disk that cannot sign natively. Mount it at
+ * `TEMPORARY_URL_PREFIX`:
+ *
+ *   router.get("/storage/temporary/*", serveTemporaryDiskFile());
+ *
+ * The signature is the authorisation, and it is verified **here** rather
+ * than being left to `validateSignature()` middleware: forgetting to
+ * attach the middleware would otherwise turn this into an unauthenticated
+ * read of every disk. Attaching it as well is harmless and fails faster.
+ */
+export function serveTemporaryDiskFile(
+  options: ServeStoredFileOptions = {},
+): (request: TemporaryDiskRequest) => Promise<Response> {
+  return async (request) => {
+    if (!hasValidDiskSignature(request)) {
+      // 403, not 404: the link is well-formed and the caller should know
+      // it has expired or been tampered with, rather than hunting a file
+      // that is really there.
+      return new Response("Forbidden", { status: 403 });
+    }
+
+    const target = parseTemporaryPath(request.path());
+
+    if (target === null) {
+      return new Response("Not Found", { status: 404 });
+    }
+
+    const storage = app().make<StorageManager>(STORAGE_TOKEN);
+    const config = storage.diskConfig(target.disk) as { temporaryUrls?: unknown } | undefined;
+
+    // A valid signature for a disk that never opted in is still refused.
+    // The config is the list of disks reachable over HTTP at all, which
+    // bounds the blast radius if APP_KEY ever leaks.
+    if (config?.temporaryUrls !== true && config?.temporaryUrls !== "proxy") {
+      return new Response("Not Found", { status: 404 });
+    }
+
+    return serveStoredFile(storage.disk(target.disk), target.path, {
+      ...options,
+      request: options.request ?? requestParts(request),
+    });
+  };
+}
+
+/** `/storage/temporary/<disk>/<path>` split into its two parts. */
+function parseTemporaryPath(requestPath: string): { disk: string; path: string } | null {
+  if (!requestPath.startsWith(`${TEMPORARY_URL_PREFIX}/`)) {
+    return null;
+  }
+
+  const remainder = requestPath.slice(TEMPORARY_URL_PREFIX.length + 1);
+  const separator = remainder.indexOf("/");
+
+  if (separator <= 0 || separator === remainder.length - 1) {
+    return null;
+  }
+
+  try {
+    const disk = decodeURIComponent(remainder.slice(0, separator));
+    const path = remainder
+      .slice(separator + 1)
+      .split("/")
+      .map(decodeURIComponent)
+      .join("/");
+
+    return { disk, path };
+  } catch {
+    // A malformed percent-escape is not a path we can serve. The driver's
+    // own traversal guard still backs this up.
+    return null;
+  }
+}
+
+/** The `url` prefix of any disk config that has one. */
+function diskUrlPrefix(config: unknown): string | undefined {
+  if (isLocalDiskConfig(config)) {
+    return config.url === "" ? undefined : config.url;
+  }
+
+  const url = (config as { url?: unknown } | undefined)?.url;
+
+  return typeof url === "string" && url !== "" ? url : undefined;
+}
+
+/**
+ * The `{ headers, signal }` `serveStoredFile` wants, when the caller's
+ * request object happens to carry them.
+ *
+ * Range and conditional-GET support should not depend on whether the
+ * route was wired with an explicit `options.request`; a video served off
+ * a disk needs `Range` to be seekable at all.
+ */
+function requestParts(
+  request: PublicDiskRequest,
+): { headers?: Headers; signal?: AbortSignal } | undefined {
+  if (request.headers === undefined && request.signal === undefined) {
+    return undefined;
+  }
+
+  return {
+    headers: request.headers === undefined ? undefined : new Headers(request.headers()),
+    signal: request.signal,
   };
 }

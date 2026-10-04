@@ -50,6 +50,16 @@ export interface StorageDriverContractOptions {
    */
   hasPath?: boolean;
   /**
+   * Whether the driver under test can produce a time-limited URL: either
+   * it signs natively (S3) or it was given the fallback builder.
+   *
+   * Given `true`, the contract asserts `temporaryUrl()` returns an
+   * absolute URL carrying an expiry and a signature; omitted, it asserts
+   * the call **rejects**, which is the honest answer for a disk with
+   * neither — returning a link that would 404 is worse.
+   */
+  hasTemporaryUrl?: boolean;
+  /**
    * Bytes for the "arrives in more than one chunk" streaming case.
    * Defaults to 8 MiB, comfortably past one filesystem read; a driver
    * paying real network latency per chunk may want less.
@@ -60,7 +70,12 @@ export interface StorageDriverContractOptions {
 export function storageDriverContract(
   options: StorageDriverContractOptions = {},
 ): StorageDriverContractCase[] {
-  const { urlPrefix, hasPath = true, largeFileBytes = 8 * 1024 * 1024 } = options;
+  const {
+    urlPrefix,
+    hasPath = true,
+    hasTemporaryUrl = false,
+    largeFileBytes = 8 * 1024 * 1024,
+  } = options;
 
   const cases: StorageDriverContractCase[] = [
     {
@@ -589,6 +604,60 @@ export function storageDriverContract(
               () => disk.url("../../etc/passwd"),
               /escapes the storage root/,
               "url() above the root",
+            );
+          },
+        },
+  );
+
+  cases.push(
+    hasTemporaryUrl
+      ? {
+          /**
+           * Whichever strategy produced it — a backend's own presigning
+           * or a signed link at this application's fallback route — the
+           * result has to be interchangeable: absolute, time-limited, and
+           * carrying proof it was not edited. Code emailing a link must
+           * not care which kind of disk it came from.
+           */
+          name: "temporaryUrl() returns an absolute, expiring, signed URL",
+          async run(disk) {
+            await disk.put("private/report.pdf", "secret");
+
+            const url = await disk.temporaryUrl("private/report.pdf", 300);
+            const parsed = new URL(url);
+
+            assert(
+              parsed.protocol === "http:" || parsed.protocol === "https:",
+              `temporaryUrl() returned a non-absolute URL: ${url}`,
+            );
+            assert(
+              parsed.searchParams.has("signature") || parsed.searchParams.has("X-Amz-Signature"),
+              `temporaryUrl() carried no signature: ${url}`,
+            );
+            assert(
+              parsed.searchParams.has("expires") || parsed.searchParams.has("X-Amz-Expires"),
+              `temporaryUrl() carried no expiry: ${url}`,
+            );
+
+            await assertRejects(
+              () => disk.temporaryUrl("../../etc/passwd"),
+              /escapes the storage root/,
+              "temporaryUrl() above the root",
+            );
+          },
+        }
+      : {
+          /**
+           * A disk with no native signer and no fallback wired must
+           * refuse. A link that resolves to a 404 is worse than an error
+           * naming the config that would make it work.
+           */
+          name: "temporaryUrl() rejects, because this disk cannot sign one",
+          async run(disk) {
+            await assertRejects(
+              () => disk.temporaryUrl("a.txt"),
+              /temporary url/i,
+              "temporaryUrl()",
             );
           },
         },

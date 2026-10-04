@@ -1,6 +1,7 @@
 import { ServiceProvider, STORAGE_TOKEN } from "@mahiframework/core";
 import { StorageManager, isLocalDiskConfig, type StorageConfig } from "./storage-manager.js";
 import { LocalStorageDriver } from "./drivers/local-storage-driver.js";
+import { signedDiskUrls } from "./temporary-url.js";
 
 // Canonical definition in `@mahiframework/core`'s `well-known-tokens`;
 // re-exported so this package's public API is unchanged.
@@ -28,7 +29,17 @@ export class StorageServiceProvider extends ServiceProvider {
           continue;
         }
 
-        manager.extend(name, () => new LocalStorageDriver(disk.root, disk.url));
+        manager.extend(
+          name,
+          () =>
+            new LocalStorageDriver(disk.root, disk.url, {
+              // The provider is the only place that holds both the disk's
+              // name and its config, and a temporary URL needs the name to
+              // address the route. Captured here so the driver stays
+              // constructible without a container.
+              temporaryUrl: disk.temporaryUrls === true ? signedDiskUrls(name) : undefined,
+            }),
+        );
       }
 
       return manager;

@@ -9,6 +9,12 @@ import { CommittingWriteStream } from "../committing-write-stream.js";
 import { FileNotFoundException } from "../exceptions.js";
 import type { StorageDriver, StreamSource } from "../storage-driver.js";
 import { toNodeReadable } from "../stream-source.js";
+import type { TemporaryUrlBuilder } from "../temporary-url.js";
+
+export interface LocalStorageDriverOptions {
+  /** Builds the time-limited link `temporaryUrl()` returns. */
+  temporaryUrl?: TemporaryUrlBuilder;
+}
 
 /**
  * Filesystem-backed `StorageDriver`, the only built-in driver in the
@@ -28,10 +34,25 @@ import { toNodeReadable } from "../stream-source.js";
  * disk. Omit it for a private disk.
  */
 export class LocalStorageDriver implements StorageDriver {
+  private readonly temporaryUrlBuilder?: TemporaryUrlBuilder;
+
+  /**
+   * @param root       the directory every path resolves against.
+   * @param urlPrefix  the disk's `url` config key, for a public disk.
+   * @param options    `temporaryUrl` supplies the builder behind
+   *                   `temporaryUrl()`. Injected rather than constructed
+   *                   here because a local disk's temporary URL points at
+   *                   a route, which needs the disk's *name* — something
+   *                   a driver has no way to know. The service provider
+   *                   holds both and captures it.
+   */
   constructor(
     private root: string,
     private urlPrefix?: string,
-  ) {}
+    options: LocalStorageDriverOptions = {},
+  ) {
+    this.temporaryUrlBuilder = options.temporaryUrl;
+  }
 
   /**
    * Lexical containment check only, rejects `..`/absolute escapes but is
@@ -174,6 +195,31 @@ export class LocalStorageDriver implements StorageDriver {
    */
   path(path: string): string {
     return this.resolve(path);
+  }
+
+  /**
+   * A signed, time-limited link at the application's temporary-URL route,
+   * which verifies the signature and streams the file back.
+   *
+   * A local disk has nothing to sign with itself, so this needs the
+   * fallback wired: `temporaryUrls: true` on the disk, and the route
+   * mounted. Without it there is no honest answer, and returning a link
+   * that 404s would be worse than refusing.
+   */
+  async temporaryUrl(path: string, expiresIn = 300): Promise<string> {
+    if (this.temporaryUrlBuilder === undefined) {
+      throw new Error(
+        `This disk cannot make temporary URLs for [${path}] — a local disk has no signing ` +
+          "backend of its own. Set `temporaryUrls: true` on the disk in `config/storage.ts` and " +
+          'mount the route (`router.get("/storage/temporary/*", serveTemporaryDiskFile())`).',
+      );
+    }
+
+    // Guard before signing, so a traversal attempt can never be minted
+    // into a link that the route would then have to catch.
+    this.resolve(path);
+
+    return this.temporaryUrlBuilder(path, expiresIn);
   }
 
   // ── Listing ──────────────────────────────────────────────────────────

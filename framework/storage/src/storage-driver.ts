@@ -41,6 +41,26 @@ export interface StorageDriver {
    * future remote driver (S3, etc.) would throw here.
    */
   path(path: string): string;
+  /**
+   * A URL granting time-limited read access to `path`, Laravel's
+   * `Storage::temporaryUrl()`. The answer for a private disk, where
+   * `url()` throws.
+   *
+   * Two strategies produce one interchangeable result. A driver whose
+   * backend signs URLs natively does that: `S3StorageDriver` returns a
+   * presigned `GetObject` link the bucket itself validates, so the bytes
+   * never pass through this process. Every other driver falls back to a
+   * signed link at a route this application serves, which verifies the
+   * signature and streams the file off the disk.
+   *
+   * The fallback is opt-in per disk (`temporaryUrls: true` in
+   * `config/storage.ts`) and needs that route mounted, so this **throws**
+   * on a disk that has neither a native signer nor the fallback wired —
+   * rather than returning a link that 404s. The error names the fix.
+   *
+   * @param expiresIn Lifetime in seconds. Defaults to 5 minutes.
+   */
+  temporaryUrl(path: string, expiresIn?: number): Promise<string>;
 
   // ── Listing ──────────────────────────────────────────────────────────
   // Paths returned are disk-relative, POSIX-separated and sorted, so tests
