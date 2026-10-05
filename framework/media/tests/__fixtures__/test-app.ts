@@ -20,6 +20,9 @@ import {
 import { EventDispatcher } from "@mahiframework/events";
 import { FakeStorageDriver, StorageManager } from "@mahiframework/storage";
 import { SnowflakeServiceProvider } from "@mahiframework/snowflake";
+import { belongsToMedia } from "../../src/builders/belongs-to-media.js";
+import { hasManyMedia } from "../../src/builders/has-many-media.js";
+import { hasOneMedia } from "../../src/builders/has-one-media.js";
 import { MediaServiceProvider } from "../../src/media-service-provider.js";
 import { MediaManager } from "../../src/media-manager.js";
 import { FakeImageDriver } from "../../src/image/fake-image-driver.js";
@@ -48,7 +51,27 @@ export class User extends Model<UserAttributes>()({
   primaryKey: "id",
   morphName: "User",
   timestamps: false,
-}) {}
+}) {
+  /**
+   * The documented shape: a METHOD returning a configured builder.
+   *
+   * Not a field. `Model.hydrate()` assigns attributes after calling the
+   * constructor, and a field also depends on `useDefineForClassFields`
+   * being true — under assignment semantics it would hit the model
+   * proxy's `set` trap and become a dirty-tracked attribute.
+   */
+  avatar() {
+    return belongsToMedia(this, "avatar_id").accept({ mimes: ["image/*"] });
+  }
+
+  photos() {
+    return hasManyMedia(this).collection("photos");
+  }
+
+  documents() {
+    return hasManyMedia(this).collection("documents");
+  }
+}
 
 /**
  * A UUID-keyed owner.
@@ -71,7 +94,16 @@ export class Tenant extends Model<TenantAttributes>()({
   primaryKey: "id",
   morphName: "Tenant",
   timestamps: false,
-}) {}
+}) {
+  logo() {
+    return hasOneMedia(this).collection("logo");
+  }
+
+  /** A string-keyed owner holding many files, for the text model_id. */
+  attachments() {
+    return hasManyMedia(this).collection("attachments");
+  }
+}
 
 export interface Harness {
   app: Application;

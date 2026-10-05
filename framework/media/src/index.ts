@@ -8,6 +8,22 @@ export type { MediaFileAttributes } from "./models/media-file.model.js";
 export { mediaModels, useMediaModels } from "./models/registry.js";
 export type { MediaModels } from "./models/registry.js";
 
+// The write side: fluent per-relation builders, declared as METHODS on
+// the owning model. See `has-many-media.ts` for why methods and not
+// fields or `static relationships`.
+export { hasManyMedia, HasManyMedia } from "./builders/has-many-media.js";
+export type { SyncItem } from "./builders/has-many-media.js";
+export { hasOneMedia, HasOneMedia } from "./builders/has-one-media.js";
+export { belongsToMedia, BelongsToMedia } from "./builders/belongs-to-media.js";
+export { MediaCollection } from "./builders/media-collection.js";
+export type { AddableMedia } from "./builders/media-collection.js";
+export { EMPTY_BLUEPRINT, narrowAccept, withBlueprint } from "./builders/blueprint.js";
+export type { MediaBlueprint } from "./builders/blueprint.js";
+
+// The read side: a plain morphMany for eager loading. Separate from the
+// builders on purpose — see the docstring.
+export { mediaRelation } from "./relations.js";
+
 export { MediaEvent, MediaCreated, MediaUpdated, MediaDeleted } from "./events/media-event.js";
 
 export { resolveSource } from "./media-source.js";
