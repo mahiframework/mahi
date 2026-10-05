@@ -107,6 +107,7 @@ framework to do something it didn't anticipate.
 
 - [Authentication](./authentication/): guards, tokens, sessions, passwords
 - [Authorization](./authorization/): gates, policies, abilities
+- [Permissions](./permissions/): roles, permissions, cached checks
 - [Multi-factor auth](./mfa/): TOTP, email codes, recovery codes, step-up
 - [Impersonation](./impersonation/): acting as another user, gated
 - [Encryption & hashing](./encryption/): `Crypt`, `Hash`, signed URLs
@@ -145,6 +146,7 @@ Mahi is a set of packages, not a monolith. Install what you use.
 | `@mahiframework/validation` | `Rule`, `Validator`, `ValidationException` |
 | `@mahiframework/auth` | Guards (token, session), user providers, password reset, verification |
 | `@mahiframework/authorization` | Gates, policies, abilities |
+| `@mahiframework/permissions` | Roles, permissions, cached authorization checks |
 | `@mahiframework/impersonation` | Impersonation gate, start/stop, nested chains |
 | `@mahiframework/cache` | Cache stores, locks, rate limiter |
 | `@mahiframework/queue` | Jobs, queue drivers, workers, middleware |

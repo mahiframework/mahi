@@ -108,6 +108,10 @@ const DESCRIPTIONS = {
     description: "Notifications — multi-channel notifications for Mahi.",
     keywords: ["mahi", "notifications", "notify", "channels"],
   },
+  "@mahiframework/permissions": {
+    description: "Permissions — roles, permissions, and cached authorization checks for Mahi.",
+    keywords: ["mahi", "permissions", "roles", "authorization", "acl"],
+  },
   "@mahiframework/pipeline": {
     description: "Pipeline — pass an object through a series of stages, for Mahi.",
     keywords: ["mahi", "pipeline", "middleware", "stages"],
@@ -184,6 +188,7 @@ const DOC_SLUGS = {
   "@mahiframework/mail": "mail",
   "@mahiframework/mfa": "mfa",
   "@mahiframework/notifications": "notifications",
+  "@mahiframework/permissions": "permissions",
   "@mahiframework/queue": "queues",
   "@mahiframework/redis": "redis",
   "@mahiframework/schedule": "scheduling",
