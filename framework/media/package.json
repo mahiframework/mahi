@@ -1,0 +1,62 @@
+{
+  "name": "@mahiframework/media",
+  "version": "0.1.4",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b && node ../../scripts/prune-dist.mjs",
+    "typecheck": "tsc -b && tsc -p tsconfig.test.json",
+    "lint": "eslint src tests",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mahiframework/core": "workspace:*",
+    "@mahiframework/database": "workspace:*",
+    "@mahiframework/datetime": "workspace:*",
+    "@mahiframework/snowflake": "workspace:*",
+    "@mahiframework/storage": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vite": "^8.0.0",
+    "vitest": "^4.1.11"
+  },
+  "license": "MIT",
+  "author": "Bradie Tilley",
+  "homepage": "https://github.com/mahiframework/mahi#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mahiframework/mahi.git",
+    "directory": "framework/media"
+  },
+  "bugs": {
+    "url": "https://github.com/mahiframework/mahi/issues"
+  },
+  "engines": {
+    "node": ">=26"
+  },
+  "sideEffects": false,
+  "description": "Media — a polymorphic media model, uploads, and image modifiers for Mahi.",
+  "keywords": [
+    "mahi",
+    "media",
+    "uploads",
+    "files",
+    "images"
+  ],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

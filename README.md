@@ -66,6 +66,7 @@ framework/            The framework packages (published as @mahiframework/*)
   storage-ftp/          FtpStorageDriver — a disk on a legacy or appliance host, over FTP/FTPS
   storage-s3/           S3StorageDriver — a disk in object storage (S3, R2, Spaces, MinIO)
   storage-sftp/         SftpStorageDriver — a disk on a remote host, over SSH
+  media/                MediaFile, polymorphic ownership, collections, checksums
   encryption/           Encrypter (AES-256-GCM), Hasher (argon2), Signer (HMAC), key:generate, Crypt/Hash facades
   auth/                 AuthManager, TokenGuard, SessionGuard, DatabaseUserProvider, authenticate()/csrf(), Auth facade
   authorization/        GateRegistry, Policy, requireAuth/requireGuest, can() middleware, Gate facade

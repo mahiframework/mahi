@@ -121,6 +121,7 @@ framework to do something it didn't anticipate.
 - [Events](./events/): dispatching and listening
 - [Broadcasting](./broadcasting/): websockets
 - [Storage](./storage/): file disks
+- [Media](./media/): a polymorphic media model for uploads and attachments
 - [Mail](./mail/): mailables and transports
 - [Notifications](./notifications/): multi-channel notifications
 - [Health checks](./health/): readiness probes, `/health`, `./artisan health`
@@ -158,6 +159,7 @@ Mahi is a set of packages, not a monolith. Install what you use.
 | `@mahiframework/storage-ftp` | An FTP disk, for files on a legacy or appliance host |
 | `@mahiframework/storage-s3` | An S3 disk, for files in object storage |
 | `@mahiframework/storage-sftp` | An SFTP disk, for files on a remote host |
+| `@mahiframework/media` | A polymorphic media model for uploads and attachments |
 | `@mahiframework/mail` | Mailables, SMTP/log transports |
 | `@mahiframework/notifications` | Multi-channel notifications |
 | `@mahiframework/encryption` | Encrypter, hasher, signer |

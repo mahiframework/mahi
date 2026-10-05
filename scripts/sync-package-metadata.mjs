@@ -100,6 +100,10 @@ const DESCRIPTIONS = {
     description: "Mail — mailables and transports for sending email from Mahi.",
     keywords: ["mahi", "mail", "email", "mailable", "smtp"],
   },
+  "@mahiframework/media": {
+    description: "Media — a polymorphic media model, uploads, and image modifiers for Mahi.",
+    keywords: ["mahi", "media", "uploads", "files", "images"],
+  },
   "@mahiframework/mfa": {
     description: "MFA — TOTP, email code, and recovery-code multi-factor verification for Mahi.",
     keywords: ["mahi", "mfa", "2fa", "totp", "authentication"],
@@ -186,6 +190,7 @@ const DOC_SLUGS = {
   "@mahiframework/http": "routing",
   "@mahiframework/impersonation": "impersonation",
   "@mahiframework/mail": "mail",
+  "@mahiframework/media": "media",
   "@mahiframework/mfa": "mfa",
   "@mahiframework/notifications": "notifications",
   "@mahiframework/permissions": "permissions",
