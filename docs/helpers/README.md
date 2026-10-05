@@ -20,7 +20,9 @@ data_get(config, "database.connections.sqlite"); // typed, compile-checked
 Nothing here touches the container, the config repository, or the
 application. These are pure functions and value objects, import them
 anywhere, including inside a `config/*.ts` file that runs before
-`bootstrap()`.
+`bootstrap()`. (Two exceptions read or write the filesystem rather than
+the container: the path helpers and `TempFile`. Neither needs an
+`Application` either.)
 
 ## `Str`
 
@@ -1496,6 +1498,71 @@ compiled binary run from anywhere, calls `setBasePath(root)` as the first
 statement of its `bootstrap()` instead, and the other three helpers follow
 it. See [Configuration → setBasePath()](../configuration/README.md#setbasepath--for-apps-that-arent-run-from-their-own-directory).
 
+## Temporary files
+
+```ts
+import { TempFile, withTemporaryFile } from "@mahiframework/core";
+```
+
+A scratch file on the local filesystem, for work that cannot happen in
+memory or cannot happen remotely. The two motivating cases are an
+external binary that only takes a path, and a file on a remote disk that
+a local-only tool has to read — you cannot hand an S3 key to something
+expecting `open(2)`.
+
+```ts
+const pages = await withTemporaryFile(async (file) => {
+  await Process.run(["pdftotext", file.path, "-"]);
+
+  return readFile(file.path, "utf8");
+}, "pdf");
+```
+
+The callback gets an **empty** file at a random path under
+`<tmpdir>/mahi/`, and the file is deleted when the callback returns —
+including when it throws, which is the case that leaks in practice.
+
+To start from bytes rather than an empty file, construct one and scope it
+with `await using`:
+
+```ts
+await using file = await TempFile.fromStream(await disk.readStream(media.path));
+
+await Process.run(["ffmpeg", "-i", file.path, "-frames:v", "1", out]);
+```
+
+| Constructor | |
+|---|---|
+| `TempFile.create(ext?)` | an empty file |
+| `TempFile.fromContents(bufferOrString, ext?)` | a file holding those bytes |
+| `TempFile.fromStream(source, ext?)` | drained from a `Readable`, a web `ReadableStream`, or any async iterable |
+
+`fromStream` streams rather than buffers, which is the point: a temp file
+exists precisely for things too big or too remote to hold in memory. It
+accepts the same three shapes as
+[`Storage`'s `putStream()`](../storage/), so a disk's `readStream()` and a
+`fetch` body both work unadapted.
+
+**Nothing cleans up on its own.** There is no finalizer, because a
+`FinalizationRegistry` callback is not guaranteed to run at all, and
+"deletes your file, eventually, maybe" is a worse contract than "deletes
+it when the scope ends". A bare constructor hands you a `delete()`
+obligation:
+
+```ts
+const file = await TempFile.create("png");
+
+try {
+  // ...
+} finally {
+  await file.delete();
+}
+```
+
+`delete()` is idempotent and tolerates a file already removed out of
+band, so deleting in both a `finally` and a success path is safe. The
+extension may be given with or without the leading dot.
+
 ## `@mahiframework/pipeline`
 
 ```ts
@@ -1870,6 +1937,9 @@ built from user input.
 
 **Path helpers resolve against `process.cwd()`.** Start the app from its
 own root.
+
+**A `TempFile` does not delete itself.** Use `withTemporaryFile()` or
+`await using`; a bare constructor leaks the file until the OS reclaims it.
 
 ## Related
 

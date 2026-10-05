@@ -3,7 +3,13 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ES2022"],
+    // `ESNext.Disposable` on top of ES2022, not `ESNext` wholesale: it adds
+    // `Symbol.asyncDispose`/`Symbol.dispose` and the `Disposable`/
+    // `AsyncDisposable` interfaces, which is what `using` and `await using`
+    // need in a type position. Node has had the symbols since 22, so this
+    // describes the runtime rather than reaching ahead of it, and keeps every
+    // other ESNext library proposal out of scope.
+    "lib": ["ES2022", "ESNext.Disposable"],
     "strict": true,
     "declaration": true,
     "declarationMap": true,

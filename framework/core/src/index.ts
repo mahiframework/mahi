@@ -109,3 +109,5 @@ export {
   clearBasePath,
   resolvedBasePath,
 } from "./paths.js";
+
+export { TempFile, withTemporaryFile } from "./temp-file.js";
