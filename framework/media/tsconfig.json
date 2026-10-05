@@ -7,10 +7,26 @@
   },
   "include": ["src"],
   "references": [
-    { "path": "../core" },
-    { "path": "../database" },
-    { "path": "../datetime" },
-    { "path": "../snowflake" },
-    { "path": "../storage" }
+    {
+      "path": "../core"
+    },
+    {
+      "path": "../database"
+    },
+    {
+      "path": "../datetime"
+    },
+    {
+      "path": "../events"
+    },
+    {
+      "path": "../facades"
+    },
+    {
+      "path": "../snowflake"
+    },
+    {
+      "path": "../storage"
+    }
   ]
 }

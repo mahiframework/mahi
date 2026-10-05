@@ -1,7 +1,13 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Application, STORAGE_TOKEN, clearCurrentApp, setCurrentApp } from "@mahiframework/core";
+import {
+  Application,
+  EVENTS_TOKEN,
+  STORAGE_TOKEN,
+  clearCurrentApp,
+  setCurrentApp,
+} from "@mahiframework/core";
 import {
   DATABASE_TOKEN,
   DatabaseManager,
@@ -11,6 +17,7 @@ import {
   Schema,
   SqliteDriver,
 } from "@mahiframework/database";
+import { EventDispatcher } from "@mahiframework/events";
 import { FakeStorageDriver, StorageManager } from "@mahiframework/storage";
 import { SnowflakeServiceProvider } from "@mahiframework/snowflake";
 import { MediaServiceProvider } from "../../src/media-service-provider.js";
@@ -68,6 +75,7 @@ export interface Harness {
   app: Application;
   media: MediaManager;
   provider: MediaServiceProvider;
+  events: EventDispatcher;
   storage: StorageManager;
   /** The private disk, which is the default. */
   disk: FakeStorageDriver;
@@ -109,6 +117,13 @@ export async function createHarness(config: MediaConfig = {}): Promise<Harness> 
   const disk = new FakeStorageDriver(join(root, "private"));
   const publicDisk = new FakeStorageDriver(join(root, "public"), "/storage");
 
+  // Created up front so `allFiles()` on an untouched disk returns `[]`
+  // rather than failing to `realpath` a directory the driver only makes
+  // on first write. A test asserting "nothing was written" needs the
+  // empty case to be readable.
+  await mkdir(join(root, "private"), { recursive: true });
+  await mkdir(join(root, "public"), { recursive: true });
+
   const storage = new StorageManager(app, {
     default: "local",
     disks: {
@@ -119,6 +134,12 @@ export async function createHarness(config: MediaConfig = {}): Promise<Harness> 
   storage.extend("local", () => disk);
   storage.extend("public", () => publicDisk);
   app.instance(STORAGE_TOKEN, storage);
+
+  // A real dispatcher, not a recorder: the model fires its events
+  // through `dispatchesEvents`, so a wrong event class or a missing
+  // registration should fail here rather than in an app.
+  const events = new EventDispatcher(app);
+  app.instance(EVENTS_TOKEN, events);
 
   setCurrentApp(app);
 
@@ -153,6 +174,7 @@ export async function createHarness(config: MediaConfig = {}): Promise<Harness> 
     app,
     media: app.make<MediaManager>(MEDIA_TOKEN),
     provider,
+    events,
     storage,
     disk,
     publicDisk,

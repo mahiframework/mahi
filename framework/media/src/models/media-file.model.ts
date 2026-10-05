@@ -1,6 +1,14 @@
-import { Cast, Model, type BuilderFor } from "@mahiframework/database";
+import type { Readable } from "node:stream";
+import { TempFile, app } from "@mahiframework/core";
+import { Cast, Model, type BuilderFor, type DispatchesEventsMap } from "@mahiframework/database";
 import { snowflake } from "@mahiframework/snowflake";
 import type { DateTime } from "@mahiframework/datetime";
+import { MediaChecksumMismatchError } from "../errors.js";
+import { MediaCreated, MediaDeleted, MediaUpdated } from "../events/media-event.js";
+import { checksumStream } from "../support/checksum.js";
+import { isRasterImage } from "../support/mime.js";
+import { MEDIA_TOKEN } from "../tokens.js";
+import type { MediaManager } from "../media-manager.js";
 
 /**
  * One stored file: an avatar, a logo, an invoice PDF, a video.
@@ -143,6 +151,63 @@ export class MediaFile extends Model<MediaFileAttributes>()({
   },
 }) {
   /**
+   * Fire this package's own events alongside the generic
+   * `ModelCreated`/`ModelUpdated`/`ModelDeleted` ones.
+   *
+   * A static, NOT a key in the `Model<A>()({ ... })` config — the config
+   * object has no such field, so putting it there compiles and is
+   * silently ignored.
+   *
+   * `created`/`updated`/`deleted` only. There is no `MediaRetrieved`,
+   * which would fire on every row read, and no `-ing` events: a
+   * `MediaCreating` listener could not see the file, because the bytes
+   * are written before the row is inserted.
+   */
+  static override dispatchesEvents: DispatchesEventsMap = {
+    created: MediaCreated,
+    updated: MediaUpdated,
+    deleted: MediaDeleted,
+  };
+
+  /**
+   * Delete the stored file when the row goes.
+   *
+   * In `deleting`, not a listener on `MediaDeleted`, for two reasons.
+   * The hook still has the loaded row, so `disk` and `path` are
+   * readable — a `deleted` payload for a row nothing preloaded is only
+   * `{ id }`. And it runs inside whatever transaction the caller opened,
+   * so a rollback leaves the file in place; a listener firing afterwards
+   * would have deleted the bytes for a row that came back.
+   *
+   * Registered here rather than in the provider so it applies however
+   * the row is deleted: `deleteInstance()`, a static `delete()`, a
+   * relation write, or a subclass. `static boot()` is the one-time
+   * per-class hook and is NOT chained to `super.boot()`.
+   *
+   * A failed file delete does not fail the row delete. The row is the
+   * record of intent, the file is a side effect, and a vanished mount
+   * must not make a record undeletable — `media:prune --files` reclaims
+   * what is left.
+   */
+  static override boot(): void {
+    this.on("deleting", async (media) => {
+      // The payload is the loaded row when the caller had one, and a
+      // bare `{ [primaryKey]: id }` when nothing preloaded it. Only the
+      // first names a file to delete; the row is removed either way, and
+      // `media:prune --files` reclaims the bytes in the second case.
+      const path: unknown = media.path;
+
+      if (typeof path !== "string" || path === "") {
+        return;
+      }
+
+      const disk: unknown = media.disk;
+
+      await mediaManager().deleteFile(typeof disk === "string" ? disk : null, path);
+    });
+  }
+
+  /**
    * Every file owned by one record, in collection order.
    *
    * Pass `Post.morphAlias()` rather than a literal, so a later morph-map
@@ -162,4 +227,183 @@ export class MediaFile extends Model<MediaFileAttributes>()({
   static inCollection(collection: string): BuilderFor<MediaFileAttributes, MediaFile> {
     return this.query().where("collection", collection).orderBy("order", "asc");
   }
+
+  /**
+   * A public URL for this file.
+   *
+   * THROWS on a private disk. That is `@mahiframework/storage`'s
+   * contract, not this package's embellishment, and the message it
+   * raises names the fix. Call `isPublic()` first to branch, or
+   * `temporaryUrl()` for a signed link that works either way.
+   */
+  url(): string {
+    return this.manager().disk(this.disk).url(this.path);
+  }
+
+  /**
+   * A signed, expiring URL for this file.
+   *
+   * Works on a private disk, which is the point. S3 presigns natively; a
+   * local disk needs `temporaryUrls: true` in its own storage config and
+   * otherwise rejects rather than minting a link that would 404.
+   */
+  temporaryUrl(expiresIn?: number): Promise<string> {
+    return this.manager().disk(this.disk).temporaryUrl(this.path, expiresIn);
+  }
+
+  /** Whether this file's disk serves public URLs. */
+  isPublic(): boolean {
+    return this.manager().isPublic(this.disk);
+  }
+
+  /**
+   * Whether an image driver could decode this file.
+   *
+   * Derived from the sniffed `mime_type`, never the extension. SVG is
+   * excluded: it is an image to a browser and a text document to a
+   * decoder. See `support/mime.ts`.
+   */
+  isImage(): boolean {
+    return isRasterImage(this.mime_type);
+  }
+
+  /** The whole file, in memory. Prefer `readStream()` for large ones. */
+  contents(): Promise<Buffer> {
+    return this.manager().disk(this.disk).get(this.path);
+  }
+
+  /**
+   * A stream over the file's bytes.
+   *
+   * `start`/`end` are inclusive byte offsets, so an HTTP `Range` maps
+   * straight through.
+   */
+  readStream(options?: { start?: number; end?: number }): Promise<Readable> {
+    return this.manager().disk(this.disk).readStream(this.path, options);
+  }
+
+  /**
+   * Copy this file to a local scratch file and return it.
+   *
+   * For tools that cannot read a remote disk — you cannot hand an S3 key
+   * to `ffmpeg`. The caller owns the result: scope it with `await using`
+   * or `delete()` it. Nothing leaks either way, since `TempFile` sweeps
+   * on process exit.
+   */
+  async toTempFile(): Promise<TempFile> {
+    return TempFile.fromStream(await this.readStream(), this.extension);
+  }
+
+  /**
+   * Verify the stored file against its recorded checksum.
+   *
+   * Streamed, not buffered: a checksum exists to detect a file changing
+   * underneath us, and reading a 5GB video into memory to find out would
+   * make verification the most expensive thing here.
+   *
+   * ON SUCCESS, THE ALGORITHM SELF-HEALS. A row hashed under an older
+   * algorithm than the one now configured is rehashed and saved, because
+   * the file has just been proven intact — which makes changing
+   * `hashing.algorithm` a background migration rather than a flag day.
+   * laravel-media does the same and it is the best idea in its hashing
+   * code.
+   *
+   * Throws `MediaChecksumMismatchError` on a mismatch rather than
+   * returning false: a file that does not match its checksum has been
+   * modified or replaced out of band, and a boolean invites a caller to
+   * ignore it.
+   */
+  async verify(): Promise<void> {
+    const actual = await checksumStream(await this.readStream(), this.checksum_algo);
+
+    if (actual !== this.checksum_hash) {
+      throw new MediaChecksumMismatchError(
+        String(this.id),
+        this.checksum_algo,
+        this.checksum_hash,
+        actual,
+      );
+    }
+
+    const configured = this.manager().config.hashAlgorithm;
+
+    if (configured !== this.checksum_algo) {
+      await this.refreshChecksum(configured);
+    }
+  }
+
+  /**
+   * Rehash the stored file and save the new digest.
+   *
+   * Call after replacing a file's bytes out of band. `verify()` calls it
+   * for the algorithm-upgrade case.
+   */
+  async refreshChecksum(algorithm?: string): Promise<void> {
+    const using = algorithm ?? this.manager().config.hashAlgorithm;
+
+    this.checksum_hash = await checksumStream(await this.readStream(), using);
+    this.checksum_algo = using;
+
+    await this.save();
+  }
+
+  /** One custom property, or undefined. */
+  getCustomProperty<T = unknown>(key: string): T | undefined {
+    return this.custom_properties?.[key] as T | undefined;
+  }
+
+  /**
+   * Set one custom property. Does NOT save.
+   *
+   * Unsaved so a caller can set several and write once. Returns `this`
+   * for chaining, matching laravel-media's
+   * `setCustomProperty(...)->save()`.
+   */
+  setCustomProperty(key: string, value: unknown): this {
+    this.custom_properties = { ...(this.custom_properties ?? {}), [key]: value };
+
+    return this;
+  }
+
+  /** Whether a custom property is present, including when its value is null. */
+  hasCustomProperty(key: string): boolean {
+    return this.custom_properties !== null && key in this.custom_properties;
+  }
+
+  /** Remove one custom property. Does NOT save. */
+  forgetCustomProperty(key: string): this {
+    if (this.custom_properties === null) {
+      return this;
+    }
+
+    const remaining = { ...this.custom_properties };
+
+    delete remaining[key];
+    this.custom_properties = remaining;
+
+    return this;
+  }
+
+  /**
+   * The media manager, resolved per call.
+   *
+   * Not held on the instance: a model is hydrated by the ORM with no
+   * container in scope, and caching a manager on a row would pin the
+   * application that happened to be current when it was read — which
+   * breaks in tests, where each case builds its own.
+   */
+  private manager(): MediaManager {
+    return mediaManager();
+  }
+}
+
+/**
+ * The media manager for the current application.
+ *
+ * A module function rather than only a method, because the `deleting`
+ * hook receives a payload that may not be a loaded model and so cannot
+ * call one.
+ */
+function mediaManager(): MediaManager {
+  return app().make<MediaManager>(MEDIA_TOKEN);
 }

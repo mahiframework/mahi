@@ -4,6 +4,7 @@ import { MediaManager } from "./media-manager.js";
 import { resolveConfig, type MediaConfig } from "./media-config.js";
 import { MediaFile } from "./models/media-file.model.js";
 import createMediaTable from "./migrations/0001_create_media_table.js";
+import { isSupportedAlgorithm } from "./support/checksum.js";
 import { MEDIA_TOKEN } from "./tokens.js";
 
 export { MEDIA_TOKEN };
@@ -50,8 +51,21 @@ export class MediaServiceProvider extends ServiceProvider {
       // disk, four-level paths, sha256 checksums) rather than a boot
       // failure.
       const config = app.config.get<MediaConfig>("media") ?? {};
+      const resolved = resolveConfig(config);
 
-      return new MediaManager(app, resolveConfig(config));
+      // Checked here rather than at first upload. `createHash()` throws
+      // on an unknown digest name, and a typo in `config/media.ts`
+      // should fail where it is fixable instead of on a user's first
+      // avatar — by which point the message is a `node:crypto` error
+      // with no mention of config.
+      if (!isSupportedAlgorithm(resolved.hashAlgorithm)) {
+        throw new Error(
+          `media.hashing.algorithm is "${resolved.hashAlgorithm}", which node:crypto does not ` +
+            `support. Use a digest name from crypto.getHashes(), e.g. "sha256".`,
+        );
+      }
+
+      return new MediaManager(app, resolved);
     });
   }
 

@@ -1,16 +1,39 @@
-import { STORAGE_TOKEN, type Application } from "@mahiframework/core";
+import { createReadStream } from "node:fs";
+import { STORAGE_TOKEN, Str, type Application } from "@mahiframework/core";
 import type { StorageDriver, StorageManager } from "@mahiframework/storage";
-import type { ResolvedMediaConfig } from "./media-config.js";
+import { MediaTooLargeError, UnacceptableMediaTypeError } from "./errors.js";
+import { resolveAccept, type ResolvedAccept, type ResolvedMediaConfig } from "./media-config.js";
+import { resolveSource, type MediaSource, type ResolvedSource } from "./media-source.js";
+import { mediaModels } from "./models/registry.js";
+import type { MediaFile } from "./models/media-file.model.js";
+import { checksum } from "./support/checksum.js";
+import { DEFAULT_MIME_TYPE, extensionForMimeType, mimeTypeForExtension } from "./support/mime.js";
+import { PathGenerator, sanitiseFilename } from "./support/path-generator.js";
+import { looksExecutable, resolveMimeType } from "./support/sniff.js";
+
+/** Everything `add()` can be told about one file. */
+export interface AddMediaOptions {
+  /** The owning record, as a morph alias and key. */
+  owner?: { type: string; id: string | number | bigint };
+  collection?: string | null;
+  /** The disk to write to. Null or omitted means the configured default. */
+  disk?: string | null;
+  /** A path prefix under the disk root, overriding config. */
+  path?: string | null;
+  /** Override the stored download name. Sanitised either way. */
+  filename?: string;
+  /** Position within a collection. */
+  order?: number;
+  customProperties?: Record<string, unknown> | null;
+  /** Narrows what is allowed, on top of the app-wide config floor. */
+  accept?: ResolvedAccept;
+  /** Pixel dimensions, when the caller already decoded the image. */
+  dimensions?: { width: number; height: number } | null;
+}
 
 /**
  * The service behind `MEDIA_TOKEN`: everything that needs config or a
  * disk and is not a property of a single row.
- *
- * Uploads, deletes and the attach helpers land here in later phases. For
- * now it owns the two things every one of them needs — the resolved
- * config, and disk resolution — which is also what keeps
- * `MediaFile.url()` and friends from each having to resolve storage
- * themselves.
  *
  * Takes `app` rather than a `StorageManager` so storage is resolved
  * lazily, per call. `MediaServiceProvider` may legally be registered
@@ -20,10 +43,99 @@ import type { ResolvedMediaConfig } from "./media-config.js";
  * instead of a clear error at first use.
  */
 export class MediaManager {
+  private readonly paths: PathGenerator;
+
   constructor(
     private readonly app: Application,
     readonly config: ResolvedMediaConfig,
-  ) {}
+  ) {
+    this.paths = new PathGenerator(config.pathNesting);
+  }
+
+  /**
+   * Store a file and record it.
+   *
+   * THE ORDER HERE IS THE CONTRACT. Validate, then write the file, then
+   * insert the row — so a rejected upload touches neither, and a failed
+   * write leaves no row pointing at a file that is not there. The
+   * reverse (row first) would make every reader handle a row whose file
+   * never arrived, which is a state nothing can repair.
+   *
+   * The opposite failure, a file with no row, is possible: the write
+   * succeeds and the insert fails. That one is recoverable — the bytes
+   * are orphaned, `media:prune --files` reclaims them — and it is the
+   * right way round to be broken.
+   *
+   * Every type decision comes from the file's own bytes. See
+   * `support/sniff.ts` for why the client's `Content-Type` is not
+   * evidence.
+   */
+  async add(source: MediaSource, options: AddMediaOptions = {}): Promise<MediaFile> {
+    const resolved = await resolveSource(source);
+
+    try {
+      const accept = options.accept ?? this.config.accept;
+      const { mimeType, extension } = this.identify(resolved, options.filename);
+
+      this.assertAcceptable(resolved, mimeType, extension, accept);
+
+      const disk = this.diskName(options.disk);
+      const prefix = options.path ?? this.config.path;
+      const path = this.paths.generate(extension, prefix);
+
+      await this.write(this.disk(disk), path, resolved);
+
+      const algorithm = this.config.hashAlgorithm;
+
+      return await mediaModels.media.create({
+        model_type: options.owner?.type ?? null,
+        model_id: options.owner === undefined ? null : String(options.owner.id),
+        collection: options.collection ?? null,
+        disk,
+        path,
+        original_filename: sanitiseFilename(
+          options.filename ?? resolved.filename ?? `file${extension === "" ? "" : `.${extension}`}`,
+        ),
+        size: resolved.size,
+        mime_type: mimeType,
+        extension,
+        checksum_hash: await this.hash(resolved, algorithm),
+        checksum_algo: algorithm,
+        image_width: options.dimensions?.width ?? null,
+        image_height: options.dimensions?.height ?? null,
+        order: options.order ?? 0,
+        custom_properties: options.customProperties ?? null,
+      });
+    } finally {
+      // A drained stream left a scratch file behind. Released whether or
+      // not the upload succeeded, so a rejected 2GB video does not sit
+      // in the temp directory until the process exits.
+      await resolved.release();
+    }
+  }
+
+  /**
+   * Delete a row and its file.
+   *
+   * The file is removed by the model's `deleting` hook rather than here,
+   * so deleting through `MediaFile.deleteInstance()`, a relation, or a
+   * cascade all clean up too — not only the calls that come through this
+   * method.
+   */
+  async delete(media: MediaFile): Promise<void> {
+    await media.deleteInstance();
+  }
+
+  /** Remove a stored file, tolerating one that is already gone. */
+  async deleteFile(disk: string | null, path: string): Promise<void> {
+    try {
+      await this.disk(disk).delete(path);
+    } catch {
+      // A missing file is the desired end state. Storage's `delete()`
+      // already uses `force`, so this guards against a vanished mount or
+      // a permission change, neither of which should fail a row delete.
+    }
+  }
 
   /**
    * The driver for `disk`, or for the configured media disk when
@@ -65,7 +177,115 @@ export class MediaManager {
     return typeof config?.url === "string" && config.url !== "";
   }
 
+  /**
+   * Decide what a file is, from its bytes first and its name second.
+   *
+   * The extension follows from the resolved MIME type rather than from
+   * the upload's own name, so a PNG called `report.pdf` is stored as
+   * `.png`. Only when the type is unknown does the supplied name's
+   * extension stand in — which is the text-format case (CSV, SVG,
+   * Markdown), none of which has a magic number.
+   */
+  private identify(
+    resolved: ResolvedSource,
+    override: string | undefined,
+  ): { mimeType: string; extension: string } {
+    const name = override ?? resolved.filename ?? "";
+    const named = name.includes(".") ? (name.split(".").pop() ?? "") : "";
+    const mimeType = resolveMimeType(resolved.head, mimeTypeForExtension(named));
+
+    if (mimeType === DEFAULT_MIME_TYPE) {
+      // Nothing recognised the bytes and the name said nothing either.
+      // An empty extension is honest, and the column allows it.
+      return { mimeType, extension: named.toLowerCase() };
+    }
+
+    return { mimeType, extension: extensionForMimeType(mimeType) ?? named.toLowerCase() };
+  }
+
+  /**
+   * Reject anything the collection does not accept, before writing.
+   *
+   * Checked in cost order: size first (one comparison), then the
+   * executable sniff, then the type lists.
+   */
+  private assertAcceptable(
+    resolved: ResolvedSource,
+    mimeType: string,
+    extension: string,
+    accept: ResolvedAccept,
+  ): void {
+    if (accept.maxBytes !== null && resolved.size > accept.maxBytes) {
+      throw new MediaTooLargeError(resolved.size, accept.maxBytes);
+    }
+
+    // Refused unconditionally, not merely when the type lists exclude
+    // it. A file whose bytes begin `<?php` sniffs as nothing, so a
+    // MIME-only check would admit it on its extension's word — and on a
+    // public disk served by anything that executes PHP, that is remote
+    // code execution. An app that genuinely wants to store scripts
+    // stores them as text through its own path, not through an upload
+    // endpoint.
+    if (looksExecutable(resolved.head)) {
+      throw new UnacceptableMediaTypeError(mimeType, extension);
+    }
+
+    if (accept.mimes.length === 0 && accept.extensions.length === 0) {
+      return;
+    }
+
+    // OR semantics, matching laravel-media: satisfying either list is
+    // enough. `Str.is` gives the globs, so `image/*` works — its
+    // `acceptTypes` is exact-match only, even though its own generator
+    // registry globs for the same kind of lookup.
+    const mimeOk = accept.mimes.length > 0 && Str.is(accept.mimes, mimeType.toLowerCase());
+    const extensionOk =
+      accept.extensions.length > 0 && accept.extensions.includes(extension.toLowerCase());
+
+    if (!mimeOk && !extensionOk) {
+      throw new UnacceptableMediaTypeError(mimeType, extension);
+    }
+  }
+
+  /** Write the resolved bytes, buffered or streamed. */
+  private async write(
+    driver: StorageDriver,
+    path: string,
+    resolved: ResolvedSource,
+  ): Promise<void> {
+    if (resolved.bytes !== undefined) {
+      await driver.put(path, Buffer.from(resolved.bytes));
+
+      return;
+    }
+
+    if (resolved.path === undefined) {
+      // `resolveSource()` guarantees one or the other.
+      throw new Error("The resolved source has neither bytes nor a path.");
+    }
+
+    await driver.putStream(path, createReadStream(resolved.path));
+  }
+
+  /** Hash the source, streaming when it was never buffered. */
+  private async hash(resolved: ResolvedSource, algorithm: string): Promise<string> {
+    if (resolved.bytes !== undefined) {
+      return checksum(resolved.bytes, algorithm);
+    }
+
+    if (resolved.path === undefined) {
+      throw new Error("The resolved source has neither bytes nor a path.");
+    }
+
+    const { checksumStream } = await import("./support/checksum.js");
+
+    return checksumStream(createReadStream(resolved.path), algorithm);
+  }
+
   private storage(): StorageManager {
     return this.app.make<StorageManager>(STORAGE_TOKEN);
   }
 }
+
+/** Re-exported so a collection can narrow the app-wide floor. */
+export { resolveAccept };
