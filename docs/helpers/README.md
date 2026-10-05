@@ -1543,11 +1543,30 @@ accepts the same three shapes as
 [`Storage`'s `putStream()`](../storage/), so a disk's `readStream()` and a
 `fetch` body both work unadapted.
 
-**Nothing cleans up on its own.** There is no finalizer, because a
-`FinalizationRegistry` callback is not guaranteed to run at all, and
-"deletes your file, eventually, maybe" is a worse contract than "deletes
-it when the scope ends". A bare constructor hands you a `delete()`
-obligation:
+### Nothing leaks
+
+Cleanup is layered, so forgetting the scoped form is untidy rather than a
+disk-filling bug:
+
+| | Deleted |
+|---|---|
+| `withTemporaryFile(fn)` | at scope end, including on a throw |
+| `await using file = ...` | at scope end, including on a throw |
+| bare `TempFile.create()` | at process exit |
+| after a `SIGKILL` or power cut | by the next process that creates a temp file |
+
+The first two are what you should reach for. The third is covered by an
+`exit` handler, which Node runs on a normal end, an explicit
+`process.exit()` and an uncaught throw. No in-process handler can survive
+`SIGKILL`, a power cut or a container OOM-kill, so every filename carries
+the owning pid and `sweepOrphans()` reclaims files whose process is
+gone — it runs once per process on first use. A long-lived app therefore
+cleans up after whatever died before it, and the worst case is "a file
+survives until the next run".
+
+Deliberately **not** a `FinalizationRegistry`: its callbacks are not
+guaranteed to run at all, so "deletes your file, eventually, maybe" would
+be a worse contract than any of the above.
 
 ```ts
 const file = await TempFile.create("png");
@@ -1555,13 +1574,27 @@ const file = await TempFile.create("png");
 try {
   // ...
 } finally {
-  await file.delete();
+  await file.delete();   // polite; the exit sweeper is the backstop
 }
 ```
 
 `delete()` is idempotent and tolerates a file already removed out of
 band, so deleting in both a `finally` and a success path is safe. The
 extension may be given with or without the leading dot.
+
+Two escape hatches:
+
+```ts
+TempFile.liveCount();      // files this process still holds — a climbing
+                           // count in a worker means something is unscoped
+TempFile.sweep();          // delete them all now, synchronously
+
+const path = await file.keep();   // opt out of every sweeper
+```
+
+`keep()` is for the deliberate case: a crash dump or a failed-import
+artifact that exists precisely to outlive the run. The file becomes yours
+to remove.
 
 ## `@mahiframework/pipeline`
 
@@ -1938,8 +1971,10 @@ built from user input.
 **Path helpers resolve against `process.cwd()`.** Start the app from its
 own root.
 
-**A `TempFile` does not delete itself.** Use `withTemporaryFile()` or
-`await using`; a bare constructor leaks the file until the OS reclaims it.
+**Scope your temp files anyway.** `withTemporaryFile()` and `await using`
+delete immediately; the exit and orphan sweepers are backstops, not a
+substitute, and an unscoped file in a long-running worker occupies disk
+for the life of the process.
 
 ## Related
 

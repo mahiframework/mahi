@@ -110,4 +110,4 @@ export {
   resolvedBasePath,
 } from "./paths.js";
 
-export { TempFile, withTemporaryFile } from "./temp-file.js";
+export { TempFile, withTemporaryFile, sweepOrphans } from "./temp-file.js";
