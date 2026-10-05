@@ -70,6 +70,62 @@ export class MediaChecksumMismatchError extends MediaError {
 }
 
 /**
+ * A modifier needed an image driver and none is configured.
+ *
+ * `@mahiframework/media` ships no image library on purpose, so this is
+ * the expected state for an app that stores documents and then adds its
+ * first thumbnail. The message therefore has to name the fix, not just
+ * the problem.
+ */
+export class NoImageDriverError extends MediaError {
+  constructor() {
+    super(
+      `No image driver is configured, so image modifiers cannot run. Install one ` +
+        `(e.g. \`npm install @mahiframework/media-sharp\`), register its service provider, ` +
+        `and set \`image: { default: "sharp" }\` in config/media.ts.`,
+    );
+  }
+}
+
+/**
+ * The configured driver cannot perform an operation a modifier asked for.
+ *
+ * Thrown rather than skipped. laravel-media's pipeline silently drops
+ * modifiers it does not recognise, which yields an unmodified image and
+ * no indication why — a failure you find out about from a user's
+ * screenshot.
+ */
+export class UnsupportedImageOpError extends MediaError {
+  constructor(
+    readonly driver: string,
+    readonly op: string,
+  ) {
+    super(
+      `The "${driver}" image driver does not support the "${op}" operation. ` +
+        `Use a driver that does, or drop the modifier that needs it.`,
+    );
+  }
+}
+
+/**
+ * The bytes could not be decoded as an image.
+ *
+ * Distinct from `UnacceptableMediaTypeError`, which is about a file the
+ * collection refuses. This is a file that passed the accept rules,
+ * sniffed as an image, and still would not decode — a truncated upload,
+ * or a format the driver was built without.
+ */
+export class UndecodableImageError extends MediaError {
+  constructor(
+    readonly mimeType: string,
+    options?: { cause?: unknown },
+  ) {
+    super(`The image could not be decoded as ${mimeType}. It may be truncated or corrupt.`);
+    this.cause = options?.cause;
+  }
+}
+
+/**
  * The source file could not be read.
  *
  * Covers a path that does not exist, a stream that failed mid-read, and a

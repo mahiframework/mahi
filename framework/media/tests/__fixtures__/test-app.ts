@@ -22,7 +22,9 @@ import { FakeStorageDriver, StorageManager } from "@mahiframework/storage";
 import { SnowflakeServiceProvider } from "@mahiframework/snowflake";
 import { MediaServiceProvider } from "../../src/media-service-provider.js";
 import { MediaManager } from "../../src/media-manager.js";
-import { MEDIA_TOKEN } from "../../src/tokens.js";
+import { FakeImageDriver } from "../../src/image/fake-image-driver.js";
+import { ImageManager } from "../../src/image/image-manager.js";
+import { IMAGE_TOKEN, MEDIA_TOKEN } from "../../src/tokens.js";
 import type { MediaConfig } from "../../src/media-config.js";
 import createMediaTable from "../../src/migrations/0001_create_media_table.js";
 
@@ -77,6 +79,9 @@ export interface Harness {
   provider: MediaServiceProvider;
   events: EventDispatcher;
   storage: StorageManager;
+  images: ImageManager;
+  /** Registered under `"fake"`; only resolved when a test configures it. */
+  imageDriver: FakeImageDriver;
   /** The private disk, which is the default. */
   disk: FakeStorageDriver;
   /** A disk with a `url` prefix configured, i.e. a "public" disk. */
@@ -155,6 +160,14 @@ export async function createHarness(config: MediaConfig = {}): Promise<Harness> 
   const provider = new MediaServiceProvider(app);
   provider.register();
 
+  // Registered but not configured by default: an app that stores only
+  // documents needs no image driver, and the tests for that path depend
+  // on `media.image.default` being unset. A test that wants modifiers
+  // passes `{ image: { default: "fake" } }`.
+  const images = app.make<ImageManager>(IMAGE_TOKEN);
+  const imageDriver = new FakeImageDriver();
+  images.extend("fake", () => imageDriver);
+
   await createMediaTable.up();
 
   // The app-owned tables. Hand-stubbed because `users` is the app's, not
@@ -176,6 +189,8 @@ export async function createHarness(config: MediaConfig = {}): Promise<Harness> 
     provider,
     events,
     storage,
+    images,
+    imageDriver,
     disk,
     publicDisk,
     cleanup: async () => {

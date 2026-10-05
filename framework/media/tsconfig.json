@@ -11,6 +11,9 @@
       "path": "../core"
     },
     {
+      "path": "../core"
+    },
+    {
       "path": "../database"
     },
     {
@@ -21,6 +24,9 @@
     },
     {
       "path": "../facades"
+    },
+    {
+      "path": "../pipeline"
     },
     {
       "path": "../snowflake"

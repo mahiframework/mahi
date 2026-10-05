@@ -22,6 +22,7 @@
     "@mahiframework/datetime": "workspace:*",
     "@mahiframework/events": "workspace:*",
     "@mahiframework/facades": "workspace:*",
+    "@mahiframework/pipeline": "workspace:*",
     "@mahiframework/snowflake": "workspace:*",
     "@mahiframework/storage": "workspace:*"
   },

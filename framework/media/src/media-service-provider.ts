@@ -4,10 +4,11 @@ import { MediaManager } from "./media-manager.js";
 import { resolveConfig, type MediaConfig } from "./media-config.js";
 import { MediaFile } from "./models/media-file.model.js";
 import createMediaTable from "./migrations/0001_create_media_table.js";
+import { ImageManager } from "./image/image-manager.js";
 import { isSupportedAlgorithm } from "./support/checksum.js";
-import { MEDIA_TOKEN } from "./tokens.js";
+import { IMAGE_TOKEN, MEDIA_TOKEN } from "./tokens.js";
 
-export { MEDIA_TOKEN };
+export { IMAGE_TOKEN, MEDIA_TOKEN };
 
 /**
  * Registers the `MediaManager` singleton, the `media` table's migration,
@@ -66,6 +67,17 @@ export class MediaServiceProvider extends ServiceProvider {
       }
 
       return new MediaManager(app, resolved);
+    });
+
+    // Bound even when no driver is configured, because this is the
+    // object a driver package's provider calls `extend()` on — and that
+    // provider may be registered before or after this one. Resolving a
+    // DRIVER from it is what fails when none exists; having the manager
+    // is not an error.
+    this.app.singleton(IMAGE_TOKEN, (app) => {
+      const config = app.config.get<MediaConfig>("media") ?? {};
+
+      return new ImageManager(app, config.image?.default ?? null);
     });
   }
 

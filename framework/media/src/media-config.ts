@@ -57,8 +57,22 @@ export interface MediaConfig {
 
   accept?: MediaAcceptConfig;
 
+  image?: MediaImageConfig;
+
   /** Database connection for the `media` table. Defaults to the app's. */
   connection?: string;
+}
+
+export interface MediaImageConfig {
+  /**
+   * The image driver modifiers run through, e.g. `"sharp"`.
+   *
+   * No default, and no driver ships with this package. An app that only
+   * stores documents should pay for no image library, so the honest
+   * answer when this is unset is "modifiers cannot run" — raised as
+   * `NoImageDriverError`, whose message names the install step.
+   */
+  default?: string;
 }
 
 export interface MediaHashingConfig {
@@ -115,6 +129,8 @@ export interface ResolvedMediaConfig {
   verifyHashes: boolean;
   /** The app-wide floor every collection's own `accept()` narrows. */
   accept: ResolvedAccept;
+  /** The image driver's name, or null when none is configured. */
+  imageDriver: string | null;
   connection: string | undefined;
 }
 
@@ -140,6 +156,7 @@ export function resolveConfig(config: MediaConfig = {}): ResolvedMediaConfig {
     hashAlgorithm: hashing.algorithm ?? DEFAULT_HASH_ALGORITHM,
     verifyHashes: hashing.verify ?? false,
     accept: resolveAccept(config.accept),
+    imageDriver: config.image?.default ?? null,
     connection: config.connection,
   };
 }

@@ -647,6 +647,9 @@ importers:
       '@mahiframework/facades':
         specifier: workspace:*
         version: link:../facades
+      '@mahiframework/pipeline':
+        specifier: workspace:*
+        version: link:../pipeline
       '@mahiframework/snowflake':
         specifier: workspace:*
         version: link:../snowflake

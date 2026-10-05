@@ -1,15 +1,42 @@
 import { createReadStream } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { STORAGE_TOKEN, Str, type Application } from "@mahiframework/core";
 import type { StorageDriver, StorageManager } from "@mahiframework/storage";
 import { MediaTooLargeError, UnacceptableMediaTypeError } from "./errors.js";
+import type { ImageManager } from "./image/image-manager.js";
 import { resolveAccept, type ResolvedAccept, type ResolvedMediaConfig } from "./media-config.js";
 import { resolveSource, type MediaSource, type ResolvedSource } from "./media-source.js";
 import { mediaModels } from "./models/registry.js";
 import type { MediaFile } from "./models/media-file.model.js";
-import { checksum } from "./support/checksum.js";
-import { DEFAULT_MIME_TYPE, extensionForMimeType, mimeTypeForExtension } from "./support/mime.js";
+import type { MediaModifier } from "./pipeline/modifier.js";
+import { runModifiers } from "./pipeline/run-modifiers.js";
+import { checksum, checksumStream } from "./support/checksum.js";
+import {
+  DEFAULT_MIME_TYPE,
+  extensionForMimeType,
+  isRasterImage,
+  mimeTypeForExtension,
+} from "./support/mime.js";
 import { PathGenerator, sanitiseFilename } from "./support/path-generator.js";
 import { looksExecutable, resolveMimeType } from "./support/sniff.js";
+import { IMAGE_TOKEN } from "./tokens.js";
+
+/**
+ * Bytes ready to be written, after any modifiers.
+ *
+ * Exactly one of `bytes`/`path` is set, the same contract
+ * `ResolvedSource` has — a transformed image is always buffered, an
+ * untransformed stream stays on disk.
+ */
+interface StorablePayload {
+  bytes: Uint8Array | undefined;
+  path: string | undefined;
+  size: number;
+  mimeType: string;
+  extension: string;
+  width: number | null;
+  height: number | null;
+}
 
 /** Everything `add()` can be told about one file. */
 export interface AddMediaOptions {
@@ -27,8 +54,15 @@ export interface AddMediaOptions {
   customProperties?: Record<string, unknown> | null;
   /** Narrows what is allowed, on top of the app-wide config floor. */
   accept?: ResolvedAccept;
-  /** Pixel dimensions, when the caller already decoded the image. */
-  dimensions?: { width: number; height: number } | null;
+  /**
+   * Transformations applied to the image before it is stored.
+   *
+   * Ignored for anything that is not a raster image — the package is
+   * multipurpose, and a PDF must never reach an image driver. Resolving
+   * a driver at all is deferred until there is an image to transform,
+   * so an app that stores only documents never needs one installed.
+   */
+  modifiers?: readonly MediaModifier[];
 }
 
 /**
@@ -75,15 +109,23 @@ export class MediaManager {
 
     try {
       const accept = options.accept ?? this.config.accept;
-      const { mimeType, extension } = this.identify(resolved, options.filename);
+      const identified = this.identify(resolved, options.filename);
 
-      this.assertAcceptable(resolved, mimeType, extension, accept);
+      this.assertAcceptable(resolved, identified.mimeType, identified.extension, accept);
+
+      // Modifiers run BEFORE the path is generated and before anything
+      // is written, so the stored file's extension, size, mime type,
+      // dimensions and checksum all describe the bytes that actually
+      // land on the disk. laravel-media transforms AFTER writing and
+      // then overwrites the original at its old path, which leaves a
+      // `.png` file whose row claims `webp`.
+      const transformed = await this.transform(resolved, identified, options.modifiers ?? []);
 
       const disk = this.diskName(options.disk);
       const prefix = options.path ?? this.config.path;
-      const path = this.paths.generate(extension, prefix);
+      const path = this.paths.generate(transformed.extension, prefix);
 
-      await this.write(this.disk(disk), path, resolved);
+      await this.write(this.disk(disk), path, transformed);
 
       const algorithm = this.config.hashAlgorithm;
 
@@ -94,15 +136,17 @@ export class MediaManager {
         disk,
         path,
         original_filename: sanitiseFilename(
-          options.filename ?? resolved.filename ?? `file${extension === "" ? "" : `.${extension}`}`,
+          options.filename ??
+            resolved.filename ??
+            `file${transformed.extension === "" ? "" : `.${transformed.extension}`}`,
         ),
-        size: resolved.size,
-        mime_type: mimeType,
-        extension,
-        checksum_hash: await this.hash(resolved, algorithm),
+        size: transformed.size,
+        mime_type: transformed.mimeType,
+        extension: transformed.extension,
+        checksum_hash: await this.hash(transformed, algorithm),
         checksum_algo: algorithm,
-        image_width: options.dimensions?.width ?? null,
-        image_height: options.dimensions?.height ?? null,
+        image_width: transformed.width,
+        image_height: transformed.height,
         order: options.order ?? 0,
         custom_properties: options.customProperties ?? null,
       });
@@ -247,39 +291,97 @@ export class MediaManager {
     }
   }
 
-  /** Write the resolved bytes, buffered or streamed. */
+  /**
+   * Run the modifier chain, if there is one and the file is an image.
+   *
+   * Three conditions, each load-bearing. No modifiers means no work. A
+   * non-image means no work EITHER — this package stores documents and
+   * video, and handing a PDF to an image decoder would fail an upload
+   * that should simply have been stored. And only then is an image
+   * driver resolved, so an app that never transforms an image never
+   * needs one installed.
+   *
+   * A transformed image is always buffered. It has just been through a
+   * decoder, which held the whole raster in memory anyway, so streaming
+   * the encoded result would save nothing.
+   */
+  private async transform(
+    resolved: ResolvedSource,
+    identified: { mimeType: string; extension: string },
+    modifiers: readonly MediaModifier[],
+  ): Promise<StorablePayload> {
+    if (modifiers.length === 0 || !isRasterImage(identified.mimeType)) {
+      return {
+        bytes: resolved.bytes,
+        path: resolved.path,
+        size: resolved.size,
+        mimeType: identified.mimeType,
+        extension: identified.extension,
+        width: null,
+        height: null,
+      };
+    }
+
+    const images = this.app.make<ImageManager>(IMAGE_TOKEN);
+    const driverName = images.getDefaultDriver();
+    const bytes = resolved.bytes ?? (await readFile(this.requirePath(resolved)));
+
+    const result = await runModifiers(
+      images.driver(driverName),
+      driverName,
+      bytes,
+      identified.mimeType,
+      modifiers,
+    );
+
+    return {
+      bytes: result.bytes,
+      path: undefined,
+      size: result.bytes.byteLength,
+      mimeType: result.mimeType,
+      extension: result.extension,
+      width: result.width,
+      height: result.height,
+    };
+  }
+
+  /** Write the payload, buffered or streamed. */
   private async write(
     driver: StorageDriver,
     path: string,
-    resolved: ResolvedSource,
+    payload: StorablePayload,
   ): Promise<void> {
-    if (resolved.bytes !== undefined) {
-      await driver.put(path, Buffer.from(resolved.bytes));
+    if (payload.bytes !== undefined) {
+      await driver.put(path, Buffer.from(payload.bytes));
 
       return;
     }
 
-    if (resolved.path === undefined) {
-      // `resolveSource()` guarantees one or the other.
-      throw new Error("The resolved source has neither bytes nor a path.");
-    }
-
-    await driver.putStream(path, createReadStream(resolved.path));
+    await driver.putStream(path, createReadStream(this.requirePath(payload)));
   }
 
-  /** Hash the source, streaming when it was never buffered. */
-  private async hash(resolved: ResolvedSource, algorithm: string): Promise<string> {
-    if (resolved.bytes !== undefined) {
-      return checksum(resolved.bytes, algorithm);
+  /** Hash the payload, streaming when it was never buffered. */
+  private async hash(payload: StorablePayload, algorithm: string): Promise<string> {
+    if (payload.bytes !== undefined) {
+      return checksum(payload.bytes, algorithm);
     }
 
-    if (resolved.path === undefined) {
-      throw new Error("The resolved source has neither bytes nor a path.");
+    return checksumStream(createReadStream(this.requirePath(payload)), algorithm);
+  }
+
+  /**
+   * The local path of a payload that was not buffered.
+   *
+   * `resolveSource()` guarantees exactly one of `bytes`/`path`, so this
+   * is unreachable — but asserting it beats a `!` that would turn the
+   * impossible into an `undefined` passed to `createReadStream`.
+   */
+  private requirePath(payload: { bytes?: Uint8Array; path?: string }): string {
+    if (payload.path === undefined) {
+      throw new Error("The resolved media source has neither bytes nor a local path.");
     }
 
-    const { checksumStream } = await import("./support/checksum.js");
-
-    return checksumStream(createReadStream(resolved.path), algorithm);
+    return payload.path;
   }
 
   private storage(): StorageManager {

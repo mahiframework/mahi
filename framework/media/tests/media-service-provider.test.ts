@@ -31,6 +31,7 @@ describe("MediaServiceProvider", () => {
       hashAlgorithm: "sha256",
       verifyHashes: false,
       accept: { mimes: [], extensions: [], maxBytes: null },
+      imageDriver: null,
       connection: undefined,
     });
   });
