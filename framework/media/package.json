@@ -17,6 +17,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@mahiframework/cli": "workspace:*",
     "@mahiframework/core": "workspace:*",
     "@mahiframework/database": "workspace:*",
     "@mahiframework/datetime": "workspace:*",
@@ -24,7 +25,8 @@
     "@mahiframework/facades": "workspace:*",
     "@mahiframework/pipeline": "workspace:*",
     "@mahiframework/snowflake": "workspace:*",
-    "@mahiframework/storage": "workspace:*"
+    "@mahiframework/storage": "workspace:*",
+    "commander": "^12.1.0"
   },
   "devDependencies": {
     "typescript": "^5.7.2",

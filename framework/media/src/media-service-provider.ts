@@ -4,6 +4,8 @@ import { MediaManager } from "./media-manager.js";
 import { resolveConfig, type MediaConfig } from "./media-config.js";
 import { MediaFile } from "./models/media-file.model.js";
 import createMediaTable from "./migrations/0001_create_media_table.js";
+import { MediaCheckCommand } from "./commands/media-check.js";
+import { MediaPruneCommand } from "./commands/media-prune.js";
 import { ImageManager } from "./image/image-manager.js";
 import { isSupportedAlgorithm } from "./support/checksum.js";
 import { IMAGE_TOKEN, MEDIA_TOKEN } from "./tokens.js";
@@ -103,5 +105,9 @@ export class MediaServiceProvider extends ServiceProvider {
    */
   models(): AnyModelClass[] {
     return [MediaFile as unknown as AnyModelClass];
+  }
+
+  commands() {
+    return [MediaPruneCommand, MediaCheckCommand];
   }
 }

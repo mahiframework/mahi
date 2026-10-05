@@ -67,13 +67,11 @@ describe("MediaServiceProvider", () => {
     expect(harness.provider.models()).toEqual([MediaFile]);
   });
 
-  it("registers no listeners and no commands", () => {
-    // Asserted rather than assumed: the package has nothing to listen to
-    // (it is the thing being observed, dispatching its own events through
-    // `dispatchesEvents`), and a hook appearing here by accident is a
-    // surface this package said it would not have.
+  it("registers no listeners", () => {
+    // Asserted rather than assumed: the package has nothing to listen
+    // to. It is the thing being observed, dispatching its own events
+    // through the model's `dispatchesEvents`.
     expect(harness.provider.listeners).toBeUndefined();
-    expect(harness.provider.commands).toBeUndefined();
   });
 
   it("cannot contribute routes or middleware at all", () => {

@@ -92,6 +92,16 @@ export { looksExecutable, resolveMimeType, sniffMimeType } from "./support/sniff
 export { checksum, checksumStream, isSupportedAlgorithm } from "./support/checksum.js";
 export { PathGenerator, sanitiseFilename } from "./support/path-generator.js";
 
+// A streaming, zero-dependency zip writer. Returns a stream rather than
+// a response, because this package does not depend on `http` and the app
+// owns the authorization and caching decisions anyway.
+export { MediaZip, EmptyArchiveError } from "./zip/media-zip.js";
+export { zipStream, uniqueName } from "./zip/zip-stream.js";
+export type { ZipEntry } from "./zip/zip-stream.js";
+
+export { MediaPruneCommand } from "./commands/media-prune.js";
+export { MediaCheckCommand } from "./commands/media-check.js";
+
 export {
   MediaError,
   MediaChecksumMismatchError,
