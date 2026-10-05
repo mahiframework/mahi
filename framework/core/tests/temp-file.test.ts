@@ -325,6 +325,32 @@ describe("cleanup is unconditional", () => {
 
     await file.delete();
   });
+
+  it("never touches anything outside its own directory", async () => {
+    // The blast radius of a process-wide sweeper. Several packages'
+    // suites make their own `mkdtemp` directories directly in
+    // `os.tmpdir()`, and a sweeper that walked the whole tmpdir — or
+    // matched on a loose prefix — would delete a sibling suite's
+    // fixtures mid-run. Everything here lives under one directory, and
+    // orphan detection additionally requires a dead pid in the filename.
+    const { mkdtemp, writeFile } = await import("node:fs/promises");
+    const foreign = await mkdtemp(join(tmpdir(), "mahi-cache-test-"));
+    const fixture = join(foreign, "important.cache");
+
+    await writeFile(fixture, "belongs to another suite");
+
+    try {
+      const file = await TempFile.create();
+
+      sweepOrphans();
+      TempFile.sweep();
+
+      expect(await exists(fixture)).toBe(true);
+      expect(await exists(file.path)).toBe(false);
+    } finally {
+      await rm(foreign, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("keep", () => {
