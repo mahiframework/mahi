@@ -91,7 +91,7 @@ Read it as: "a model over `PostAttributes`, configured like this".
 
 ### The type-lint
 
-Five mistakes are rejected at the class declaration rather than at the
+Seven mistakes are rejected at the class declaration rather than at the
 call site that trips over them:
 
 ```ts
@@ -110,6 +110,8 @@ class Bad extends Model<BadAttributes>()({ table: "bad" }) {}
 | A column may not use a reserved member name | `save`, `delete`, `fill`, `relations`, `toJSON`, …. The attribute would shadow the method. |
 | `keyType` must agree with the key's type | `"uuid"` and a `KeyStrategy` both assign strings, so `id: number` is a guaranteed mismatch on insert. |
 | The soft-delete column must be nullable | `restore()` writes `null` to it. |
+| A class static may not be written in the config | `dispatchesEvents`, `relationships`, `accessors`, …. See [statics are not config keys](#statics-are-not-config-keys). |
+| An unrecognised key is not a config key | A typo (`softDelete` for `softDeletes`) is otherwise absorbed and ignored. |
 
 Timestamp and soft-delete columns are exempt from the `DateTime` rule,
 the framework installs those casts implicitly from `timestamps` /
@@ -125,10 +127,67 @@ the config's own type (the field is `ColumnKeys<A>`), so you get a plain
 **At runtime**, a separate validator checks the config *object*,
 whether `casts` entries are really `Cast`s, whether `keyType` is one of
 the valid forms, whether the array options are arrays, whether
-`fillable` and `guarded: ["*"]` contradict each other. That is for
-plain-JS consumers and dynamically-assembled configs. It deliberately
-does **not** mirror the rules above: every one of them is a statement
-about the attributes *interface*, which does not exist at runtime.
+`fillable` and `guarded: ["*"]` contradict each other, and whether every
+key is one the factory actually reads. That is for plain-JS consumers and
+dynamically-assembled configs. Apart from the last, it deliberately does
+**not** mirror the rules above: each of those is a statement about the
+attributes *interface*, which does not exist at runtime. The unknown-key
+rule is the exception because it is the one question answerable from the
+config object alone.
+
+### Statics are not config keys
+
+Some of what a model declares goes in the config object and some goes in
+the class body. Putting a class-body declaration in the config is the one
+mistake TypeScript's usual excess-property check does **not** catch:
+
+```ts
+class Post extends Model<PostAttributes>()({
+  table: "posts",
+  dispatchesEvents: { created: PostCreated },   // ← wrong place
+}) {}
+```
+
+Excess-property checking fires on a parameter with a concrete type. It
+does not fire when the parameter's type is the generic the literal is
+being inferred into, and `defineModel<const C extends ModelConfig<A>>` is
+exactly that — the `const C` is what preserves `primaryKey: "id"` as a
+literal, so it cannot be given up. The key is absorbed into `C`, and the
+factory, which reads only the keys it knows, discards it. Nothing about
+the shape of the config object is wrong, so there is nothing for the
+compiler's usual check to catch, and nothing for the runtime to trip
+over: the declaration just has no effect.
+
+Which is why it gets a lint rule of its own. Without one the only symptom
+is silence — no event dispatched — and "my listeners never run" points at
+the event dispatcher rather than at the declaration:
+
+```
+error TS2345: ... ModelTypeError<"is a static on the class, not a config
+  key — declare it in the class body with `static override`:
+  dispatchesEvents">
+```
+
+The fix is always to move it to the class body:
+
+```ts
+class Post extends Model<PostAttributes>()({ table: "posts" }) {
+  static override dispatchesEvents: DispatchesEventsMap = { created: PostCreated };
+}
+```
+
+The eight names the rule knows about are `dispatchesEvents`,
+`dispatchesEventsAfterCommit`, `relationships`, `accessors`, `scopes`,
+`keyStrategy`, `createdAtColumn` and `updatedAtColumn`. The last three are
+the *resolved* forms of config keys that do exist (`keyType`,
+`timestamps.createdAt`, `timestamps.updatedAt`), so reading the statics
+and working backwards lands on the wrong name; the error names the right
+one. Anything else unrecognised is reported as a plain non-config key,
+since "declare it as a static" would be the wrong advice for a typo.
+
+`relationships` is the one worth singling out: declared in the config, the
+relations silently do not exist, and the failure surfaces much later at a
+`with()` call complaining about an undeclared relation.
 
 ## Configuration
 
@@ -1427,6 +1486,11 @@ export class Post extends Model<PostAttributes>()({ table: "posts" }) {
 }
 ```
 
+Note the `static override`: this is a class-body declaration, not a
+config key. Written inside the factory's config object it is rejected at
+the declaration, because it would otherwise be silently ignored — see
+[statics are not config keys](#statics-are-not-config-keys).
+
 Only fires when `EventsServiceProvider` has been registered, a model used
 in a script that never bootstrapped events support simply never
 dispatches, rather than throwing.
@@ -1551,6 +1615,16 @@ see [the type-lint](#the-type-lint).
 **`column collides with a reserved model member: x`**, a column named
 after an instance method (`save`, `delete`, `fill`, …). Rename the
 column, or map it to a different property.
+
+**`is a static on the class, not a config key: x`**, a class-body
+declaration (`dispatchesEvents`, `relationships`, …) written inside the
+config object, where it would be silently ignored. Move it into the class
+body as `static override x = …`; see
+[statics are not config keys](#statics-are-not-config-keys).
+
+**`is not a Model config key: x`** / **`` `x` is not a Model config
+option.``** (the runtime twin), a key the factory does not read, usually a
+typo. Check it against [the configuration table](#configuration).
 
 **`Post has no factory — override "static factory()" ...`**, calling
 `factory()` on a model that doesn't override it.

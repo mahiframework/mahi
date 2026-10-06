@@ -4097,6 +4097,64 @@ interface NoCasts {}
 type DeclaredCasts<C> = C extends { casts: infer Casts extends object } ? Casts : NoCasts;
 
 /**
+ * Statics a reader may reasonably mistake for config keys.
+ *
+ * Written in the config object, any of these typechecks cleanly (the
+ * literal is inferred into `const C`, so excess-property checking never
+ * fires, see the comment on `Model`) and is then discarded by the
+ * factory, which reads only the keys it knows. The symptom is silence:
+ * no event dispatched, no relation declared.
+ *
+ * The last three are the *resolved* forms of config keys that do exist
+ * (`keyType`, `timestamps.createdAt`, `timestamps.updatedAt`), so
+ * someone reading the statics and working backwards lands on exactly the
+ * wrong name.
+ *
+ * Listed explicitly rather than derived from `keyof typeof BaseModel`,
+ * which would also catch every method and produce a useless message. A
+ * value, not a type alias, because `validateModelConfig` needs the same
+ * list at runtime and one source beats two kept in sync. Exported for
+ * its own test (that each name is still a real static), not from the
+ * package index.
+ *
+ * @internal
+ */
+export const MISPLACED_STATICS = [
+  "dispatchesEvents",
+  "dispatchesEventsAfterCommit",
+  "relationships",
+  "accessors",
+  "scopes",
+  "keyStrategy",
+  "createdAtColumn",
+  "updatedAtColumn",
+] as const satisfies readonly (keyof typeof BaseModel)[];
+
+/**
+ * Derived from the list rather than written twice, so the rule below and
+ * the runtime check cannot disagree. The `satisfies` above is what keeps
+ * the list honest: renaming one of those statics breaks this line rather
+ * than leaving a rule naming a key nobody can write.
+ */
+type MisplacedStatics = (typeof MISPLACED_STATICS)[number];
+
+/**
+ * `T` must be `true`. A compile-time assertion: the alias fails to
+ * instantiate, naming the offending type, when it is not.
+ */
+type Assert<T extends true> = T;
+
+/**
+ * `true` when `Leftovers` is empty, otherwise the leftovers themselves —
+ * which fails `Assert` and, unlike a bare `false`, puts the offending
+ * names in the error message.
+ */
+type Exhaustive<Leftovers> = [Leftovers] extends [never] ? true : Leftovers;
+
+/** Keys present in the config literal that `ModelConfig` does not declare. */
+type UnexpectedKeys<A, C> = Exclude<keyof C, keyof ModelConfig<A>>;
+
+/**
  * `unknown` (intersects away to nothing) when `Offenders` is empty,
  * otherwise a `ModelTypeError` naming them. Lets each rule below read as
  * one line instead of another level of nested ternary.
@@ -4117,13 +4175,20 @@ type Rule<Offenders, Msg extends string> = [Offenders] extends [never]
  * 2. a `DateTime` column with no cast (the driver gives a string);
  * 3. a column colliding with a reserved instance member;
  * 4. `keyType` disagreeing with the primary key's declared type;
- * 5. a non-nullable soft-delete column (`restore()` writes `null`).
+ * 5. a non-nullable soft-delete column (`restore()` writes `null`);
+ * 6. a class static written in the config (`dispatchesEvents`, …);
+ * 7. any other key `ModelConfig` does not declare (a plain typo).
  *
  * Rules 1 and 2 skip `Extended<>` columns. Those are merged in by a
  * consuming application, so they are not visible to, and not fixable
  * at, the `Model<A>()(config)` call this lint is attached to, which
  * lives in the package that owns the model. Their casts belong on the
  * app's subclass instead. See `Extended<>` in `markers.ts`.
+ *
+ * Rules 6 and 7 need no such escape hatch: they are about the config
+ * literal, which is always in the same file as the class it declares.
+ * They are two rules rather than one so a known static gets the message
+ * that says what to do about it, while a typo still gets named.
  */
 type ModelLint<A, C extends ModelConfig<A>> = Rule<
   BooleanColumnsNeedingCast<A, DeclaredCasts<C>>,
@@ -4138,7 +4203,12 @@ type ModelLint<A, C extends ModelConfig<A>> = Rule<
     KeyTypeMismatch<A, C>,
     "the primary key column's type must match what keyType generates (string, or bigint for snowflake())"
   > &
-  Rule<SoftDeleteColumnNotNullable<A, C>, "the soft-delete column must be nullable">;
+  Rule<SoftDeleteColumnNotNullable<A, C>, "the soft-delete column must be nullable"> &
+  Rule<
+    Extract<UnexpectedKeys<A, C>, MisplacedStatics>,
+    "is a static on the class, not a config key — declare it in the class body with `static override`"
+  > &
+  Rule<Exclude<UnexpectedKeys<A, C>, MisplacedStatics>, "is not a Model config key">;
 
 /**
  * The static + constructor side the factory returns for attributes `A`
@@ -4422,6 +4492,60 @@ function buildModelClass(config: ModelConfig<A_ANY>): typeof BaseModel {
 type A_ANY = Record<string, any>;
 
 /**
+ * Every key `ModelConfig` declares, as a value, so the unknown-key check
+ * in `validateModelConfig` has something to test against at runtime.
+ *
+ * Duplicating the interface has a real cost: adding a config option means
+ * touching two places. Both directions are caught at build time rather
+ * than silently — the `satisfies` rejects a name here the interface does
+ * not have, and the `Exhaustive` alias below rejects an interface key
+ * missing from here (which would make the runtime check reject a valid
+ * config). The alternative is no runtime check at all for the one class
+ * of mistake that is otherwise entirely silent.
+ *
+ * Exported for its own test, not from the package index.
+ *
+ * @internal
+ */
+export const KNOWN_CONFIG_KEYS = [
+  "table",
+  "connection",
+  "primaryKey",
+  "keyType",
+  "timestamps",
+  "softDeletes",
+  "casts",
+  "fillable",
+  "guarded",
+  "hidden",
+  "visible",
+  "appends",
+  "morphName",
+  "deleteWhenMissingModels",
+  "strictRelations",
+] as const satisfies readonly (keyof ModelConfig<A_ANY>)[];
+
+/**
+ * The other direction of the check above: a `ModelConfig` key missing
+ * from `KNOWN_CONFIG_KEYS`. `Exclude` leaves the forgotten key, which
+ * then fails `Assert`'s `extends true` and names itself in the error.
+ *
+ * Exported only so it counts as used — a type-level assertion is never
+ * referenced by anything, which is the convention `_PathAsserts` in
+ * `@mahiframework/core`'s `data-path.ts` already uses. A `const` typed
+ * the same way would work too, but would emit a runtime value for a
+ * compile-time-only check in a `sideEffects: false` package.
+ *
+ * @internal
+ */
+export type _ConfigKeysAreExhaustive = Assert<
+  Exhaustive<Exclude<keyof ModelConfig<A_ANY>, (typeof KNOWN_CONFIG_KEYS)[number]>>
+>;
+
+const KNOWN_CONFIG_KEY_SET: ReadonlySet<string> = new Set(KNOWN_CONFIG_KEYS);
+const MISPLACED_STATIC_SET: ReadonlySet<string> = new Set<string>(MISPLACED_STATICS);
+
+/**
  * Runtime config validation, for consumers whose config never met the
  * type-checker: plain JS, a config assembled dynamically, or a `as any`.
  *
@@ -4437,6 +4561,13 @@ type A_ANY = Record<string, any>;
  * far from the cause, a bad `keyType` surfacing as a missing primary
  * key on the first insert, a `casts` entry that isn't a `Cast` throwing
  * `toModelType is not a function` inside hydration.
+ *
+ * The unknown-key check is the one place it does overlap the lint, and
+ * the only one it can: "is this key declared by `ModelConfig`" is a
+ * question about the config object alone. It matters most of the rules
+ * here because the failure is otherwise entirely silent — the factory
+ * reads the keys it knows and discards the rest, so a `dispatchesEvents`
+ * written in the config dispatches nothing and says nothing.
  */
 function validateModelConfig(config: ModelConfig<A_ANY>): void {
   const fail = (message: string): never => {
@@ -4449,6 +4580,23 @@ function validateModelConfig(config: ModelConfig<A_ANY>): void {
 
   if (!config.table || typeof config.table !== "string") {
     throw new Error("Model config: `table` is required and must be a string.");
+  }
+
+  // Unknown keys first: `dispatchesEvents: {...}` in the config is more
+  // likely the cause of whatever else looks wrong than any of the shape
+  // checks below, so it should be the error the author sees.
+  for (const key of Object.keys(config)) {
+    if (KNOWN_CONFIG_KEY_SET.has(key)) {
+      continue;
+    }
+
+    fail(
+      MISPLACED_STATIC_SET.has(key)
+        ? `\`${key}\` is a static on the model class, not a config key. ` +
+            `Declare it in the class body as \`static override ${key} = …\` — ` +
+            "written here it is silently ignored."
+        : `\`${key}\` is not a Model config option.`,
+    );
   }
 
   if (config.connection !== undefined && typeof config.connection !== "string") {

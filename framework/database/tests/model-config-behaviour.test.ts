@@ -3,7 +3,13 @@ import { Application, clearCurrentApp, setCurrentApp } from "@mahiframework/core
 import { SqliteDriver } from "../src/drivers/sqlite-driver.js";
 import { DatabaseManager } from "../src/database-manager.js";
 import { DATABASE_TOKEN } from "../src/database-service-provider.js";
-import { Model, RelationNotLoadedError } from "../src/model.js";
+import {
+  BaseModel,
+  KNOWN_CONFIG_KEYS,
+  MISPLACED_STATICS,
+  Model,
+  RelationNotLoadedError,
+} from "../src/model.js";
 import { Cast } from "../src/casts.js";
 import { hasMany } from "../src/relations.js";
 import type { HasMany } from "../src/markers.js";
@@ -324,5 +330,81 @@ describe("runtime config validation", () => {
 
   it("names the table in the message, so the failing model is obvious", () => {
     expect(build({ table: "widgets", keyType: "bogus" })).toThrow(/Model config for "widgets"/);
+  });
+
+  /*
+   * The unknown-key branch. Unlike every case above, this one is also
+   * silent at the *type* level without the matching `ModelLint` rules
+   * (see `types.test-d.ts`): the config literal is inferred into `const
+   * C`, so excess-property checking never fires, and the factory reads
+   * only the keys it knows. A `dispatchesEvents` written here therefore
+   * typechecked, validated, and dispatched nothing.
+   */
+  it("rejects a class static written into the config, and says what to do", () => {
+    expect(build({ table: "t", dispatchesEvents: {} })).toThrow(
+      /`dispatchesEvents` is a static on the model class, not a config key/,
+    );
+    expect(build({ table: "t", dispatchesEvents: {} })).toThrow(/static override dispatchesEvents/);
+
+    // The whole list, since each is a plausible config key for a
+    // different reason: a lifecycle hook, a declaration, or the resolved
+    // form of a config key that does exist.
+    for (const key of MISPLACED_STATICS) {
+      expect(build({ table: "t", [key]: {} })).toThrow(
+        new RegExp(`\`${key}\` is a static on the model class`),
+      );
+    }
+  });
+
+  it("rejects a key that is neither a config option nor a known static", () => {
+    expect(build({ table: "t", nonsense: 1 })).toThrow(/`nonsense` is not a Model config option/);
+    // A near-miss typo gets the same treatment — it is not a static, so
+    // the "declare it with static override" advice would be wrong.
+    expect(build({ table: "t", softDelete: true })).toThrow(
+      /`softDelete` is not a Model config option/,
+    );
+  });
+
+  it("accepts every key ModelConfig declares", () => {
+    // Guards the rejection above against being too broad: the list the
+    // validator checks against is hand-written, so a config option added
+    // to the interface and forgotten there would reject a valid model.
+    const everyKey = Object.fromEntries(KNOWN_CONFIG_KEYS.map((key) => [key, undefined]));
+    expect(build({ ...everyKey, table: "t" })).not.toThrow();
+  });
+
+  it("checks unknown keys before the shape of the known ones", () => {
+    // A misplaced static is likelier to be the cause of whatever else
+    // looks wrong than a malformed value, so it should be the error the
+    // author sees.
+    expect(build({ table: "t", relationships: {}, keyType: "bogus" })).toThrow(
+      /`relationships` is a static on the model class/,
+    );
+  });
+});
+
+/**
+ * The two key lists the validator checks against duplicate type-level
+ * knowledge (`ModelConfig` and `MisplacedStatics`). `tsc` catches a name
+ * in a list that the type does not have, and a type key missing from a
+ * list, but neither can see whether `MISPLACED_STATICS` still names
+ * something that is a real static on `BaseModel` at runtime.
+ */
+describe("config key lists", () => {
+  it("names only real statics in MISPLACED_STATICS", () => {
+    // The point of the list: each name is a static, which is exactly why
+    // writing it in the config looks plausible. If one is renamed or
+    // removed, its rule would name a key nobody can write.
+    for (const key of MISPLACED_STATICS) {
+      expect(BaseModel).toHaveProperty(key);
+    }
+  });
+
+  it("keeps the two lists disjoint", () => {
+    // An overlap would be a contradiction: a key cannot be both a valid
+    // config option and a misplaced static. The static's rule is
+    // unreachable in that case, since the known-key check runs first.
+    const known = new Set<string>(KNOWN_CONFIG_KEYS);
+    expect(MISPLACED_STATICS.filter((key) => known.has(key))).toEqual([]);
   });
 });

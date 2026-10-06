@@ -13,6 +13,9 @@
  *  - `Key<M>`/`find()` are keyed by the declared primary-key column type.
  *  - The type-lint fires: a boolean column without a cast, and a reserved
  *    key collision, are rejected AT the class declaration.
+ *  - A class static written into the config object, and a plain typo'd
+ *    config key, are rejected there too — neither is caught by excess
+ *    property checking, which does not fire on an inferred generic.
  *  - Soft-delete instance methods exist only when configured.
  *
  * Each `@ts-expect-error` fails the build if the line beneath it ever
@@ -529,6 +532,95 @@ class NonNullableSoftDeleteModel extends Model<{ id: string; deleted_at: DateTim
   softDeletes: true,
 }) {}
 void NonNullableSoftDeleteModel;
+
+/*
+ * A class static written in the config object. This is the case the
+ * compiler is otherwise silent about: excess-property checking does not
+ * fire on a parameter whose type is the generic the literal is inferred
+ * into (`const C extends ModelConfig<A>`), so the bogus key is absorbed
+ * into `C` and then discarded by the factory. No event ever dispatches.
+ */
+// @ts-expect-error `dispatchesEvents` is a static, not a config key
+class StaticInConfigModel extends Model<{ id: string }>()({
+  table: "static_in_config",
+  primaryKey: "id",
+  timestamps: false,
+  dispatchesEvents: {},
+}) {}
+void StaticInConfigModel;
+
+// `relationships` is the same mistake and the worst-consequence one: the
+// relations silently do not exist, and the failure surfaces later at the
+// `with()` call site rather than here.
+// @ts-expect-error `relationships` is a static, not a config key
+class RelationsInConfigModel extends Model<{ id: string; posts: HasMany<Post> }>()({
+  table: "rels_in_config",
+  primaryKey: "id",
+  timestamps: false,
+  relationships: { posts: hasMany(() => Post, { foreignKey: "user_id" }) },
+}) {}
+void RelationsInConfigModel;
+
+// `createdAtColumn` is the resolved form of `timestamps.createdAt`, so
+// reading the statics and working backwards lands on the wrong name.
+// @ts-expect-error `createdAtColumn` is a static; the config key is `timestamps.createdAt`
+class ResolvedNameModel extends Model<{ id: string }>()({
+  table: "resolved_name",
+  primaryKey: "id",
+  timestamps: false,
+  createdAtColumn: "made_at",
+}) {}
+void ResolvedNameModel;
+
+// A key that is not a static either — a plain typo — gets the other rule.
+// @ts-expect-error `softDelete` is not a config key (it is `softDeletes`)
+class TypoedKeyModel extends Model<{ id: string }>()({
+  table: "typoed",
+  primaryKey: "id",
+  timestamps: false,
+  softDelete: true,
+}) {}
+void TypoedKeyModel;
+
+// ...and a config naming every key `ModelConfig` declares is untouched by
+// either rule. This is the assertion that would catch a rule written too
+// aggressively, since `UnexpectedKeys` subtracts exactly `keyof
+// ModelConfig` and nothing else.
+interface EveryConfigKey {
+  id: string;
+  name: string;
+  secret: string;
+  active: boolean;
+  made_at: DateTime;
+  changed_at: DateTime;
+  archived_at: DateTime | null;
+  upper: Computed<string>;
+}
+class EveryConfigKeyModel extends Model<EveryConfigKey>()({
+  table: "every_key",
+  connection: "secondary",
+  primaryKey: "id",
+  keyType: "uuid",
+  timestamps: { createdAt: "made_at", updatedAt: "changed_at" },
+  softDeletes: { column: "archived_at" },
+  casts: { active: Cast.boolean() },
+  // Both of these, which is odd but legal — only `guarded: ["*"]`
+  // alongside `fillable` is a contradiction the runtime rejects. Named
+  // together here so this really is every key.
+  fillable: ["name"],
+  guarded: ["secret"],
+  hidden: ["secret"],
+  visible: ["name"],
+  appends: ["upper"],
+  morphName: "EveryKey",
+  deleteWhenMissingModels: true,
+  strictRelations: true,
+}) {
+  static override accessors = {
+    upper: accessor((model: EveryConfigKeyModel) => model.name.toUpperCase()),
+  };
+}
+void EveryConfigKeyModel;
 
 interface WrongRel {
   id: string;
