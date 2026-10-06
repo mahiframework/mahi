@@ -21,7 +21,7 @@
     "@mahiframework/database": "workspace:*",
     "@mahiframework/facades": "workspace:*",
     "@mahiframework/http": "workspace:*",
-    "hono": "^4.6.14"
+    "hono": "^4.13.12"
   },
   "devDependencies": {
     "typescript": "^5.7.2",
