@@ -9,6 +9,7 @@ import {
   guessMimeType,
   joinPublicUrl,
   toNodeReadable,
+  UnsupportedDriverFeatureException,
   type StorageDriver,
   type StreamSource,
   type TemporaryUrlBuilder,
@@ -43,7 +44,7 @@ export interface SftpDiskConfig extends SftpConnectionConfig {
  * `StorageDriver` over SFTP, for files that live on another machine: a
  * NAS, a seedbox, a media server that isn't mounted locally.
  *
- * The same 22 methods as the local driver and the same contract suite,
+ * The same 25 methods as the local driver and the same contract suite,
  * but three of its guarantees cost real work over a network, and two of
  * them can't be met at all:
  *
@@ -65,6 +66,10 @@ export interface SftpDiskConfig extends SftpConnectionConfig {
  * - **`path()` throws.** The bytes are on another machine; returning a
  *   remote path that `node:fs` would then fail to open is worse than
  *   refusing.
+ * - **`hardlink()` needs an OpenSSH server.** Symlinks are core SFTP, but
+ *   hard links are the `hardlink@openssh.com` extension, so this is the
+ *   one capability that varies by server rather than by protocol. See
+ *   `SftpConnection.hardlink`.
  *
  * **`copy()` is a download and re-upload through this client.** SFTP has
  * no server-side copy, so copying a 40 GB file moves 80 GB over the
@@ -258,6 +263,23 @@ export class SftpStorageDriver implements StorageDriver, Connectable {
         directories.push(child);
       } else if (entry.attrs.isFile()) {
         files.push(child);
+      } else if (entry.attrs.isSymbolicLink()) {
+        // `readdir` reports a symlink's own attributes, so classifying one
+        // needs a `stat` of the target — which follows links, unlike the
+        // `lstat` the listing came from. A link to a file is listed as a
+        // file, matching every other method here: `exists()`, `get()` and
+        // `size()` all see through it.
+        //
+        // One round trip per symlink, and only per symlink, which is why
+        // this is a separate branch rather than a `stat` of every entry.
+        // A link to a *directory* is deliberately not listed as one:
+        // `allFiles()` descends what `directories()` reports, and a link
+        // pointing at its own ancestor would make that walk unbounded.
+        const target = await this.connection.stat(`${full}/${entry.filename}`);
+
+        if (target?.isFile()) {
+          files.push(child);
+        }
       }
     }
 
@@ -449,6 +471,86 @@ export class SftpStorageDriver implements StorageDriver, Connectable {
       current = `${current}/${segment}`;
       await this.makeDirectoryPath(current);
     }
+  }
+
+  // ── Links ────────────────────────────────────────────────────────────
+
+  /**
+   * A symlink on the remote host. Core SFTP, so every server has it.
+   *
+   * The stored target is absolute, unlike the local driver's relative
+   * one: there is no "moving the root" case to protect against here —
+   * the disk root is a remote path this client is configured with, and
+   * rewriting it would not move the files — and an absolute target is
+   * what the server itself resolves most predictably under a chroot.
+   */
+  async symlink(original: string, link: string): Promise<void> {
+    const { originalFull, linkFull } = await this.prepareLink(original, link);
+    await this.connection.symlink(originalFull, linkFull);
+  }
+
+  /**
+   * A hard link on the remote host, via `hardlink@openssh.com`.
+   *
+   * OpenSSH offers it and plain SFTP has no equivalent, so a server
+   * without the extension gets a typed refusal naming `symlink()` as the
+   * alternative rather than a silent copy.
+   */
+  async hardlink(original: string, link: string): Promise<void> {
+    const { originalFull, linkFull } = await this.prepareLink(original, link);
+
+    if (!(await this.connection.hardlink(originalFull, linkFull))) {
+      throw new UnsupportedDriverFeatureException(
+        "sftp",
+        "hard links",
+        "This server does not advertise the `hardlink@openssh.com` extension. " +
+          "Use symlink(), or copy() for independent bytes.",
+      );
+    }
+  }
+
+  /**
+   * Soft links are always available; hard links depend on the server.
+   *
+   * Reports the cached probe when a `hardlink()` has already run on this
+   * connection. Before that there is nothing to report and nothing to
+   * ask — ssh2 surfaces a missing extension only at the point of use —
+   * so this answers optimistically for a protocol whose dominant server
+   * is OpenSSH. `hardlink()` itself is still the authority, and throws.
+   */
+  async supportsLink(kind: "soft" | "hard"): Promise<boolean> {
+    if (kind === "soft") {
+      return true;
+    }
+
+    return this.connection.supportsHardlink() ?? true;
+  }
+
+  /**
+   * The guards both link methods share: `original` is an existing file,
+   * `link` is free, and the link's parent exists.
+   */
+  private async prepareLink(
+    original: string,
+    link: string,
+  ): Promise<{ originalFull: string; linkFull: string }> {
+    await this.statFile(original);
+
+    const relative = this.guard(link);
+
+    if (await this.exists(link)) {
+      throw new Error(
+        `Cannot link [${link}] to [${original}] — something already exists at [${link}]. ` +
+          "Delete it first, or use move() if you meant to replace it.",
+      );
+    }
+
+    await this.makeDirectory(path.posix.dirname(relative));
+
+    return {
+      originalFull: await this.absolute(original),
+      linkFull: await this.absolute(link),
+    };
   }
 
   /** `mkdir` one level, tolerating "already exists". */

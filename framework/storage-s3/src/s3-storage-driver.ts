@@ -5,6 +5,7 @@ import {
   guessMimeType,
   joinPublicUrl,
   toNodeReadable,
+  UnsupportedDriverFeatureException,
   type StorageDriver,
   type StreamSource,
   type TemporaryUrlBuilder,
@@ -38,7 +39,7 @@ export interface S3DiskConfig extends S3ConnectionConfig {
  * `StorageDriver` over S3 and anything speaking its protocol: AWS,
  * Cloudflare R2, DigitalOcean Spaces, MinIO, Supabase, Backblaze.
  *
- * The same 22 methods and the same contract suite as the local driver,
+ * The same 25 methods and the same contract suite as the local driver,
  * but a bucket is a flat key/value store rather than a filesystem, and
  * four of the contract's guarantees need deliberate work because of it:
  *
@@ -562,6 +563,43 @@ export class S3StorageDriver implements StorageDriver {
           Body: "",
         }),
       ),
+    );
+  }
+
+  // ── Links ────────────────────────────────────────────────────────────
+
+  /**
+   * Always throws. A bucket maps keys to bytes and has no notion of one
+   * key referring to another.
+   *
+   * `copy()` is the closest thing, and is server-side and cheap, but it
+   * is not a link: it duplicates the object, so the two keys then have
+   * independent lifetimes, independent contents and double the storage
+   * bill. Substituting it silently would break whichever of those
+   * properties the caller wanted a link for, so this refuses and names
+   * it instead.
+   */
+  async symlink(original: string, link: string): Promise<void> {
+    throw this.noLinks("symbolic links", original, link);
+  }
+
+  /** Always throws, for the same reason as `symlink()`. */
+  async hardlink(original: string, link: string): Promise<void> {
+    throw this.noLinks("hard links", original, link);
+  }
+
+  /** Neither kind, ever. */
+  async supportsLink(_kind: "soft" | "hard"): Promise<boolean> {
+    return false;
+  }
+
+  private noLinks(feature: string, original: string, link: string): Error {
+    return new UnsupportedDriverFeatureException(
+      "s3",
+      feature,
+      `Object storage has no links, so [${link}] cannot refer to [${original}]. ` +
+        "Use copy() for a server-side duplicate, or store the key you want to " +
+        "point at and resolve it in your application.",
     );
   }
 

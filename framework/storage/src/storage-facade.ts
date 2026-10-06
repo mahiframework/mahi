@@ -108,6 +108,21 @@ export class Storage extends Facade<StorageManager>(() => STORAGE_TOKEN) {
     return this.disk().makeDirectory(directory);
   }
 
+  /** Symlink `link` to `original` on the default disk. Throws on a driver without links. */
+  static symlink(original: string, link: string): Promise<void> {
+    return this.disk().symlink(original, link);
+  }
+
+  /** Hard link `link` to `original` on the default disk. Throws on a driver without links. */
+  static hardlink(original: string, link: string): Promise<void> {
+    return this.disk().hardlink(original, link);
+  }
+
+  /** Whether the default disk can create links of `kind`. */
+  static supportsLink(kind: "soft" | "hard"): Promise<boolean> {
+    return this.disk().supportsLink(kind);
+  }
+
   /**
    * Client-facing URL for `path` on the named (or default) disk. See
    * `StorageManager.url()` (throws for a private disk, use `path()`).

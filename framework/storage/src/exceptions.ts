@@ -16,3 +16,31 @@ export class FileNotFoundException extends Error {
     this.name = "FileNotFoundException";
   }
 }
+
+/**
+ * Thrown when a driver is asked for something its backend cannot do:
+ * `symlink()` on S3, where an object store has no such concept, or
+ * `hardlink()` over SFTP against a server lacking
+ * `hardlink@openssh.com`.
+ *
+ * Typed, and carrying `driver`/`feature` as fields, because the
+ * alternative for a caller that wants to degrade gracefully (link where
+ * possible, copy otherwise) is matching on a message string. The
+ * remaining "this disk can't do that" cases — `url()` on a private disk,
+ * `path()` on a remote one — predate this and still throw a plain
+ * `Error`; `supportsLink()` is the ask-first route that avoids needing a
+ * `catch` at all.
+ */
+export class UnsupportedDriverFeatureException extends Error {
+  constructor(
+    readonly driver: string,
+    readonly feature: string,
+    remedy?: string,
+  ) {
+    super(
+      `The ${driver} driver does not support ${feature}.` +
+        (remedy === undefined ? "" : ` ${remedy}`),
+    );
+    this.name = "UnsupportedDriverFeatureException";
+  }
+}

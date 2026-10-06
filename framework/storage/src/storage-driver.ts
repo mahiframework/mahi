@@ -13,9 +13,9 @@ export type StreamSource = Readable | ReadableStream<Uint8Array> | AsyncIterable
  * `Manager<T>` pattern, same as `DatabaseManager`/`CacheManager`).
  *
  * The core is six methods (`put`/`get`/`exists`/`delete`/`url`/`path`);
- * the rest add directory listing, streaming and file metadata. Every one
- * is a thing a future driver (`s3`, etc.) has to implement correctly, so
- * they are grouped and documented rather than sprawling.
+ * the rest add directory listing, streaming, file metadata and links.
+ * Every one is a thing a future driver (`s3`, etc.) has to implement
+ * correctly, so they are grouped and documented rather than sprawling.
  */
 export interface StorageDriver {
   put(path: string, contents: Buffer | string): Promise<void>;
@@ -116,4 +116,57 @@ export interface StorageDriver {
   deleteDirectory(directory: string): Promise<void>;
   /** Create a directory (and parents). No error if it already exists. */
   makeDirectory(directory: string): Promise<void>;
+
+  // ── Links ────────────────────────────────────────────────────────────
+  // Two names for the same bytes, where the backend has such a notion.
+  // Only the filesystem and SFTP drivers do: an object store has no link
+  // concept at all, and FTP exposes no command for one, so those throw
+  // `UnsupportedDriverFeatureException` rather than quietly copying —
+  // a copy has different semantics (independent bytes, double the space)
+  // and silently substituting it would be the wrong answer for whatever
+  // the caller wanted a link *for*.
+  //
+  // Both paths are disk-relative and both are guarded, so a link always
+  // points at something on the same disk. A target outside the root is
+  // refused, not because it is hard but because `LocalStorageDriver`
+  // would then refuse to read the file back through its own symlink
+  // guard — an escaping link is a file this disk can create and cannot
+  // use.
+  //
+  // Shared contract: `original` must exist (else `FileNotFoundException`),
+  // parent directories of `link` are created, and an existing `link` path
+  // is an error rather than a silent replace. Use `move()` to overwrite.
+
+  /**
+   * A symbolic link at `link` pointing to `original`.
+   *
+   * The link is a path reference: it survives `original` being replaced
+   * and dangles if `original` is deleted. `LocalStorageDriver` stores the
+   * target *relative* to the link's own directory, so the storage root
+   * can be moved or bind-mounted at another path in a container without
+   * every link breaking.
+   */
+  symlink(original: string, link: string): Promise<void>;
+
+  /**
+   * A hard link at `link`: a second directory entry for the same inode.
+   *
+   * Indistinguishable from `original` afterwards, with no "real one" and
+   * no dangling — the bytes live until the last name is removed. Cannot
+   * span filesystems, so on a disk whose root straddles a mount point
+   * this can fail where `symlink()` succeeds, and directories are
+   * rejected by the OS.
+   */
+  hardlink(original: string, link: string): Promise<void>;
+
+  /**
+   * Whether this driver can create links of `kind`, for a caller that
+   * would rather branch than catch.
+   *
+   * Async because the honest answer is not always known locally: SFTP
+   * hard links need `hardlink@openssh.com`, which is a property of the
+   * server, so answering requires having talked to it. Never throws —
+   * a driver that cannot determine support reports `false`.
+   */
+  supportsLink(kind: "soft" | "hard"): Promise<boolean>;
 }

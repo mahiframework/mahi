@@ -274,6 +274,19 @@ export class LocalStorageDriver implements StorageDriver {
         directories.push(rel);
       } else if (entry.isFile()) {
         files.push(rel);
+      } else if (entry.isSymbolicLink() && (await this.linksToFileInRoot(rel))) {
+        // A symlink's own dirent is neither file nor directory, so
+        // classifying it needs the target. One that resolves to a file
+        // inside the root is listed as a file, because that is what it is
+        // to every other method here: `exists()`, `get()` and `size()` all
+        // see through it, and a listing that didn't would be the one place
+        // a link became invisible.
+        //
+        // A symlink to a *directory* is deliberately not reported as a
+        // directory: `allDirectories()` descends what it lists, and a
+        // symlink can point at its own ancestor, so listing them would
+        // turn one cyclic link into an unbounded walk.
+        files.push(rel);
       }
     }
 
@@ -301,6 +314,25 @@ export class LocalStorageDriver implements StorageDriver {
     directories.sort();
 
     return { files, directories };
+  }
+
+  /**
+   * Whether a symlink resolves to a file that is still inside the root.
+   *
+   * A dangling link, or one escaping the root, is reported by neither
+   * `files()` nor `directories()` — consistent with `exists()`, which is
+   * already false for both, and with the read methods, which refuse the
+   * second case outright.
+   */
+  private async linksToFileInRoot(relative: string): Promise<boolean> {
+    return this.resolveReal(relative).then(
+      (full) =>
+        fs.stat(full).then(
+          (stat) => stat.isFile(),
+          () => false,
+        ),
+      () => false,
+    );
   }
 
   /** Turn an on-disk-joined path back into a sorted-friendly relative POSIX path. */
@@ -415,6 +447,83 @@ export class LocalStorageDriver implements StorageDriver {
     const full = this.resolve(directory);
     await fs.mkdir(full, { recursive: true });
     await this.resolveReal(directory);
+  }
+
+  // ── Links ────────────────────────────────────────────────────────────
+
+  /**
+   * A symlink at `link` pointing to `original`, with the stored target
+   * written *relative to the link's own directory*.
+   *
+   * Relative rather than absolute because the root is not a fixed
+   * location: the same storage directory is a different absolute path
+   * inside a container than on the host, and a deployment that moves or
+   * re-mounts it would otherwise dangle every link ever created. A
+   * relative target also keeps the link inside the root by construction,
+   * which is what lets `resolveReal()` read it back — an absolute target
+   * baked in today would resolve outside a root that moves tomorrow and
+   * then be refused by this driver's own guard.
+   */
+  async symlink(original: string, link: string): Promise<void> {
+    const { originalFull, linkFull } = await this.prepareLink(original, link);
+
+    await fs.symlink(pathModule.relative(pathModule.dirname(linkFull), originalFull), linkFull);
+  }
+
+  /** A second directory entry for `original`'s inode, via `fs.link`. */
+  async hardlink(original: string, link: string): Promise<void> {
+    const { originalFull, linkFull } = await this.prepareLink(original, link);
+
+    await fs.link(originalFull, linkFull);
+  }
+
+  /** Both, always: this is a filesystem. */
+  async supportsLink(_kind: "soft" | "hard"): Promise<boolean> {
+    return true;
+  }
+
+  /**
+   * The guards both link methods share: `original` exists and is a file,
+   * `link` is free, and neither escapes the root.
+   *
+   * `link`'s parent is created before it is re-checked through
+   * `resolveReal()`, the same order `put()`/`copy()` use, so a symlinked
+   * parent directory is caught before anything is written through it.
+   */
+  private async prepareLink(
+    original: string,
+    link: string,
+  ): Promise<{ originalFull: string; linkFull: string }> {
+    const originalFull = await this.resolveReal(original);
+
+    if (
+      !(await fs.stat(originalFull).then(
+        (stat) => stat.isFile(),
+        () => false,
+      ))
+    ) {
+      throw new FileNotFoundException(original);
+    }
+
+    const linkFull = this.resolve(link);
+    await fs.mkdir(pathModule.dirname(linkFull), { recursive: true });
+    await this.resolveReal(link);
+
+    // `fs.symlink`/`fs.link` both EEXIST here, but the raw errno says
+    // nothing about which of the two paths was the problem.
+    if (
+      await fs.lstat(linkFull).then(
+        () => true,
+        () => false,
+      )
+    ) {
+      throw new Error(
+        `Cannot link [${link}] to [${original}] — something already exists at [${link}]. ` +
+          "Delete it first, or use move() if you meant to replace it.",
+      );
+    }
+
+    return { originalFull, linkFull };
   }
 
   /** `stat` the target as a file, mapping "not a file"/ENOENT to a typed error. */

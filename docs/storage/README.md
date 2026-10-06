@@ -49,6 +49,11 @@ interface StorageDriver {
   move(from: string, to: string): Promise<void>;
   deleteDirectory(directory: string): Promise<void>;
   makeDirectory(directory: string): Promise<void>;
+
+  // Links — filesystem and SFTP only; see Links below
+  symlink(original: string, link: string): Promise<void>;
+  hardlink(original: string, link: string): Promise<void>;
+  supportsLink(kind: "soft" | "hard"): Promise<boolean>;
 }
 ```
 
@@ -317,6 +322,66 @@ await Storage.deleteDirectory("thumbs");   // recursive; no error if absent
 when the (source) file is missing. `mimeType()` is a best-effort guess
 from the extension, the disk has no real content-type concept, and
 returns `undefined` for an unknown extension.
+
+## Links
+
+Two names for the same bytes, where the backend has such a notion.
+
+```ts
+await Storage.symlink("originals/photo.jpg", "albums/summer/photo.jpg");
+await Storage.hardlink("originals/photo.jpg", "albums/summer/photo.jpg");
+
+if (await Storage.supportsLink("hard")) { /* ... */ }
+```
+
+Only two of the four drivers can do this at all:
+
+| Driver | `symlink()` | `hardlink()` |
+|---|---|---|
+| `local` | yes | yes |
+| `sftp` | yes | only with `hardlink@openssh.com` (OpenSSH has it) |
+| `s3` | no — object storage has no links | no |
+| `ftp` | no — no link command in the protocol | no |
+
+A driver that can't throws `UnsupportedDriverFeatureException`, which
+carries `driver` and `feature` as fields so a caller can branch on it
+without matching a message. It does **not** fall back to `copy()`: a copy
+has independent bytes, an independent lifetime and double the storage
+cost, so silently substituting one would break whichever of those
+properties you wanted a link for, and do it invisibly. Call
+`supportsLink(kind)` to ask first. It's async because the honest answer
+isn't always local — SFTP hard links depend on what the *server*
+advertises.
+
+Shared rules, enforced by the contract suite against every driver:
+
+- **Both paths are disk-relative and guarded.** Links are intra-disk; a
+  target outside the root is refused. That isn't arbitrary — the local
+  driver's symlink guard would then refuse to read the file back, so an
+  escaping link is one the disk can create and can't use.
+- **`original` must exist**, else `FileNotFoundException`, as with
+  `copy()`/`move()`. Directories are rejected.
+- **Parent directories of `link` are created**, as `copy()`/`move()` do.
+- **An existing `link` path is an error, not a silent replace.** `move()`
+  is the method that overwrites.
+- **A link lists as a file.** `files()` reports one that resolves to a
+  file, since `exists()`, `get()` and `size()` all see through it. A
+  symlink to a *directory* is not reported by `directories()`, because
+  `allDirectories()` descends what it lists and a link pointing at its own
+  ancestor would make that walk unbounded.
+
+The two kinds differ in what you'd expect. A symlink is a path reference:
+it dangles if the original is deleted, and `exists()` then reports false.
+A hard link is a second directory entry for the same inode, so there is no
+"real one" and the bytes live until the last name is removed — but it
+can't span filesystems, so on a disk root that straddles a mount point it
+can fail where a symlink succeeds.
+
+`LocalStorageDriver` writes symlink targets **relative to the link's own
+directory**, so the storage root can be moved, re-mounted, or bind-mounted
+at a different path inside a container without every link breaking. The
+SFTP driver uses absolute remote targets, where there's no equivalent
+"root moves" case to protect against.
 
 ## `StorageManager`
 
@@ -810,6 +875,11 @@ is publicly readable depends on its policy, which the driver can't read,
 so nothing is guessed. **`path()` always throws** — the bytes aren't on
 this machine.
 
+**`symlink()`/`hardlink()` always throw.** A bucket maps keys to bytes and
+has no notion of one key referring to another. `copy()` is server-side and
+cheap, but it is a duplicate rather than a link, so the driver refuses
+instead of silently substituting it. See [Links](#links).
+
 ### Signed URLs for private objects
 
 A private bucket has no public URL, but it can have a time-limited one,
@@ -937,6 +1007,14 @@ its own, so set `temporaryUrls: true` on the disk and mount
 `serveTemporaryDiskFile()`. The file is then pulled over SSH and streamed
 to the client by your application. See
 [Temporary URLs](#temporary-urls-for-private-files).
+
+**`symlink()` always works; `hardlink()` needs OpenSSH.** Symlinks are
+core SFTP. Hard links are the `hardlink@openssh.com` extension, which
+OpenSSH offers and other servers may not — against one that doesn't,
+`hardlink()` throws `UnsupportedDriverFeatureException` and
+`supportsLink("hard")` reports `false` once something has probed for it.
+The probe only happens at the point of use, since ssh2 surfaces a missing
+extension no earlier. See [Links](#links).
 
 **Recursive listing is bounded.** `allFiles()` is one `readdir` per
 directory, and they share a single SSH channel, so `concurrency` caps
@@ -1135,6 +1213,13 @@ disk.ftp().replacesAtomically();  // true | false | undefined (not yet attempted
 **`url()` throws** without a configured prefix, and **`path()` always
 throws** — the bytes are on another machine.
 
+**`symlink()`/`hardlink()` always throw.** FTP has no link command. Some
+servers expose one via `SITE SYMLINK`, but `SITE` has no portable syntax
+and no way to discover support short of trying it and reading prose out of
+a 500 reply — a driver that worked on one appliance and failed on the next
+would be worse than one that is clear it can't. Use an `sftp` disk if the
+host also speaks SSH. See [Links](#links).
+
 **`temporaryUrl()` needs the fallback route**, as with SFTP: set
 `temporaryUrls: true` and mount `serveTemporaryDiskFile()`. Note the
 download is proxied through your application *and* serialised behind
@@ -1188,6 +1273,18 @@ export class BlobStorageDriver implements StorageDriver {
     throw new Error("The blob driver has no on-disk path.");
   }
 
+  // A backend without links refuses, naming what to use instead. Don't
+  // quietly copy: different bytes, different lifetime, double the cost.
+  async symlink(original: string, link: string): Promise<void> {
+    throw new UnsupportedDriverFeatureException("blob", "symbolic links", "Use copy().");
+  }
+  async hardlink(original: string, link: string): Promise<void> {
+    throw new UnsupportedDriverFeatureException("blob", "hard links", "Use copy().");
+  }
+  async supportsLink(kind: "soft" | "hard"): Promise<boolean> {
+    return false;
+  }
+
   // If the backend presigns, do that. Otherwise delegate to the fallback,
   // and throw when there isn't one — a link that 404s is worse.
   async temporaryUrl(path: string, expiresIn = 300): Promise<string> {
@@ -1225,6 +1322,11 @@ non-local disk name is left free for your `extend()` to claim.
 meaningful for filesystem-backed disks". A driver that returns a
 plausible-looking-but-fake path is worse than one that refuses.
 
+**Refuse links you can't make, and make `supportsLink()` agree.** Throw
+`UnsupportedDriverFeatureException` rather than falling back to `copy()`,
+and don't report support you don't have — the contract suite checks both
+directions, so a `supportsLink()` that lies is a test failure.
+
 If your driver needs async warm-up, implement `Connectable`
 (`connect()`/`disconnect()`) and call `connect()` from your provider's
 `boot()`. `Manager.driver()` is always synchronous and will never await
@@ -1258,7 +1360,7 @@ constructible standalone. For a full-application test, set
 
 ### The driver contract suite
 
-`StorageDriver` is 22 methods, and most of them carry a guarantee the
+`StorageDriver` is 25 methods, and most of them carry a guarantee the
 signature doesn't show: listings are sorted, a missing directory is `[]`
 rather than an error, `readStream` rejects *before* the first chunk, a
 truncating stream write is atomic. A driver can satisfy every type and
@@ -1290,6 +1392,8 @@ storageDriverContract({
   hasPath: false,         // the bytes aren't local, so assert path() throws
   hasTemporaryUrl: true,  // this disk can sign one; omitted, assert temporaryUrl() REJECTS
   largeFileBytes: 512 * 1024,  // default 8 MiB; lower it when each chunk costs a round trip
+  hasSymlink: true,       // assert links work and are guarded; omitted, assert they THROW
+  hasHardlink: true,      // separate flag, because SFTP has one kind and not the other
 });
 ```
 
@@ -1353,6 +1457,19 @@ override instead.
 expensive.** The bytes are on another machine: there's no local path, no
 HTTP URL, and no server-side copy primitive. See
 [SFTP](#sftp-files-on-another-machine).
+
+**Links only exist on `local` and `sftp`.** S3 and FTP throw
+`UnsupportedDriverFeatureException`, and they do not fall back to a copy.
+Ask `supportsLink(kind)` first if the disk is configurable. See
+[Links](#links).
+
+**Links can't leave the disk.** Both arguments are disk-relative and
+guarded, so you can't link to a path outside the storage root — the local
+driver's own symlink guard would refuse to read it back anyway.
+
+**Linking onto an existing path throws.** Unlike `put()`, which
+overwrites, neither link method will replace what's already there. Delete
+it first, or use `move()`.
 
 ## Related
 

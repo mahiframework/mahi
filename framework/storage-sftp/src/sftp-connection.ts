@@ -73,6 +73,8 @@ export class SftpConnection {
   private base?: string;
   /** Whether the server offers `posix-rename@openssh.com`. Probed on first use, per connection. */
   private posixRename?: boolean;
+  /** Whether the server offers `hardlink@openssh.com`. Probed on first use, per connection. */
+  private openSshHardlink?: boolean;
 
   constructor(private readonly config: SftpConnectionConfig) {}
 
@@ -97,6 +99,7 @@ export class SftpConnection {
     this.connecting = undefined;
     this.base = undefined;
     this.posixRename = undefined;
+    this.openSshHardlink = undefined;
 
     if (!client) {
       return;
@@ -212,6 +215,60 @@ export class SftpConnection {
     return this.posixRename;
   }
 
+  /** A symlink at `linkPath` pointing at `target`. Core SFTP, always available. */
+  async symlink(target: string, linkPath: string): Promise<void> {
+    await this.run(async (sftp) => {
+      await promisify<void>((cb) => sftp.symlink(target, linkPath, cb));
+    });
+  }
+
+  /**
+   * A hard link at `linkPath` for `target`, via
+   * `hardlink@openssh.com`.
+   *
+   * Not part of the SFTP protocol — there is no standard way to make one
+   * — so this is an OpenSSH extension. Resolves `false` when the server
+   * never advertised it, which ssh2 reports by throwing synchronously
+   * before sending anything, so nothing has happened on the far side and
+   * the caller is free to do something else. Any other failure is a real
+   * error and propagates.
+   */
+  async hardlink(target: string, linkPath: string): Promise<boolean> {
+    if (this.openSshHardlink === false) {
+      return false;
+    }
+
+    return this.run(async (sftp) => {
+      try {
+        await promisify<void>((cb) => sftp.ext_openssh_hardlink(target, linkPath, cb));
+        this.openSshHardlink = true;
+
+        return true;
+      } catch (error) {
+        if (!isUnsupportedExtension(error)) {
+          throw error;
+        }
+
+        this.openSshHardlink = false;
+
+        return false;
+      }
+    });
+  }
+
+  /**
+   * Whether the server offers `hardlink@openssh.com`, or `undefined`
+   * before anything has probed for it.
+   *
+   * There is no way to ask without attempting one, since ssh2 only
+   * reports a missing extension at the point of use, so this stays
+   * `undefined` until the first `hardlink()` call rather than connecting
+   * eagerly to find out.
+   */
+  supportsHardlink(): boolean | undefined {
+    return this.openSshHardlink;
+  }
+
   /** `stat`, or `undefined` when the path does not exist. */
   async stat(remotePath: string): Promise<Stats | undefined> {
     return this.run(async (sftp) => {
@@ -299,6 +356,7 @@ export class SftpConnection {
         this.sftp = undefined;
         this.base = undefined;
         this.posixRename = undefined;
+        this.openSshHardlink = undefined;
       }
     };
     client.once("close", invalidate);

@@ -1,11 +1,11 @@
 import { Readable, Writable } from "node:stream";
-import { FileNotFoundException } from "../exceptions.js";
+import { FileNotFoundException, UnsupportedDriverFeatureException } from "../exceptions.js";
 import type { StorageDriver } from "../storage-driver.js";
 
 /**
  * The `StorageDriver` contract, as executable cases.
  *
- * `StorageDriver` is 21 methods, most of them carrying a guarantee that
+ * `StorageDriver` is 25 methods, most of them carrying a guarantee that
  * isn't visible in the signature: listings are sorted, a missing
  * directory is `[]` rather than an error, `readStream` rejects before the
  * first chunk, a truncating stream write is atomic. A driver can satisfy
@@ -65,6 +65,16 @@ export interface StorageDriverContractOptions {
    * paying real network latency per chunk may want less.
    */
   largeFileBytes?: number;
+  /**
+   * Whether the backend can make symbolic links. Given `true`, the
+   * contract asserts a link reads back as the original's bytes and that
+   * both paths are guarded; omitted, it asserts `symlink()` rejects with
+   * `UnsupportedDriverFeatureException` and that `supportsLink("soft")`
+   * agrees.
+   */
+  hasSymlink?: boolean;
+  /** As `hasSymlink`, for hard links. Separate because SFTP has one and not the other. */
+  hasHardlink?: boolean;
 }
 
 export function storageDriverContract(
@@ -75,6 +85,8 @@ export function storageDriverContract(
     hasPath = true,
     hasTemporaryUrl = false,
     largeFileBytes = 8 * 1024 * 1024,
+    hasSymlink = false,
+    hasHardlink = false,
   } = options;
 
   const cases: StorageDriverContractCase[] = [
@@ -662,6 +674,161 @@ export function storageDriverContract(
           },
         },
   );
+
+  for (const kind of ["soft", "hard"] as const) {
+    const supported = kind === "soft" ? hasSymlink : hasHardlink;
+    const link = (disk: StorageDriver, original: string, at: string): Promise<void> =>
+      kind === "soft" ? disk.symlink(original, at) : disk.hardlink(original, at);
+
+    if (!supported) {
+      cases.push({
+        /**
+         * A backend without links must refuse with the typed exception
+         * rather than quietly copying. A copy has different semantics —
+         * independent bytes, independent lifetime, double the space — so
+         * substituting one would break whatever the caller wanted a link
+         * for, and do it invisibly.
+         */
+        name: `${kind} links throw UnsupportedDriverFeatureException, and supportsLink() says so up front`,
+        async run(disk) {
+          await disk.put("original.txt", "bytes");
+
+          await assertRejectsWith(
+            () => link(disk, "original.txt", "link.txt"),
+            UnsupportedDriverFeatureException,
+            `${kind} link on a driver without them`,
+          );
+          assertEquals(await disk.supportsLink(kind), false, `supportsLink("${kind}")`);
+        },
+      });
+
+      continue;
+    }
+
+    cases.push(
+      {
+        name: `${kind} link reads back the original's bytes, and supportsLink() agrees`,
+        async run(disk) {
+          assertEquals(await disk.supportsLink(kind), true, `supportsLink("${kind}")`);
+
+          await disk.put("original.txt", "linked bytes");
+          await link(disk, "original.txt", "link.txt");
+
+          assertEquals(await disk.exists("link.txt"), true, "exists() of the link");
+          assertEquals(
+            (await disk.get("link.txt")).toString("utf-8"),
+            "linked bytes",
+            "contents through the link",
+          );
+          // The link must survive this driver's own read path, which for
+          // the local driver means passing a symlink-aware root guard.
+          assertEquals(
+            (await drain(await disk.readStream("link.txt"))).toString("utf-8"),
+            "linked bytes",
+            "contents streamed through the link",
+          );
+          assertEquals(await disk.size("link.txt"), 12, "size() through the link");
+        },
+      },
+      {
+        name: `${kind} link creates missing parent directories of the link path`,
+        async run(disk) {
+          await disk.put("original.txt", "x");
+          await link(disk, "original.txt", "nested/deeper/link.txt");
+
+          assertEquals(await disk.exists("nested/deeper/link.txt"), true, "exists() of the link");
+          assertEquals(await disk.files("nested/deeper"), ["nested/deeper/link.txt"], "files()");
+        },
+      },
+      {
+        name: `${kind} link rejects when the original does not exist`,
+        async run(disk) {
+          await assertRejectsWith(
+            () => link(disk, "missing.txt", "link.txt"),
+            FileNotFoundException,
+            `${kind} link of a missing original`,
+          );
+        },
+      },
+      {
+        /**
+         * Refusing an occupied path rather than replacing it. A link is
+         * not a write, and a caller who wanted the old file gone should
+         * have to say so — `move()` is the method that replaces.
+         */
+        name: `${kind} link refuses to clobber an existing path`,
+        async run(disk) {
+          await disk.put("original.txt", "new");
+          await disk.put("taken.txt", "existing");
+
+          await assertRejects(
+            () => link(disk, "original.txt", "taken.txt"),
+            /already exists/i,
+            `${kind} link onto an occupied path`,
+          );
+          assertEquals(
+            (await disk.get("taken.txt")).toString("utf-8"),
+            "existing",
+            "the occupied path's contents",
+          );
+        },
+      },
+      {
+        /**
+         * Both arguments are guarded, not just the one that gets written.
+         * An unguarded `original` would let a link name a file outside the
+         * root and smuggle its bytes back in through a path inside it.
+         */
+        name: `${kind} link rejects traversal in either argument`,
+        async run(disk) {
+          await disk.put("original.txt", "x");
+
+          await assertRejects(
+            () => link(disk, "../../etc/passwd", "link.txt"),
+            /escapes the storage root/,
+            `${kind} link with an escaping original`,
+          );
+          await assertRejects(
+            () => link(disk, "original.txt", "../../tmp/link.txt"),
+            /escapes the storage root/,
+            `${kind} link with an escaping link path`,
+          );
+        },
+      },
+      {
+        /**
+         * Deleting one name must not disturb the other's directory entry.
+         * The two kinds diverge on what the survivor *contains* — a
+         * symlink dangles, a hard link keeps the bytes — so that is left
+         * to driver-specific tests; what every backend owes is that
+         * `delete()` removes one name and not both.
+         */
+        name: `${kind} link and its original are independently deletable`,
+        async run(disk) {
+          await disk.put("original.txt", "x");
+          await link(disk, "original.txt", "link.txt");
+          await disk.delete("link.txt");
+
+          assertEquals(await disk.exists("link.txt"), false, "exists() of the deleted link");
+          assertEquals(await disk.exists("original.txt"), true, "exists() of the original");
+          assertEquals(
+            (await disk.get("original.txt")).toString("utf-8"),
+            "x",
+            "the original's contents",
+          );
+        },
+      },
+      {
+        name: `${kind} link appears in files() like any other file`,
+        async run(disk) {
+          await disk.put("original.txt", "x");
+          await link(disk, "original.txt", "link.txt");
+
+          assertEquals(await disk.files(), ["link.txt", "original.txt"], "files()");
+        },
+      },
+    );
+  }
 
   return cases;
 }

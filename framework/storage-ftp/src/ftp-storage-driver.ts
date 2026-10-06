@@ -12,6 +12,7 @@ import {
   guessMimeType,
   joinPublicUrl,
   toNodeReadable,
+  UnsupportedDriverFeatureException,
   type StorageDriver,
   type StreamSource,
   type TemporaryUrlBuilder,
@@ -48,7 +49,7 @@ export interface FtpDiskConfig extends FtpConnectionConfig {
  * `StorageDriver` over FTP, for hosts that speak nothing else: NAS boxes,
  * cheap shared hosting, appliances.
  *
- * The same 22 methods and the same contract suite as every other driver,
+ * The same 25 methods and the same contract suite as every other driver,
  * but FTP is the weakest backend of the three and the driver is explicit
  * about where, rather than papering over it:
  *
@@ -550,6 +551,40 @@ export class FtpStorageDriver implements StorageDriver, Connectable {
    */
   async makeDirectory(directory: string): Promise<void> {
     await this.connection.ensureDirectory(await this.absolute(directory));
+  }
+
+  // ── Links ────────────────────────────────────────────────────────────
+
+  /**
+   * Always throws. FTP has no link command.
+   *
+   * Some servers expose one through `SITE SYMLINK`, but `SITE` is a
+   * per-server extension with no portable syntax and no way to discover
+   * support short of trying it and parsing prose out of a 500 reply. A
+   * driver that worked against one appliance and failed against the next
+   * would be worse than one that is clear it cannot do this at all.
+   */
+  async symlink(original: string, link: string): Promise<void> {
+    throw this.noLinks("symbolic links", original, link);
+  }
+
+  /** Always throws. There is no hard-link command in FTP either. */
+  async hardlink(original: string, link: string): Promise<void> {
+    throw this.noLinks("hard links", original, link);
+  }
+
+  /** Neither kind. */
+  async supportsLink(_kind: "soft" | "hard"): Promise<boolean> {
+    return false;
+  }
+
+  private noLinks(feature: string, original: string, link: string): Error {
+    return new UnsupportedDriverFeatureException(
+      "ftp",
+      feature,
+      `FTP has no link command, so [${link}] cannot refer to [${original}]. ` +
+        "Use copy() for independent bytes, or an sftp disk if the host also speaks SSH.",
+    );
   }
 
   private async removeEmptyDirectory(full: string): Promise<void> {

@@ -34,6 +34,8 @@ describe.skipIf(SFTP_UNAVAILABLE)("SftpStorageDriver (integration)", () => {
     for (const testCase of storageDriverContract({
       hasPath: false,
       largeFileBytes: 512 * 1024,
+      hasSymlink: true,
+      hasHardlink: true,
     })) {
       it(testCase.name, async () => {
         await testCase.run(await disk());
@@ -51,6 +53,8 @@ describe.skipIf(SFTP_UNAVAILABLE)("SftpStorageDriver (integration)", () => {
       hasPath: false,
       urlPrefix: "https://media.example.com/files",
       largeFileBytes: 512 * 1024,
+      hasSymlink: true,
+      hasHardlink: true,
     })) {
       it(testCase.name, async () => {
         await testCase.run(await disk("https://media.example.com/files"));
