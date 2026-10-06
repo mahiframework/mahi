@@ -138,6 +138,10 @@ const DESCRIPTIONS = {
     description: "Scheduling — a cron-style task scheduler with overlap protection, for Mahi.",
     keywords: ["mahi", "schedule", "cron", "scheduler", "tasks"],
   },
+  "@mahiframework/settings": {
+    description: "Settings — database-persisted, cached global application settings for Mahi.",
+    keywords: ["mahi", "settings", "configuration", "preferences"],
+  },
   "@mahiframework/snowflake": {
     description: "Snowflake — distributed, time-sortable unique ID generation for Mahi.",
     keywords: ["mahi", "snowflake", "id", "unique", "distributed"],
@@ -197,6 +201,7 @@ const DOC_SLUGS = {
   "@mahiframework/queue": "queues",
   "@mahiframework/redis": "redis",
   "@mahiframework/schedule": "scheduling",
+  "@mahiframework/settings": "settings",
   "@mahiframework/storage": "storage",
   "@mahiframework/storage-ftp": "storage",
   "@mahiframework/storage-s3": "storage",
