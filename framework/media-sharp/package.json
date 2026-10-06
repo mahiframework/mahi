@@ -1,0 +1,68 @@
+{
+  "name": "@mahiframework/media-sharp",
+  "version": "0.1.4",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b && node ../../scripts/prune-dist.mjs",
+    "typecheck": "tsc -b && tsc -p tsconfig.test.json",
+    "lint": "eslint src tests",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mahiframework/core": "workspace:*",
+    "@mahiframework/media": "workspace:*"
+  },
+  "peerDependencies": {
+    "sharp": "^0.34.0 || ^0.35.0"
+  },
+  "peerDependenciesMeta": {
+    "sharp": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "sharp": "^0.35.5",
+    "typescript": "^5.7.2",
+    "vite": "^8.0.0",
+    "vitest": "^4.1.11"
+  },
+  "license": "MIT",
+  "author": "Bradie Tilley",
+  "homepage": "https://github.com/mahiframework/mahi#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mahiframework/mahi.git",
+    "directory": "framework/media-sharp"
+  },
+  "bugs": {
+    "url": "https://github.com/mahiframework/mahi/issues"
+  },
+  "engines": {
+    "node": ">=26"
+  },
+  "sideEffects": false,
+  "description": "Media (sharp) — a sharp/libvips image driver for Mahi's media package.",
+  "keywords": [
+    "mahi",
+    "media",
+    "images",
+    "sharp",
+    "libvips"
+  ],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

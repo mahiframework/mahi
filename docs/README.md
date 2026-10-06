@@ -161,6 +161,7 @@ Mahi is a set of packages, not a monolith. Install what you use.
 | `@mahiframework/storage-s3` | An S3 disk, for files in object storage |
 | `@mahiframework/storage-sftp` | An SFTP disk, for files on a remote host |
 | `@mahiframework/media` | Uploads, collections, image modifiers, streaming archives |
+| `@mahiframework/media-sharp` | A sharp/libvips image driver, so image modifiers do something |
 | `@mahiframework/mail` | Mailables, SMTP/log transports |
 | `@mahiframework/notifications` | Multi-channel notifications |
 | `@mahiframework/encryption` | Encrypter, hasher, signer |

@@ -104,6 +104,10 @@ const DESCRIPTIONS = {
     description: "Media — a polymorphic media model, uploads, and image modifiers for Mahi.",
     keywords: ["mahi", "media", "uploads", "files", "images"],
   },
+  "@mahiframework/media-sharp": {
+    description: "Media (sharp) — a sharp/libvips image driver for Mahi's media package.",
+    keywords: ["mahi", "media", "images", "sharp", "libvips"],
+  },
   "@mahiframework/mfa": {
     description: "MFA — TOTP, email code, and recovery-code multi-factor verification for Mahi.",
     keywords: ["mahi", "mfa", "2fa", "totp", "authentication"],
@@ -195,6 +199,9 @@ const DOC_SLUGS = {
   "@mahiframework/impersonation": "impersonation",
   "@mahiframework/mail": "mail",
   "@mahiframework/media": "media",
+  // Shares the parent's page rather than getting its own, the precedent
+  // the three storage drivers set.
+  "@mahiframework/media-sharp": "media",
   "@mahiframework/mfa": "mfa",
   "@mahiframework/notifications": "notifications",
   "@mahiframework/permissions": "permissions",

@@ -67,6 +67,7 @@ framework/            The framework packages (published as @mahiframework/*)
   storage-s3/           S3StorageDriver — a disk in object storage (S3, R2, Spaces, MinIO)
   storage-sftp/         SftpStorageDriver — a disk on a remote host, over SSH
   media/                MediaFile, relation builders, image modifiers, streaming zip, Media facade
+  media-sharp/          SharpImageDriver — the sharp/libvips driver that executes media's image modifiers
   encryption/           Encrypter (AES-256-GCM), Hasher (argon2), Signer (HMAC), key:generate, Crypt/Hash facades
   auth/                 AuthManager, TokenGuard, SessionGuard, DatabaseUserProvider, authenticate()/csrf(), Auth facade
   authorization/        GateRegistry, Policy, requireAuth/requireGuest, can() middleware, Gate facade

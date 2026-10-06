@@ -236,17 +236,53 @@ data, and a driver executes it — the same `gd`-versus-`imagick` split
 Laravel has. An app that stores only documents therefore pays for no
 native build at all.
 
+`@mahiframework/media-sharp` is the driver:
+
+```bash
+npm install @mahiframework/media-sharp sharp
+```
+
+```ts
+// config/app.ts
+import { MediaSharpServiceProvider } from "@mahiframework/media-sharp";
+
+export const providers: ServiceProviderClass[] = [
+  // ...
+  MediaServiceProvider,
+  MediaSharpServiceProvider,  // either order works, see below
+];
+```
+
 ```ts
 // config/media.ts
 export default {
   image: { default: "sharp" },
+
+  sharp: {
+    // A decompression-bomb bound. Worth lowering for public uploads.
+    limitInputPixels: 50_000_000,
+  },
 };
 ```
 
-Without a driver, storing images works fine and only modifiers fail,
-with a message naming the install step. Writing a driver means
-implementing six methods (`read`, `create`, `apply`, `encode`,
-`dimensions`, `supports`) and registering it:
+`sharp` is an **optional peer dependency** — 19 MB and 25
+platform-specific packages — loaded by `import()` on first use. So three
+layers of "not installed" give three different, correct messages: no
+driver configured raises `NoImageDriverError`, a configured driver with
+no `sharp` names the install command, and an operation the driver cannot
+do raises `UnsupportedImageOpError`.
+
+Unlike the storage drivers, `MediaSharpServiceProvider` may be listed
+**before or after** `MediaServiceProvider`. It registers in `boot()`,
+and every provider's `register()` runs before any `boot()`, so
+`IMAGE_TOKEN` is bound either way.
+
+See the [package reference](#the-sharp-driver) below for what it
+does and does not do.
+
+Writing your own driver means implementing six methods (`read`,
+`create`, `apply`, `encode`, `dimensions`, `supports`) and registering
+it:
 
 ```ts
 images.extend("sharp", () => new SharpImageDriver());
@@ -268,6 +304,76 @@ for (const testCase of imageDriverContract(() => new MyDriver(), { image, width,
   it(testCase.name, () => testCase.run());
 }
 ```
+
+### The sharp driver
+
+Every generic modifier works, and the driver adds a few things libvips
+does well that the portable ops cannot express.
+
+| `sharp` config | Default | |
+|---|---|---|
+| `limitInputPixels` | 268 megapixels | Decompression-bomb bound. **Lower it for public uploads** |
+| `autoOrient` | `true` | Apply the EXIF orientation tag on read |
+| `allowAnimated` | `false` | Accept an animated image and flatten it to frame one |
+
+**EXIF orientation is applied on read.** A phone photo is stored in
+sensor orientation with a tag saying how to turn it, so ignoring the tag
+produces sideways thumbnails — and corrupts geometry, because
+`cropToSquare()` measures the image to decide its crop.
+
+**`limitInputPixels` is the only guard against a decompression bomb.** A
+60-megapixel PNG is a few hundred kilobytes compressed and 240 MB
+decoded; `accept.maxBytes` cannot catch it, because the file is small.
+
+**Animated images are refused rather than flattened.** A modifier chain
+on an animated GIF or WebP raises `AnimatedImageError` (wrapped by
+`media` as `UndecodableImageError`), because this driver transforms one
+frame at a time and silently returning a still is data loss the uploader
+would never be told about. Store it without modifiers to keep the
+animation, branch on `isAnimated(bytes)` beforehand, or set
+`allowAnimated: true` to accept the flattening deliberately.
+
+**PNG stays lossless.** `quality()` on a PNG opts into palette
+quantisation — the in-process equivalent of `pngquant` — and without it
+the output is byte-for-byte lossless. JPEG gets `mozjpeg` and a default
+of 82, WebP 80, and AVIF 55, because AVIF's scale is not JPEG's.
+
+#### Driver-specific modifiers
+
+```ts
+import { sharpModifier, blur, grayscale, sharpen, trim } from "@mahiframework/media-sharp";
+
+withModifiers([
+  resizeDown(1200),
+  sharpen(),
+  sharpModifier("vignette", (pipeline) => pipeline.modulate({ brightness: 0.9 })),
+]);
+```
+
+Shipped: `blur`, `sharpen`, `grayscale`, `tint`, `trim` (auto-crop
+uniform borders) and `extend` (pad to a size). `sharpModifier(name, fn)`
+covers everything else.
+
+**These are not portable.** A chain containing one only runs under this
+driver and throws under any other — which is the honest trade, and why
+the function is named `sharpModifier` rather than something neutral.
+Inside `fn`, make at most **one** geometry call (`resize`, `extract`,
+`rotate`): sharp's pipeline is lazy and a second one silently replaces
+the first. Filters compose freely.
+
+#### Cost
+
+**A modifier chain costs one libvips pass per op**, not one for the
+chain. An image handle holds raw pixels rather than a lazy sharp
+pipeline, which is what makes `[resizeDown(80), cropToSquare()]` crop
+against 80×48 instead of the source's 100×60 — two `.resize()` calls on
+one sharp instance do not compose, and `metadata()` mid-pipeline reports
+the *source* dimensions. Correctness was worth the passes.
+
+In practice a chain of two or three modifiers on a web-sized upload is a
+few hundred milliseconds. An app transforming thousands of images a
+second should write sharp directly rather than through a portable
+interface.
 
 ## URLs and downloads
 
@@ -479,8 +585,15 @@ export default {
   },
 
   // The image driver modifiers run through. No default, and no driver
-  // ships with this package.
+  // ships with this package — install @mahiframework/media-sharp.
   image: { default: "sharp" },
+
+  // Read by @mahiframework/media-sharp, if it is installed.
+  sharp: {
+    limitInputPixels: 50_000_000,
+    autoOrient: true,
+    allowAnimated: false,
+  },
 
   // An application-wide floor that no relation can widen.
   accept: {
@@ -526,7 +639,10 @@ Call it from a provider's `register()`. See
 - **No conversions.** One row per file. Thumbnails as separate records —
   laravel-media's `conversion_parent_id` — are not implemented, and
   adding them later is a migration.
-- **No image processing without a driver package.**
+- **No image processing without a driver package.** Install
+  [`@mahiframework/media-sharp`](#the-sharp-driver).
+- **Animation is not preserved** by the sharp driver. A modifier chain on
+  an animated upload errors rather than flattening it.
 - **No download routes.** The app serves private media itself.
 - **No generators.** A PDF or video stores fine; nothing extracts a
   cover frame or a video still.
