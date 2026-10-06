@@ -1033,6 +1033,37 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@22.20.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
 
+  framework/socialite:
+    dependencies:
+      '@mahiframework/core':
+        specifier: workspace:*
+        version: link:../core
+      '@mahiframework/encryption':
+        specifier: workspace:*
+        version: link:../encryption
+      '@mahiframework/facades':
+        specifier: workspace:*
+        version: link:../facades
+      '@mahiframework/http':
+        specifier: workspace:*
+        version: link:../http
+      '@mahiframework/http-client':
+        specifier: workspace:*
+        version: link:../http-client
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vite:
+        specifier: ^8.0.0
+        version: 8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@22.20.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
+
   framework/storage:
     dependencies:
       '@mahiframework/core':

@@ -150,6 +150,10 @@ const DESCRIPTIONS = {
     description: "Snowflake — distributed, time-sortable unique ID generation for Mahi.",
     keywords: ["mahi", "snowflake", "id", "unique", "distributed"],
   },
+  "@mahiframework/socialite": {
+    description: "Socialite — OAuth sign-in with third-party providers for Mahi.",
+    keywords: ["mahi", "socialite", "oauth", "authentication", "github"],
+  },
   "@mahiframework/storage": {
     description: "Storage — a filesystem abstraction over local and cloud disks for Mahi.",
     keywords: ["mahi", "storage", "filesystem", "disk", "files"],
@@ -209,6 +213,7 @@ const DOC_SLUGS = {
   "@mahiframework/redis": "redis",
   "@mahiframework/schedule": "scheduling",
   "@mahiframework/settings": "settings",
+  "@mahiframework/socialite": "socialite",
   "@mahiframework/storage": "storage",
   "@mahiframework/storage-ftp": "storage",
   "@mahiframework/storage-s3": "storage",

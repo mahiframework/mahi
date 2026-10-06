@@ -73,6 +73,7 @@ framework/            The framework packages (published as @mahiframework/*)
   authorization/        GateRegistry, Policy, requireAuth/requireGuest, can() middleware, Gate facade
   permissions/          Role, Permission, PermissionRegistrar, cached checks, Permissions facade
   impersonation/        ImpersonationManager, app-defined gate, opt-in routes, Impersonation facade
+  socialite/            SocialiteManager, nine OAuth drivers, signed state, Socialite facade
   activity-logs/        ActivityLog, resource/security listeners, Activity facade, activity-logs:prune/check
   settings/             SettingsRegistry, declared settings, cached global values, Setting facade
   facades/              Facade<T> mixin factory — base for the Events/Bus/Crypt/Hash facades
@@ -108,7 +109,7 @@ Full documentation lives at
 - [Container](https://bradietilley.dev/mahi/dev-main/container) · [Providers](https://bradietilley.dev/mahi/dev-main/providers) · [Helpers](https://bradietilley.dev/mahi/dev-main/helpers)
 - [Routing](https://bradietilley.dev/mahi/dev-main/routing) · [Requests](https://bradietilley.dev/mahi/dev-main/requests) · [Validation](https://bradietilley.dev/mahi/dev-main/validation) · [Controllers](https://bradietilley.dev/mahi/dev-main/controllers) · [Responses](https://bradietilley.dev/mahi/dev-main/responses)
 - [Database](https://bradietilley.dev/mahi/dev-main/database) · [Models](https://bradietilley.dev/mahi/dev-main/models) · [Relationships](https://bradietilley.dev/mahi/dev-main/relationships) · [Queries](https://bradietilley.dev/mahi/dev-main/queries) · [Migrations](https://bradietilley.dev/mahi/dev-main/migrations) · [Pagination](https://bradietilley.dev/mahi/dev-main/pagination)
-- [Authentication](https://bradietilley.dev/mahi/dev-main/authentication) · [Authorization](https://bradietilley.dev/mahi/dev-main/authorization) · [Encryption](https://bradietilley.dev/mahi/dev-main/encryption)
+- [Authentication](https://bradietilley.dev/mahi/dev-main/authentication) · [Authorization](https://bradietilley.dev/mahi/dev-main/authorization) · [Socialite](https://bradietilley.dev/mahi/dev-main/socialite) · [Encryption](https://bradietilley.dev/mahi/dev-main/encryption)
 - [Cache](https://bradietilley.dev/mahi/dev-main/cache) · [Queues](https://bradietilley.dev/mahi/dev-main/queues) · [Scheduling](https://bradietilley.dev/mahi/dev-main/scheduling) · [Events](https://bradietilley.dev/mahi/dev-main/events) · [Broadcasting](https://bradietilley.dev/mahi/dev-main/broadcasting) · [Storage](https://bradietilley.dev/mahi/dev-main/storage) · [Mail](https://bradietilley.dev/mahi/dev-main/mail) · [Notifications](https://bradietilley.dev/mahi/dev-main/notifications) · [Logging](https://bradietilley.dev/mahi/dev-main/logging) · [Redis](https://bradietilley.dev/mahi/dev-main/redis) · [Settings](https://bradietilley.dev/mahi/dev-main/settings) · [Health](https://bradietilley.dev/mahi/dev-main/health) · [HTTP client](https://bradietilley.dev/mahi/dev-main/http-client)
 - [Console](https://bradietilley.dev/mahi/dev-main/console) · [Testing](https://bradietilley.dev/mahi/dev-main/testing) · [Dates & times](https://bradietilley.dev/mahi/dev-main/datetime)
 

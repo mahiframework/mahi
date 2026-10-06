@@ -1,0 +1,17 @@
+// Typecheck-only project: covers `src` **and** `tests`.
+//
+// The package's main tsconfig emits declarations (`composite`, `rootDir: "src"`),
+// so it cannot include `tests/` without emitting them into `dist`. This project
+// emits nothing, so it can take both. It is chained into the `typecheck` script
+// so a type error in a test file fails the build rather than being silently
+// stripped by esbuild when vitest runs.
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": ["src", "tests"]
+}

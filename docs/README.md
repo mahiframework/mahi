@@ -110,6 +110,7 @@ framework to do something it didn't anticipate.
 - [Permissions](./permissions/): roles, permissions, cached checks
 - [Multi-factor auth](./mfa/): TOTP, email codes, recovery codes, step-up
 - [Impersonation](./impersonation/): acting as another user, gated
+- [Socialite](./socialite/): OAuth sign-in with third-party providers
 - [Encryption & hashing](./encryption/): `Crypt`, `Hash`, signed URLs
 - [Activity logs](./activity-logs/): resource, security and custom activity records
 
@@ -150,6 +151,7 @@ Mahi is a set of packages, not a monolith. Install what you use.
 | `@mahiframework/authorization` | Gates, policies, abilities |
 | `@mahiframework/permissions` | Roles, permissions, cached authorization checks |
 | `@mahiframework/impersonation` | Impersonation gate, start/stop, nested chains |
+| `@mahiframework/socialite` | OAuth providers, redirect/callback, user mapping |
 | `@mahiframework/cache` | Cache stores, locks, rate limiter |
 | `@mahiframework/queue` | Jobs, queue drivers, workers, middleware |
 | `@mahiframework/schedule` | Recurring task scheduling |
