@@ -23,7 +23,7 @@
     "@mahiframework/events": "workspace:*",
     "@mahiframework/facades": "workspace:*",
     "@mahiframework/http": "workspace:*",
-    "hono": "^4.6.14"
+    "hono": "^4.13.12"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
