@@ -24,6 +24,10 @@ jobs:
   check:
     name: build / lint / typecheck / unit
     runs-on: ubuntu-latest
+    # The suites carry generous per-test timeouts so that a contended
+    # runner is not reported as a failure; this is the backstop that
+    # still catches a genuine hang, instead of burning the 6h default.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -72,6 +76,9 @@ jobs:
     name: integration (mysql / postgres / redis / sftp / s3 / ftp)
     runs-on: ubuntu-latest
     needs: check
+    # As `check`: the per-test timeouts absorb a slow runner, and this is
+    # what stops a genuinely hung session from running for six hours.
+    timeout-minutes: 45
     services:
       mysql:
         image: mysql:8.0
