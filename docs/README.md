@@ -124,6 +124,7 @@ framework to do something it didn't anticipate.
 - [Media](./media/): uploads, collections, image modifiers, archives
 - [Mail](./mail/): mailables and transports
 - [Notifications](./notifications/): multi-channel notifications
+- [Settings](./settings/): database-persisted, cached global settings
 - [Health checks](./health/): readiness probes, `/health`, `./artisan health`
 - [Logging](./logging/): channels and stacks
 - [Redis](./redis/): the multi-process story
@@ -164,6 +165,7 @@ Mahi is a set of packages, not a monolith. Install what you use.
 | `@mahiframework/notifications` | Multi-channel notifications |
 | `@mahiframework/encryption` | Encrypter, hasher, signer |
 | `@mahiframework/activity-logs` | Resource/security/custom activity records |
+| `@mahiframework/settings` | Database-persisted, cached global application settings |
 | `@mahiframework/redis` | Redis-backed cache/queue/broadcast drivers |
 | `@mahiframework/cli` | Console kernel, `make:*` generators, migration commands |
 | `@mahiframework/testing` | Test application, HTTP client, database assertions |
