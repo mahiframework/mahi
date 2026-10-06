@@ -10,7 +10,6 @@ import {
   createKeys,
   fakeIssuer,
   ISSUER,
-  mintIdToken,
   oidcConfig,
   queuedCookies,
   redirectRequest,
