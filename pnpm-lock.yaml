@@ -611,9 +611,6 @@ importers:
         specifier: ^10.0.10
         version: 10.0.10
     devDependencies:
-      '@types/nodemailer':
-        specifier: ^6.4.17
-        version: 6.4.24
       '@types/smtp-server':
         specifier: ^3.5.13
         version: 3.5.13

@@ -22,7 +22,6 @@
     "nodemailer": "^10.0.10"
   },
   "devDependencies": {
-    "@types/nodemailer": "^6.4.17",
     "@types/smtp-server": "^3.5.13",
     "smtp-server": "^3.19.10",
     "typescript": "^5.7.2",
