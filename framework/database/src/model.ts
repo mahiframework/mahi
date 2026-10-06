@@ -4016,14 +4016,14 @@ type DateTimeColumnsNeedingCast<A, C extends ModelConfig<A>, Casts> = Exclude<
  * column is nulled out) and the soft-delete column.
  */
 type ImplicitlyCastColumns<A, C extends ModelConfig<A>> =
-  (C extends { timestamps: false } ? never : TimestampColumns<A, C>) | SoftDeleteColumn<A, C>;
+  (C extends { timestamps: false } ? never : TimestampColumns<C>) | SoftDeleteColumn<C>;
 
-type TimestampColumns<A, C> = C extends { timestamps: infer T extends object }
+type TimestampColumns<C> = C extends { timestamps: infer T extends object }
   ? | (T extends { createdAt: infer K extends string } ? K : "created_at")
     | (T extends { updatedAt: infer K extends string } ? K : "updated_at")
   : "created_at" | "updated_at";
 
-type SoftDeleteColumn<A, C> = C extends { softDeletes: infer S }
+type SoftDeleteColumn<C> = C extends { softDeletes: infer S }
   ? S extends { column: infer K extends string }
     ? K
     : S extends true
@@ -4077,7 +4077,7 @@ type KeyTypeMismatch<A, C extends ModelConfig<A>> = C extends { keyType: infer K
 
 /** The soft-delete column must be nullable. `restore()` writes `null` to it. */
 type SoftDeleteColumnNotNullable<A, C extends ModelConfig<A>> =
-  SoftDeleteColumn<A, C> extends infer K
+  SoftDeleteColumn<C> extends infer K
     ? K extends ColumnKeys<A>
       ? null extends A[K]
         ? never
