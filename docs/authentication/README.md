@@ -895,6 +895,86 @@ holds. There is no arbitrary session-data bag.
 | `CacheSessionStore` | `"cache"` | Depends on cache driver | Depends on cache driver | **Throws** |
 | `ArraySessionStore` | `"array"` | No | No | Yes |
 
+### There is no session data bag
+
+Laravel has `session()->put("key", value)`, `flash()`, `old()` and a
+`payload` column holding a serialized blob. Mahi has none of that, and
+it is a deliberate omission rather than an unbuilt feature.
+
+The two things a session bag is overwhelmingly used for are **flash
+messages** and **old input on validation failure**. Both exist to
+survive a `POST` → `302` → `GET` back into a server-rendered form, and
+Mahi renders no forms. `HttpResponse` offers `json()`, `file()`,
+`redirect()` and `make()`; there is no `view()`. `RedirectResponse` has
+no `withErrors()` or `withInput()`. A `ValidationException` always
+renders as `422` JSON with a per-field `errors` object, never as a
+redirect carrying an error bag. So the machinery would have no consumer.
+
+What a bag *would* cost is concrete. A session blob is read, decoded,
+re-encoded and written on **every request that has a session**, whether
+or not the request touched it. And because the unit of write is the
+whole blob, two concurrent requests lose each other's changes:
+
+```
+A reads  { cart: ["apple"] }          B reads  { cart: ["apple"] }
+A writes { cart: ["apple", "banana"] }
+B writes { cart: ["apple"], wishlist: ["cherry"] }   // banana is gone
+```
+
+`B` never touched `cart`. Laravel's answer is `->block()`, a pessimistic
+per-session mutex that serializes all concurrent requests for that
+session — which turns a page issuing six parallel `fetch` calls into a
+queue. Mahi declines to inherit the problem.
+
+### Where cross-request state goes instead
+
+Features that genuinely need state spanning requests get a **typed,
+indexed, revocable table** of their own, the same ownership model
+`sessions` and `personal_access_tokens` already follow:
+
+| Need | Where it lives |
+|---|---|
+| Step-up verification | `mfa_intents`, bound to a session or token id |
+| The impersonation chain | `impersonations`, `UNIQUE(session_id)` |
+| Password resets | `password_reset_tokens`, keyed by email |
+
+Each of those wants something a blob cannot give: an incrementable
+`attempts` column, a composite index on the hot read path, a uniqueness
+constraint, deletion as revocation. None of them would be better served
+by a key in a bag.
+
+For short-lived, single-use, pre-authentication values — the OAuth
+`state` and PKCE `code_verifier` that
+[`@mahiframework/socialite`](../socialite/) stashes between the redirect
+and the callback — the answer is a **signed cookie**, which is exactly
+what [`csrf()`](#csrfoptions) already does. It needs no table, no
+migration and no garbage collection, and a tamper-evident opaque string
+compared against a query parameter needs no server-side storage to be
+secure.
+
+### What this rules out, honestly
+
+Three things are genuinely harder here than in Laravel:
+
+- **A guest session.** `write()` takes a non-nullable `userId` and
+  `login()` is its only caller, so a session cannot exist before
+  authentication. Anything needing per-browser state for an anonymous
+  visitor uses a signed cookie or its own table.
+- **A synchronizer-token CSRF.** `csrf()` is signed double-submit, not
+  session-bound. See [`csrf(options?)`](#csrfoptions) for what that
+  costs and why the `__Host-` prefix default closes most of it.
+- **A multi-step wizard or a guest cart**, if you wanted it in the
+  session rather than in a draft row. A draft row is resumable,
+  inspectable and works across devices, so this is usually the better
+  shape anyway — but it is more work than `session()->put()`.
+
+This is also the prevailing direction elsewhere: Hono, which Mahi's HTTP
+layer is built on, ships no session helper at all; Remix requires an
+explicit `commitSession()`; SvelteKit removed its `session` entirely.
+If Mahi ever grows a view layer, flash and old input become load-bearing
+and a typed bag earns its place — and that is the point at which to
+build one.
+
 ### All three enforce expiry on read
 
 Every store checks `expiresAt` in `read()` and returns `null` for a stale
