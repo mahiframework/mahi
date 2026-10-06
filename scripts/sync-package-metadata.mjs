@@ -154,6 +154,11 @@ const DESCRIPTIONS = {
     description: "Socialite — OAuth sign-in with third-party providers for Mahi.",
     keywords: ["mahi", "socialite", "oauth", "authentication", "github"],
   },
+  "@mahiframework/socialite-oidc": {
+    description:
+      "Socialite (OIDC) — a generic OpenID Connect driver for Mahi, with full id_token validation.",
+    keywords: ["mahi", "socialite", "oidc", "openid-connect", "sso"],
+  },
   "@mahiframework/storage": {
     description: "Storage — a filesystem abstraction over local and cloud disks for Mahi.",
     keywords: ["mahi", "storage", "filesystem", "disk", "files"],
@@ -214,6 +219,9 @@ const DOC_SLUGS = {
   "@mahiframework/schedule": "scheduling",
   "@mahiframework/settings": "settings",
   "@mahiframework/socialite": "socialite",
+  // Shares the parent's page rather than getting its own, the precedent
+  // the three storage drivers and media-sharp set.
+  "@mahiframework/socialite-oidc": "socialite",
   "@mahiframework/storage": "storage",
   "@mahiframework/storage-ftp": "storage",
   "@mahiframework/storage-s3": "storage",

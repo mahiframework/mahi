@@ -74,6 +74,7 @@ framework/            The framework packages (published as @mahiframework/*)
   permissions/          Role, Permission, PermissionRegistrar, cached checks, Permissions facade
   impersonation/        ImpersonationManager, app-defined gate, opt-in routes, Impersonation facade
   socialite/            SocialiteManager, nine OAuth drivers, signed state, Socialite facade
+  socialite-oidc/       OidcSocialiteDriver — generic OpenID Connect, with full id_token validation
   activity-logs/        ActivityLog, resource/security listeners, Activity facade, activity-logs:prune/check
   settings/             SettingsRegistry, declared settings, cached global values, Setting facade
   facades/              Facade<T> mixin factory — base for the Events/Bus/Crypt/Hash facades

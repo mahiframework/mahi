@@ -1064,6 +1064,40 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@22.20.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
 
+  framework/socialite-oidc:
+    dependencies:
+      '@mahiframework/core':
+        specifier: workspace:*
+        version: link:../core
+      '@mahiframework/http-client':
+        specifier: workspace:*
+        version: link:../http-client
+      '@mahiframework/socialite':
+        specifier: workspace:*
+        version: link:../socialite
+      jose:
+        specifier: ^6.2.0
+        version: 6.2.12
+    devDependencies:
+      '@mahiframework/encryption':
+        specifier: workspace:*
+        version: link:../encryption
+      '@mahiframework/http':
+        specifier: workspace:*
+        version: link:../http
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vite:
+        specifier: ^8.0.0
+        version: 8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@22.20.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
+
   framework/storage:
     dependencies:
       '@mahiframework/core':
@@ -2328,6 +2362,9 @@ packages:
   jiti@2.7.0:
     resolution: {integrity: sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==}
     hasBin: true
+
+  jose@6.2.12:
+    resolution: {integrity: sha512-9NiFmJEex0sy2Dk58j2UGBSHgUs2ypF9eZSu4L6vjOX3Dp96Sw1F3uL+H+D1sx02jZZdzUT0HgvCy59CuvXcWw==}
 
   js-yaml@4.3.1:
     resolution: {integrity: sha512-CY6crGq313MX8GkwvB7tzgp99vjQxY1++5y10/BKN/GUfHqWaOGQMNZkBvqSzsZKWk/ijwHlWzzkLulsGHhjWQ==}
@@ -3942,6 +3979,8 @@ snapshots:
 
   jiti@2.7.0:
     optional: true
+
+  jose@6.2.12: {}
 
   js-yaml@4.3.1:
     dependencies:

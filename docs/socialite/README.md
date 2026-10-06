@@ -25,7 +25,8 @@ provider id, whether to auto-register, which guard, where to redirect
 afterwards — and a framework that guessed all four would be wrong more
 often than useful. The controller above is the whole integration.
 
-**Nine providers ship.** The driver seam is the same one a third-party package or your
+**Nine providers ship**, plus generic OpenID Connect in a separate
+package. The driver seam is the same one a third-party package or your
 own app registers through, and the behavioural contract every driver
 must satisfy ships with the package — every built-in driver runs it.
 
@@ -40,6 +41,9 @@ must satisfy ships with the package — every built-in driver runs it.
 | `slack` | Slack | `openid email profile` |
 | `twitch` | Twitch | `user:read:email` |
 | `x` | X (formerly Twitter) | `users.read users.email tweet.read` |
+| `oidc` | Any OpenID Connect issuer | `openid profile email` |
+
+`oidc` needs [`@mahiframework/socialite-oidc`](#generic-openid-connect).
 
 ## Not installed by default
 
@@ -367,9 +371,144 @@ sound **because their issuer is a hardcoded constant**: there is no
 issuer-substitution surface for `id_token` validation to defend against,
 and the code was exchanged directly with that issuer over TLS.
 
-The moment the issuer comes from config, the reasoning collapses — a
-generic OIDC driver has to validate the `id_token` in full, and that is
-a separate package.
+The moment the issuer comes from config, the reasoning collapses. See
+below.
+
+## Generic OpenID Connect
+
+```sh
+npm install @mahiframework/socialite-oidc
+```
+
+```ts
+import { SocialiteOidcServiceProvider } from "@mahiframework/socialite-oidc";
+
+// config/app.ts — before or after SocialiteServiceProvider, either works
+SocialiteOidcServiceProvider,
+```
+
+```ts
+// config/socialite.ts
+providers: {
+  work: {
+    driver: "oidc",
+    issuer: "https://keycloak.example.com/realms/main",
+    clientId: env.OIDC_CLIENT_ID,
+    clientSecret: env.OIDC_CLIENT_SECRET,
+    redirect: "/auth/work/callback",
+    label: "Work SSO",
+  },
+}
+```
+
+Then it is an ordinary driver: `Socialite.driver("work").redirect(request)`.
+
+A separate package because correct `id_token` validation needs
+[`jose`](https://github.com/panva/jose), and an app that only wanted
+GitHub login should not carry a JWT library. This is the same split
+[`media`](../media/) and `media-sharp` make. It registers in `boot()`,
+so it may be listed before or after `SocialiteServiceProvider`.
+
+### Why this is a different problem
+
+`google` and `slack` ignore the `id_token` and that is fine, because
+their issuer is a constant. **Here the issuer is configuration**, and
+everything below follows from that one difference:
+
+- **Discovery** from `{issuer}/.well-known/openid-configuration`, with
+  the document's own `issuer` checked against the configured one.
+  Without that check a substituted document relocates the
+  authorization, token and JWKS endpoints at once.
+- **Signature** against the JWKS key named by the token's `kid`.
+- **An `alg` allow-list** (`RS256` by default), never the token's own
+  claim about itself. This is what rejects `alg: none` and the
+  RS256→HS256 confusion where an attacker HMACs a token using the
+  issuer's public key as the secret.
+- **`iss`** exactly the configured issuer.
+- **`aud`** containing the client id; a multi-valued `aud` additionally
+  requires `azp` to be this client.
+- **`exp`/`nbf`/`iat`** within a clock tolerance (60s by default).
+- **`nonce`** equal to the one minted on the redirect, single-use. This
+  is the replay defence; `state` is CSRF protection and the two are not
+  interchangeable.
+- **`userinfo.sub === id_token.sub`**, per OIDC Core §5.3.2. Without
+  it, one user's token pairs with another's profile — and the profile
+  is what your app keys an account on.
+- **PKCE on by default**, mandatory in OAuth 2.1 and the FAPI profiles.
+
+All of it runs inside `user()`, so an app gets it and cannot forget it.
+
+### Configuration
+
+| Key | Default | Notes |
+|---|---|---|
+| `issuer` | — | **Required.** |
+| `algorithms` | `["RS256"]` | Accepted signing algorithms. |
+| `clockToleranceSeconds` | `60` | Skew allowed on `exp`/`nbf`/`iat`. |
+| `discoveryTtlSeconds` | `3600` | How long the metadata is cached. |
+| `jwksCooldownSeconds` | `30` | Minimum gap between JWKS refetches. |
+| `idTokenOnly` | `false` | Skip userinfo; take identity from the token. |
+| `label` | the issuer's host | Display name. |
+
+### Caching and key rotation
+
+Discovery is fetched once and cached, not on every request — the
+`Kovah/laravel-socialite-oidc` package refetches on every redirect and
+every callback, which makes the IdP a hard latency dependency of each
+login.
+
+JWKS is cached too, but an **unknown `kid` triggers a refetch**, rate
+limited by `jwksCooldownSeconds`. That is what makes key rotation
+self-healing within seconds. A flat TTL alone — that package's one-hour
+`Cache::remember` — turns every rotation into an hour-long outage. The
+cooldown is the rate limit that stops an attacker turning bogus `kid`s
+into amplification against your IdP.
+
+Both caches are shared across fluent copies, so
+`driver.scopes([...])` does not start a cold cache.
+
+### Logout
+
+```ts
+const url = await driver.logoutUrl({ idToken, redirectTo: "https://app.test/goodbye" });
+```
+
+RP-initiated logout, or `null` when the issuer advertises no
+`end_session_endpoint`. Without it, "log out" clears your session while
+the IdP's SSO session persists and the next login silently
+re-authenticates.
+
+### Claim mapping
+
+```
+sub                             → id
+preferred_username ?? nickname  → nickname
+name                            → name
+email                           → email
+picture                         → avatar
+```
+
+`preferred_username` first because Keycloak, Authentik and Entra ID all
+send it and rarely send `nickname`.
+
+**Key accounts on `(issuer, sub)`.** `sub` is the only claim guaranteed
+stable and unique; `email` and `preferred_username` are mutable and
+reassignable, and keying on either is a known account-takeover vector.
+
+### OIDC errors
+
+| Error | When |
+|---|---|
+| `DiscoveryFailedError` | The metadata was unreachable, malformed, or declared a different issuer. |
+| `IdTokenInvalidError` | The token failed validation. Carries `reason`. |
+| `SubjectMismatchError` | userinfo describes a different subject. |
+| `EndpointUnsupportedError` | The issuer advertises no endpoint the driver needs. |
+
+`IdTokenInvalidError.reason` is one of `missing`, `malformed`,
+`signature`, `algorithm`, `issuer`, `audience`, `expired`, `nonce`,
+`claims` — all hard rejections, distinguished because `nonce` and
+`audience` failures mean somebody is replaying or cross-submitting
+tokens while `expired` is usually a clock.
 
 ## Errors
 
