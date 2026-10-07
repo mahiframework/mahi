@@ -60,6 +60,7 @@ framework/            The framework packages (published as @mahiframework/*)
   events/               Event, Listener, EventDispatcher (wildcard + listenQueued)
   database/             DatabaseManager, SQLite/MySQL/Postgres drivers, MigrationRunner, Model, Seeder, Factory, transaction()
   queue/                QueueManager, Job, JobRegistry, Sync/Database/Fake drivers, queue:work
+  watchtower/           Supervised worker pool, run history, queue dashboard — Horizon's job
   schedule/             Schedule, ScheduledTask, cron matching, schedule:run/list/test/work
   cache/                CacheManager, ArrayCacheStore, FileCacheStore, Lock, RateLimiter, Limit
   storage/              StorageManager, LocalStorageDriver — Laravel-style "disk" abstraction

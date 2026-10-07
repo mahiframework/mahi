@@ -118,6 +118,7 @@ framework to do something it didn't anticipate.
 
 - [Cache](./cache/): stores, locks, rate limiting
 - [Queues](./queues/): jobs, workers, retries, chaining
+- [Watchtower](./watchtower/): supervised workers, run history, dashboard
 - [Scheduling](./scheduling/): recurring tasks
 - [Events](./events/): dispatching and listening
 - [Broadcasting](./broadcasting/): websockets
@@ -155,6 +156,7 @@ Mahi is a set of packages, not a monolith. Install what you use.
 | `@mahiframework/socialite-oidc` | A generic OpenID Connect driver, with full `id_token` validation |
 | `@mahiframework/cache` | Cache stores, locks, rate limiter |
 | `@mahiframework/queue` | Jobs, queue drivers, workers, middleware |
+| `@mahiframework/watchtower` | Supervised worker pool, run history, queue dashboard |
 | `@mahiframework/schedule` | Recurring task scheduling |
 | `@mahiframework/health` | Readiness checks, `GET /health`, `./artisan health` |
 | `@mahiframework/events` | Event dispatcher, listeners |
