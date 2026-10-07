@@ -105,6 +105,35 @@ describe("dashboard render", () => {
     expect(html).toContain("842ms");
   });
 
+  it("renders a sparkline for a job type that has completed something", async () => {
+    await boot();
+
+    const recorder = new RunRecorder(harness.app);
+    await recorder.record(observation({ status: "completed" }));
+
+    const html = theme.render(buildOverview(await Watchtower.stats(), urls, 5));
+
+    // The whole point of the series: it reaches the markup from recorded
+    // runs, rather than only from a hand-built IR in a theme test.
+    expect(html).toContain('class="spark"');
+    // Normalised against the type's own peak, so its busiest bucket is
+    // always full height.
+    expect(html).toContain('style="height:100%"');
+  });
+
+  it("omits the sparkline for a job type that has completed nothing", async () => {
+    await boot();
+
+    await new RunRecorder(harness.app).record(observation({ status: "failed", error: "boom" }));
+
+    const html = theme.render(buildOverview(await Watchtower.stats(), urls, 5));
+
+    // Eight zero-height bars read as a rendering failure, and the
+    // throughput figure beside it already says zero.
+    expect(html).toContain("SyncInvoiceJob");
+    expect(html).not.toContain('class="spark"');
+  });
+
   it("warns unmissably when a process has no live workers", async () => {
     await boot({ processes: [{ name: "xero", queues: ["xero"], workers: 2 }] });
 

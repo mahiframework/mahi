@@ -11,6 +11,7 @@ import {
   severityForAge,
   severityForFailureRate,
   severityForState,
+  TREND_BUCKETS,
   type AttemptChain,
   type JobRunSummary,
   type JobTypeDetail,
@@ -216,12 +217,16 @@ export class StatsReader {
   }
 
   /**
-   * Percentiles and counts for one type.
+   * Percentiles, counts and the completion trend for one type.
    *
    * Durations are read and sorted in memory rather than computed in SQL:
    * a percentile needs a window function, which is not portable across
    * the three engines this framework supports, and the row count per type
    * per window is bounded by what a queue can actually process.
+   *
+   * The trend is bucketed from the same rows for the same reason, and a
+   * `GROUP BY` would be strictly worse: it is another round trip per job
+   * type on top of a read that has already happened.
    */
   private async summarise(type: WatchtowerJobType, since: DateTime): Promise<JobTypeSummary> {
     const runs = (await WatchtowerJobRun.forTypeSince(type.id, since).get()).all();
@@ -235,10 +240,8 @@ export class StatsReader {
 
     const finished = completed.length + failed.length;
     const failureRate = finished === 0 ? 0 : failed.length / finished;
-    const windowMinutes = Math.max(
-      1,
-      Math.round((DateTime.now().timestamp - since.timestamp) / 60_000),
-    );
+    const now = DateTime.now();
+    const windowMinutes = Math.max(1, Math.round((now.timestamp - since.timestamp) / 60_000));
 
     return {
       name: type.name,
@@ -249,6 +252,7 @@ export class StatsReader {
       p50DurationMs: percentile(durations, 0.5),
       p95DurationMs: percentile(durations, 0.95),
       throughputPerMinute: completed.length / windowMinutes,
+      trend: trendOf(completed, since, now),
       lastSeenAt: type.last_seen_at.toISOString(),
       severity: severityForFailureRate(failureRate),
     };
@@ -401,6 +405,44 @@ function percentile(sorted: number[], fraction: number): number | null {
   const index = Math.min(sorted.length - 1, Math.ceil(fraction * sorted.length) - 1);
 
   return sorted[Math.max(0, index)] ?? null;
+}
+
+/**
+ * Completions per equal-width bucket across the window, oldest first.
+ *
+ * Counts rather than scaled heights, so a renderer chooses its own scale
+ * and a caller can read a bucket as a number. The bucket index is clamped
+ * at both ends rather than the array widened: a run landing exactly at
+ * `now` would otherwise index one past the last bucket.
+ *
+ * Completions only. Stacking failures would need a second series and a
+ * second colour, and the failure rate already has its own column.
+ */
+function trendOf(completed: WatchtowerJobRun[], since: DateTime, now: DateTime): number[] {
+  const counts = new Array<number>(TREND_BUCKETS).fill(0);
+  const spanMs = now.timestamp - since.timestamp;
+
+  // A zero-width window cannot be bucketed, and dividing by it would put
+  // every run in an `Infinity` bucket.
+  if (spanMs <= 0) {
+    return counts;
+  }
+
+  for (const run of completed) {
+    // `forTypeSince` filters on `started_at`, so a completed row in this
+    // window always has one. Bucketed on it rather than `finished_at`
+    // because that is the column the window itself was selected on.
+    const offset = (run.started_at?.timestamp ?? since.timestamp) - since.timestamp;
+    const index = Math.min(TREND_BUCKETS - 1, Math.floor((offset / spanMs) * TREND_BUCKETS));
+    // Clamped at both ends, so a run timestamped outside the window (a
+    // clock skewed between two hosts) lands in an end bucket rather than
+    // off the array.
+    const bucket = Math.max(0, index);
+
+    counts[bucket] = (counts[bucket] ?? 0) + 1;
+  }
+
+  return counts;
 }
 
 /** Group attempts by dispatch, newest chain first, attempts in order. */

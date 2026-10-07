@@ -100,9 +100,21 @@ export interface JobTypeSummary {
   p95DurationMs: number | null;
   /** Completions per minute over the window. */
   throughputPerMinute: number;
+  /**
+   * Completions per equal-width bucket across the window, oldest first.
+   *
+   * Raw counts rather than scaled heights: a renderer wanting bars
+   * chooses its own scale, and one wanting to label a bucket needs the
+   * number. Always `TREND_BUCKETS` long, all zeroes when nothing
+   * completed, so a caller can index it without checking.
+   */
+  trend: number[];
   lastSeenAt: string;
   severity: Severity;
 }
+
+/** How many buckets a job type's `trend` carries. */
+export const TREND_BUCKETS = 8;
 
 /** One attempt, flattened for display. */
 export interface JobRunSummary {

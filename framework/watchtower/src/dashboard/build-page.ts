@@ -325,11 +325,32 @@ function jobTypeTable(stats: WatchtowerStats, urls: DashboardUrls): TableSection
         {
           text: `${formatDuration(type.p50DurationMs)} / ${formatDuration(type.p95DurationMs)}`,
         },
-        { text: formatThroughput(type.throughputPerMinute) },
+        { text: formatThroughput(type.throughputPerMinute), ...sparkFor(type.trend) },
       ],
     })),
     emptyText: "No jobs have run yet.",
   };
+}
+
+/**
+ * A trend's bucket counts as the percentage heights the IR wants.
+ *
+ * Normalised against the type's own peak, so the shape read is "is this
+ * job's rate changing" rather than "how big is this job next to the
+ * others" — a shared scale would flatten every quiet job to nothing.
+ *
+ * Omitted entirely when nothing ran: eight zero-height bars are an empty
+ * box that looks like a rendering failure, and the adjacent throughput
+ * figure already reads zero.
+ */
+function sparkFor(trend: number[]): { spark?: number[] } {
+  const peak = Math.max(...trend, 0);
+
+  if (peak <= 0) {
+    return {};
+  }
+
+  return { spark: trend.map((count) => (count / peak) * 100) };
 }
 
 /**
