@@ -1240,6 +1240,55 @@ importers:
         specifier: ^5.0.3
         version: 5.0.3(@types/node@26.6.4)(vite@8.3.3(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
 
+  framework/watchtower:
+    dependencies:
+      '@mahiframework/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@mahiframework/cache':
+        specifier: workspace:*
+        version: link:../cache
+      '@mahiframework/cli':
+        specifier: workspace:*
+        version: link:../cli
+      '@mahiframework/core':
+        specifier: workspace:*
+        version: link:../core
+      '@mahiframework/database':
+        specifier: workspace:*
+        version: link:../database
+      '@mahiframework/datetime':
+        specifier: workspace:*
+        version: link:../datetime
+      '@mahiframework/events':
+        specifier: workspace:*
+        version: link:../events
+      '@mahiframework/facades':
+        specifier: workspace:*
+        version: link:../facades
+      '@mahiframework/http':
+        specifier: workspace:*
+        version: link:../http
+      '@mahiframework/queue':
+        specifier: workspace:*
+        version: link:../queue
+      '@mahiframework/tui':
+        specifier: workspace:*
+        version: link:../tui
+      commander:
+        specifier: ^12.1.0
+        version: 12.1.0
+    devDependencies:
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      vite:
+        specifier: ^8.3.3
+        version: 8.3.3(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)
+      vitest:
+        specifier: ^5.0.3
+        version: 5.0.3(@types/node@26.6.4)(vite@8.3.3(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
+
 packages:
 
   '@aws-sdk/checksums@3.1001.1':

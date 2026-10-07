@@ -184,6 +184,10 @@ const DESCRIPTIONS = {
     description: "Validation — a rule-based validator for Mahi.",
     keywords: ["mahi", "validation", "validator", "rules"],
   },
+  "@mahiframework/watchtower": {
+    description: "Watchtower — a supervised queue worker pool, run history and dashboard for Mahi.",
+    keywords: ["mahi", "queue", "worker", "supervisor", "dashboard"],
+  },
 };
 
 // Package → docs/<slug> for the README "documentation" link, where one exists.
@@ -224,6 +228,7 @@ const DOC_SLUGS = {
   "@mahiframework/storage-sftp": "storage",
   "@mahiframework/testing": "testing",
   "@mahiframework/validation": "validation",
+  "@mahiframework/watchtower": "watchtower",
 };
 
 let hadDrift = false;
