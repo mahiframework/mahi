@@ -380,7 +380,9 @@ database. `db:table` prints `Table "x" not found.` rather than throwing.
 
 ### Generators
 
-Every `make:*` command takes `-d, --dir <dir>` with a sensible default.
+Every `make:*` command takes `-d, --dir <dir>` with a sensible default,
+and `-f, --force` to overwrite an existing file (without it, a generator
+that would clobber something refuses and tells you to pass `--force`).
 
 | Command | Default `--dir` | Filename written | Class suffix |
 |---|---|---|---|
@@ -395,26 +397,48 @@ Every `make:*` command takes `-d, --dir <dir>` with a sensible default.
 | `make:policy <name>` | `src/policies` | `{kebab}.policy.ts` | `Policy` |
 | `make:resource <name>` | `src/http/resources` | `{kebab}.resource.ts` | `Resource` |
 | `make:request <name>` | `src/http/requests` | `{kebab}.request.ts` | `Request` |
+| `make:controller <name>` | `src/http/controllers` | `{kebab}.controller.ts` | `Controller` |
+| `make:middleware <name>` | `src/http/middleware` | `{kebab}.middleware.ts` | `Middleware` |
+| `make:notification <name>` | `src/notifications` | `{kebab}.notification.ts` | `Notification` |
+| `make:mail <name>` | `src/mail` | `{kebab}.mail.ts` | `Mail` |
+| `make:command <name>` | `src/commands` | `{kebab}.command.ts` | `Command` |
+| `make:test <name>` | `tests` | `{kebab}.test.ts` | — |
 
-`make:model` has three extra flags:
+`make:model` takes four extra flags:
 
 ```bash
 ./artisan make:model Post --migration --factory
 ./artisan make:model Post -m -f
+./artisan make:model Post --uuidv7 -m
 ```
 
 | Flag | Effect |
 |---|---|
 | `-m, --migration` | Also runs `make:migration create_{table}_table` |
 | `-f, --factory` | Also runs `make:factory {name}` into `database/factories` |
+| `--uuid` | `id: string` + `keyType: "uuid"` (random v4) |
+| `--uuidv7` | `id: string` + `keyType: "uuidv7"` (time-ordered) |
 
-It does this by constructing the other command directly,
+`-m`/`-f` work by constructing the other command directly,
 `new MakeMigrationCommand(this.app).handle(...)`, the same
 call-a-command-from-a-command idiom described above.
 
+**`make:model`'s `--force` has no `-f` shorthand**, because `-f` is
+`--factory` here. It is the one generator where that is true; every other
+`make:*` takes `-f, --force`.
+
+`--uuid` and `--uuidv7` are mutually exclusive and passing both is an
+error. Omit them for the default DB auto-increment key. Whichever you
+choose propagates to the migration and factory that `-m`/`-f` generate,
+so all three files agree on one strategy — mixing them fails at
+`create()` with a datatype mismatch. See
+[Models](../models/#keytype-defaults-to-increment).
+
 `make:migration` derives a table name from a `create_{x}_table` name and
-puts it in the template; anything else gets a `"..."` placeholder. The
-timestamp prefix is local-time `YYYYMMDDHHmmss`.
+puts it in the template; anything else gets a `"..."` placeholder.
+`--create <table>` and `--table <table>` name it explicitly (a create or
+an ALTER migration respectively). The timestamp prefix is local-time
+`YYYYMMDDHHmmss`.
 
 Class names go through `toClassName(name, suffix?)`, which is
 `Str.studly(name)` plus the suffix **only when it isn't already there**
