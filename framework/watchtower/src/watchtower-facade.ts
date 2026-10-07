@@ -79,6 +79,21 @@ export class Watchtower extends Facade<WatchtowerManager>(() => WATCHTOWER_TOKEN
     return this.instance().stats(windowHours);
   }
 
+  /**
+   * The overview, reused across callers for up to `ttlSeconds`.
+   *
+   * For a UI that polls. A full read loads every run in the window per
+   * job type to compute its percentiles, so repeating it per viewer per
+   * interval is the dominant cost of leaving a dashboard open; this
+   * collapses them onto one read.
+   *
+   * `stats()` stays live deliberately — a cached read is the wrong
+   * default for an operator asking what the queue is doing right now.
+   */
+  static cachedStats(ttlSeconds: number, windowHours?: number): Promise<WatchtowerStats> {
+    return this.instance().cachedStats(ttlSeconds, windowHours);
+  }
+
   /** Rolling aggregates per job type, busiest first. */
   static jobTypes(windowHours?: number): Promise<JobTypeSummary[]> {
     return this.instance().jobTypes(windowHours);

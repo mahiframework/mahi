@@ -354,10 +354,27 @@ stats.totals.pending;          // 1045
 stats.processes[0].state;      // "running" | "paused" | "deferred" | "stopped" | "idle"
 stats.queues[0].claimedBy;     // the process draining it, or null
 stats.jobTypes[0].failureRate; // 0..1
+stats.jobTypes[0].trend;       // completions per bucket, oldest first
 stats.recentFailures[0].invocationId;
 ```
 
 Raw numbers, not formatted strings, so you are not parsing them back.
+`trend` is counts rather than percentages for the same reason: scale them
+however your renderer wants, or label a bucket with the number.
+
+A full read loads every run in the window for each job type, to compute
+its percentiles in memory. That is fine per page view and wasteful on a
+timer, so a polling UI should ask for the cached copy instead:
+
+```ts
+const stats = await Watchtower.cachedStats(5);
+```
+
+One read is shared by every caller for that many seconds, which is what
+the bundled dashboard does with its own `pollSeconds`. `Watchtower.stats()`
+is always live, so a command reporting state straight after changing it
+cannot be served a stale answer.
+
 `Watchtower.jobTypes()`, `Watchtower.jobType(name)` and
 `Watchtower.recentFailures()` are the rest of it.
 
@@ -389,6 +406,34 @@ in-flight rows.
 
 `storage: "redis"` reuses `@mahiframework/redis`'s existing queue driver
 unchanged. Faster, and it loses `fifo` and within-queue `priority`.
+
+### Within-queue priority
+
+A dispatch can order itself ahead of what is already waiting on the same
+queue:
+
+```ts
+await Bus.dispatch(new SyncInvoiceJob(invoice), {
+  connection: "watchtower",
+  priority: 10,
+});
+```
+
+Higher goes first; the default is `0`, and negative values sort behind it.
+Ties fall back to FIFO, so a priority band is an ordering among bands
+rather than a queue-jumping free-for-all within one.
+
+**Only this package's driver honours it.** `priority` is declared on core
+`PushOptions`, so it is accepted on every connection, but `database` and
+`redis` both ignore it: `jobs` has no column to sort on and Redis's ready
+set is a list with no cheap priority insert. A dispatch that depends on
+the ordering therefore depends on `storage: "database"`.
+
+Prefer separate queues and an ordered `queues` list when the priorities
+are a fixed, small set — that works on every connection, and a process
+draining `["urgent", "default"]` is easier to reason about than a spread
+of integers. Reach for `priority` when the ordering is per-dispatch data
+rather than a property of the workload.
 
 Failed jobs go to `watchtower_failed_jobs`, and the queue CLI reaches
 them through `--connection`:
@@ -473,7 +518,9 @@ so a client-assigned id saves a round trip per insert.
 - **`watchtower_jobs` and `jobs` are separate queues.** No migration
   bridges them.
 - **`fifo` means one worker**, needs a shared cache store, and is
-  unavailable on `storage: "redis"`. So is within-queue `priority`.
+  unavailable on `storage: "redis"`. So is within-queue `priority`, which
+  is accepted on any connection but only acted on by this package's
+  driver.
 - **A job's `timeout()` is cooperative.** `retryAfter` must exceed the
   longest a job can take including its timeout, or a reclaim runs it
   concurrently with the original.
@@ -494,6 +541,7 @@ Watchtower.allows(user): Promise<boolean>
 
 // Reading
 Watchtower.stats(windowHours?): Promise<WatchtowerStats>
+Watchtower.cachedStats(ttlSeconds, windowHours?): Promise<WatchtowerStats>
 Watchtower.jobTypes(windowHours?): Promise<JobTypeSummary[]>
 Watchtower.jobType(name, windowHours?): Promise<JobTypeDetail | undefined>
 Watchtower.recentFailures(limit?): Promise<JobRunSummary[]>

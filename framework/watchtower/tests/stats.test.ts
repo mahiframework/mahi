@@ -1,11 +1,16 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { QUEUE_TOKEN } from "@mahiframework/core";
 import type { QueueManager } from "@mahiframework/queue";
 import { Watchtower } from "../src/watchtower-facade.js";
 import { WatchtowerServiceProvider } from "../src/watchtower-service-provider.js";
 import { WatchtowerQueueDriver } from "../src/drivers/watchtower-queue-driver.js";
 import { RunRecorder, type JobRunObservation } from "../src/run-recorder.js";
-import { severityForAge, severityForFailureRate, severityForState } from "../src/stats.js";
+import {
+  severityForAge,
+  severityForFailureRate,
+  severityForState,
+  TREND_BUCKETS,
+} from "../src/stats.js";
 import { WATCHTOWER_CONNECTION } from "../src/tokens.js";
 import { createHarness, type Harness } from "./__fixtures__/test-app.js";
 
@@ -234,6 +239,124 @@ describe("Watchtower.stats", () => {
   });
 });
 
+describe("completion trend", () => {
+  it("buckets completions by when they started, oldest bucket first", async () => {
+    await boot();
+    const recorder = new RunRecorder(harness.app);
+
+    // Two in the oldest bucket of a 24h window, one in the newest. The
+    // window is bucketed on elapsed time, so these land deterministically
+    // regardless of when the test runs.
+    await recorder.record(observation({ startedAt: hoursAgo(23.5), finishedAt: hoursAgo(23.5) }));
+    await recorder.record(observation({ startedAt: hoursAgo(23), finishedAt: hoursAgo(23) }));
+    await recorder.record(observation({ startedAt: hoursAgo(0.5), finishedAt: hoursAgo(0.5) }));
+
+    const types = await Watchtower.jobTypes();
+
+    expect(types[0]?.trend).toHaveLength(TREND_BUCKETS);
+    expect(types[0]?.trend[0]).toBe(2);
+    expect(types[0]?.trend[TREND_BUCKETS - 1]).toBe(1);
+    // Raw counts, so the series sums to the completion count rather than
+    // to 100.
+    expect(sum(types[0]!.trend)).toBe(types[0]?.completedCount);
+  });
+
+  it("counts completions only, leaving failures to the failure rate", async () => {
+    await boot();
+    const recorder = new RunRecorder(harness.app);
+
+    await recorder.record(observation({ status: "completed" }));
+    await recorder.record(observation({ status: "failed", error: "boom" }));
+    await recorder.record(observation({ status: "running" }));
+
+    const types = await Watchtower.jobTypes();
+
+    // A stacked series would need a second colour and a second array;
+    // the failure rate already has its own column.
+    expect(sum(types[0]!.trend)).toBe(1);
+  });
+
+  it("is all zeroes for a type that has not completed anything", async () => {
+    await boot();
+    await new RunRecorder(harness.app).record(observation({ status: "running" }));
+
+    const types = await Watchtower.jobTypes();
+
+    // Zeroes rather than an empty array, so a renderer can rely on the
+    // length without checking it.
+    expect(types[0]?.trend).toEqual(new Array(TREND_BUCKETS).fill(0));
+  });
+});
+
+describe("Watchtower.cachedStats", () => {
+  it("serves a second caller from the cache rather than reading again", async () => {
+    await boot();
+    await new RunRecorder(harness.app).record(observation({ status: "completed" }));
+
+    const first = await Watchtower.instance().cachedStats(60);
+
+    // Recorded after the first read. A fresh read would see two
+    // completions; the cached one must still report the first answer.
+    await new RunRecorder(harness.app).record(observation({ status: "completed" }));
+
+    const second = await Watchtower.instance().cachedStats(60);
+
+    expect(second.generatedAt).toBe(first.generatedAt);
+    expect(second.jobTypes[0]?.completedCount).toBe(1);
+  });
+
+  it("reads live when the ttl is zero", async () => {
+    await boot();
+
+    const first = await Watchtower.instance().cachedStats(0);
+    await new RunRecorder(harness.app).record(observation({ status: "completed" }));
+    const second = await Watchtower.instance().cachedStats(0);
+
+    expect(first.jobTypes).toEqual([]);
+    expect(second.jobTypes[0]?.completedCount).toBe(1);
+  });
+
+  it("keeps separate windows apart", async () => {
+    await boot();
+
+    // Caches the 24h window while it is empty.
+    expect((await Watchtower.instance().cachedStats(60, 24)).jobTypes).toEqual([]);
+
+    await new RunRecorder(harness.app).record(observation({ status: "completed" }));
+
+    // A different window is a different key, so this must read live and
+    // see the new completion rather than being handed the 24h answer.
+    expect((await Watchtower.instance().cachedStats(60, 1)).jobTypes[0]?.completedCount).toBe(1);
+
+    // And the 24h entry is still its own cached copy, not overwritten.
+    expect((await Watchtower.instance().cachedStats(60, 24)).jobTypes).toEqual([]);
+  });
+
+  it("falls back to a live read when the cache cannot be reached", async () => {
+    await boot();
+    await new RunRecorder(harness.app).record(observation({ status: "completed" }));
+
+    vi.spyOn(harness.store, "get").mockRejectedValue(new Error("cache is down"));
+
+    // A dashboard that 500s because its cache is unavailable is worse
+    // than one that simply does the work.
+    const stats = await Watchtower.instance().cachedStats(60);
+
+    expect(stats.jobTypes[0]?.completedCount).toBe(1);
+  });
+
+  it("leaves the uncached read live, so an operator never sees a stale answer", async () => {
+    await boot();
+
+    await Watchtower.instance().cachedStats(60);
+    await new RunRecorder(harness.app).record(observation({ status: "completed" }));
+
+    // `watchtower:status` run straight after a change must not be served
+    // the dashboard's cached copy.
+    expect((await Watchtower.stats()).jobTypes[0]?.completedCount).toBe(1);
+  });
+});
+
 describe("severity thresholds", () => {
   it("treats an absent age as healthy", () => {
     // A queue is not unhealthy for being empty.
@@ -263,4 +386,12 @@ describe("severity thresholds", () => {
 
 function nowIso(): string {
   return new Date().toISOString().slice(0, 19) + "Z";
+}
+
+function hoursAgo(hours: number): string {
+  return new Date(Date.now() - hours * 3_600_000).toISOString().slice(0, 19) + "Z";
+}
+
+function sum(values: number[]): number {
+  return values.reduce((total, value) => total + value, 0);
 }

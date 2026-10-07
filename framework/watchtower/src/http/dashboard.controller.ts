@@ -102,7 +102,10 @@ export class DashboardController {
     }
 
     const urls = this.urls(dashboard.prefix);
-    const stats = await watchtower.stats();
+    // Cached for one poll interval. The page is already stale by up to
+    // that long by the time it is read, so this costs no accuracy, and it
+    // collapses every open tab onto one read instead of one each.
+    const stats = await watchtower.cachedStats(dashboard.pollSeconds);
     const view = request.query("view");
 
     if (view === "failed") {

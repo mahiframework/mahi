@@ -190,6 +190,10 @@ export class WatchtowerManager {
    * Stored as a list under one key rather than discovered by scanning:
    * `CacheStore` has no key-pattern search, deliberately, and a `SCAN`
    * would be Redis-specific.
+   *
+   * Fails soft, like every other read in `DeferralStore`: an unreadable
+   * cache reports no workers rather than propagating, so one unavailable
+   * number cannot take down a whole status read.
    */
   async runIds(name: string): Promise<string[]> {
     const store = this.deferrals.store();
@@ -198,7 +202,16 @@ export class WatchtowerManager {
       return [];
     }
 
-    return (await store.get<string[]>(`watchtower:workers:${name}`)) ?? [];
+    try {
+      return (await store.get<string[]>(`watchtower:workers:${name}`)) ?? [];
+    } catch (error) {
+      this.app.logger.error("watchtower: could not read published worker run ids.", {
+        process: name,
+        error,
+      });
+
+      return [];
+    }
   }
 
   /** Publish the run ids a supervisor is currently running for a process. */
@@ -223,6 +236,46 @@ export class WatchtowerManager {
   /** The overview: totals, processes, queues, job types, recent failures. */
   stats(windowHours?: number): Promise<WatchtowerStats> {
     return this.reader().stats(windowHours);
+  }
+
+  /**
+   * The overview, reused for up to `ttlSeconds` across callers.
+   *
+   * A full read is expensive: every job type's runs in the window are
+   * loaded to compute its percentiles, and the dashboard asks for all of
+   * it on every poll of every open tab. Those polls are the only caller
+   * that benefits, and they are the reason this exists.
+   *
+   * Separate from `stats()` rather than folded into it, because a cached
+   * read is the wrong default for a public API: an operator running
+   * `watchtower:status` straight after `watchtower:pause` must not be
+   * shown the pre-pause answer. A caller opts in only where staleness is
+   * already part of the contract.
+   *
+   * Fails soft in both directions — no cache store, or a cache that
+   * errors, degrades to a live read rather than an error page. An
+   * in-memory store makes this per-process rather than fleet-wide, which
+   * still collapses one process's concurrent viewers to one read.
+   */
+  async cachedStats(ttlSeconds: number, windowHours?: number): Promise<WatchtowerStats> {
+    const store = this.deferrals.store();
+
+    if (!store || ttlSeconds <= 0) {
+      return this.stats(windowHours);
+    }
+
+    const key = `watchtower:stats:${windowHours ?? "default"}`;
+
+    try {
+      // Via the lock, because a burst of viewers arriving on an expired
+      // key is exactly the stampede this is meant to prevent: without it
+      // the first poll after each expiry runs the full read once per tab.
+      return await store.rememberViaLock(key, () => this.stats(windowHours), ttlSeconds);
+    } catch (error) {
+      this.app.logger.error("watchtower: could not read cached stats.", { error });
+
+      return this.stats(windowHours);
+    }
   }
 
   /** Rolling aggregates per job type, busiest first. */

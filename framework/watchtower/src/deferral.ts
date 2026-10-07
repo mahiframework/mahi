@@ -191,8 +191,21 @@ export class DeferralStore {
     await this.store()?.put(heartbeatKey(runId), payload, ttlSeconds);
   }
 
+  /**
+   * One worker's last heartbeat, or `undefined`.
+   *
+   * Fails soft for the reason every read here does: a status read asks
+   * this once per published run id, and an unreadable cache should cost
+   * the worker count rather than the whole page.
+   */
   async heartbeatFor(runId: string): Promise<WorkerHeartbeat | undefined> {
-    return this.store()?.get<WorkerHeartbeat>(heartbeatKey(runId));
+    try {
+      return await this.store()?.get<WorkerHeartbeat>(heartbeatKey(runId));
+    } catch (error) {
+      this.app.logger.error("watchtower: could not read a worker heartbeat.", { runId, error });
+
+      return undefined;
+    }
   }
 }
 
