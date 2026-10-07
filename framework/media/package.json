@@ -47,7 +47,7 @@
     "node": ">=26"
   },
   "sideEffects": false,
-  "description": "Media \u2014 a polymorphic media model, uploads, and image modifiers for Mahi.",
+  "description": "Media — a polymorphic media model, uploads, and image modifiers for Mahi.",
   "keywords": [
     "mahi",
     "media",

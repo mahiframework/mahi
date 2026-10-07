@@ -50,7 +50,7 @@
     "node": ">=26"
   },
   "sideEffects": false,
-  "description": "Queues \u2014 background job dispatch and workers over sync, database, and Redis drivers, for Mahi.",
+  "description": "Queues — background job dispatch and workers over sync, database, and Redis drivers, for Mahi.",
   "keywords": [
     "mahi",
     "queue",

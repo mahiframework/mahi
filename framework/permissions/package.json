@@ -49,7 +49,7 @@
     "node": ">=26"
   },
   "sideEffects": false,
-  "description": "Permissions \u2014 roles, permissions, and cached authorization checks for Mahi.",
+  "description": "Permissions — roles, permissions, and cached authorization checks for Mahi.",
   "keywords": [
     "mahi",
     "permissions",
