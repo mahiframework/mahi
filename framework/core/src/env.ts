@@ -9,7 +9,10 @@ import { existsSync } from "node:fs";
 import { config as loadDotenv } from "dotenv";
 import type { z } from "zod";
 
-export interface LoadEnvOptions<TSchema extends z.ZodTypeAny> {
+// `z.ZodType` without type arguments, which is what Zod 4 asks for here:
+// `ZodTypeAny` still exists but only in Zod's `compat` module, marked
+// `@deprecated Use z.ZodType (without generics) instead`.
+export interface LoadEnvOptions<TSchema extends z.ZodType> {
   schema: TSchema;
   /** Path to the base .env file. Defaults to ".env" in the current working directory. */
   path?: string;
@@ -21,7 +24,7 @@ export interface LoadEnvOptions<TSchema extends z.ZodTypeAny> {
   environment?: string;
 }
 
-export function loadEnv<TSchema extends z.ZodTypeAny>(
+export function loadEnv<TSchema extends z.ZodType>(
   options: LoadEnvOptions<TSchema>,
 ): z.infer<TSchema> {
   const path = options.path ?? ".env";
