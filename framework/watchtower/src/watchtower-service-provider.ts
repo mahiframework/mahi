@@ -6,6 +6,7 @@ import {
   type RegisteredMigration,
 } from "@mahiframework/database";
 import type { ListenerRegistration } from "@mahiframework/events";
+import type { Router } from "@mahiframework/http";
 import {
   JobFailed,
   JobProcessed,
@@ -16,6 +17,8 @@ import {
 import { WatchtowerManager } from "./watchtower-manager.js";
 import { RecordJobRunListener } from "./listeners/record-job-run.listener.js";
 import { RECORD_JOB_RUN_JOB, RecordJobRunJob } from "./jobs/record-job-run.job.js";
+import { DashboardController } from "./http/dashboard.controller.js";
+import { watchtowerGate } from "./http/gate.js";
 import { resolveConfig, type WatchtowerConfig } from "./watchtower-config.js";
 import { configErrors } from "./validate-config.js";
 import { WatchtowerConfigError } from "./errors.js";
@@ -192,6 +195,56 @@ export class WatchtowerServiceProvider extends ServiceProvider {
       WatchtowerJobType as unknown as AnyModelClass,
       WatchtowerJobRun as unknown as AnyModelClass,
     ];
+  }
+
+  /**
+   * The dashboard's three routes, registered ONLY when
+   * `watchtower.dashboard` is present.
+   *
+   * Key presence is the switch rather than an `enabled` flag, matching
+   * `impersonation.routes` and `http.healthCheck` — in this framework an
+   * opt-in feature gates on its key existing. Absent, this hook returns
+   * before touching the router and the dashboard is unreachable rather
+   * than merely unauthorized.
+   *
+   * ## Pipe order is load-bearing
+   *
+   * `group.middleware()` MUST precede every route, and
+   * `Router.middleware()` throws if called after one is registered —
+   * which is precisely so an authorization pipe that guards nothing is a
+   * boot failure rather than a silent hole.
+   *
+   * The app's own pipes run first (they establish WHO the user is), then
+   * `watchtowerGate()` last (it decides whether that user may look). The
+   * gate is appended by this package and cannot be removed from config,
+   * because the failure mode of a forgotten authorization check here is
+   * every job payload in the application.
+   *
+   * ## Routes are not named
+   *
+   * `RouteRegistry.register()` throws on a duplicate name, and an app
+   * that already owns `watchtower.*` would get a boot failure from
+   * merely enabling the dashboard. The URLs are built from the
+   * configured prefix instead, which is also what lets the prefix move.
+   */
+  routes(router: Router): void {
+    const config = this.app.config.get<WatchtowerConfig["dashboard"]>("watchtower.dashboard");
+
+    if (!config) {
+      return;
+    }
+
+    const controller = new DashboardController(this.app);
+
+    router.group(config.prefix ?? "/watchtower", (group) => {
+      group.middleware(...(config.middleware ?? []), watchtowerGate());
+
+      // `/data` before the bare prefix, because a wildcard-ish match on
+      // the group root would otherwise swallow it.
+      group.get("/data", (request) => controller.data(request));
+      group.post("/retry/{run}", (request) => controller.retry(request));
+      group.get("/", (request) => controller.page(request));
+    });
   }
 
   commands() {

@@ -1,23 +1,8 @@
 import type { HttpPipe } from "@mahiframework/http";
-
-/**
- * Renders the dashboard page.
- *
- * Declared here rather than imported so the config module stays loadable
- * before anything else exists; the bundled implementation and the
- * plain-data page it takes live under `dashboard/`.
- */
-export interface DashboardTheme {
-  render(page: DashboardPage): string;
-}
-
-/**
- * The page a theme renders: plain data, no HTML.
- *
- * Widened to `unknown` until the section union lands, so the seam is
- * declared without pinning a shape the renderer has not needed yet.
- */
-export type DashboardPage = Record<string, unknown>;
+// Imported rather than re-declared: a second structural copy of this
+// interface silently diverges, and the two are not assignable once
+// either grows a method.
+import type { DashboardTheme } from "./dashboard/dashboard-theme.js";
 
 /**
  * The `"watchtower"` config namespace.

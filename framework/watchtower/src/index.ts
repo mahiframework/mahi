@@ -25,9 +25,33 @@ export type {
   ResolvedProcessConfig,
   ResolvedRecordingConfig,
   ResolvedDashboardConfig,
-  DashboardTheme,
-  DashboardPage,
 } from "./watchtower-config.js";
+
+export { DefaultDashboardTheme } from "./dashboard/default-dashboard-theme.js";
+export { DASHBOARD_STYLES } from "./dashboard/styles.js";
+export type { DashboardTheme } from "./dashboard/dashboard-theme.js";
+export type {
+  DashboardPage,
+  DashboardSection,
+  DashboardNav,
+  DashboardLink,
+  AlertSection,
+  MetricStripSection,
+  DashboardMetric,
+  TableSection,
+  DashboardRow,
+  DashboardCell,
+  ColumnsSection,
+  FailureListSection,
+  DashboardFailure,
+  ChainListSection,
+  DashboardChain,
+  DashboardChainAttempt,
+  EmptySection,
+} from "./dashboard/dashboard-page.js";
+export { buildOverview, buildFailed, buildJobType } from "./dashboard/build-page.js";
+export type { DashboardUrls } from "./dashboard/build-page.js";
+export { DashboardController } from "./http/dashboard.controller.js";
 
 // `validateConfig` is exported for `watchtower:check`, which reports
 // warnings too; `configErrors` is the provider's boot-time subset and has

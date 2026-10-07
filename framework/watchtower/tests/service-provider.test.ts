@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { QUEUE_TOKEN } from "@mahiframework/core";
 import type { QueueManager } from "@mahiframework/queue";
 import { WatchtowerServiceProvider } from "../src/watchtower-service-provider.js";
@@ -25,6 +25,15 @@ async function boot(config?: Record<string, unknown>): Promise<Harness> {
   await harness.app.bootstrap();
 
   return harness;
+}
+
+function provider(): WatchtowerServiceProvider {
+  return harness.app
+    .getProviders()
+    .find(
+      (candidate): candidate is WatchtowerServiceProvider =>
+        candidate instanceof WatchtowerServiceProvider,
+    )!;
 }
 
 describe("WatchtowerServiceProvider", () => {
@@ -123,19 +132,78 @@ describe("WatchtowerServiceProvider", () => {
     expect(provider.models()).toHaveLength(2);
   });
 
-  it("registers no routes, because no dashboard key is configured", async () => {
+  it("registers no routes when no dashboard key is configured", async () => {
     await boot();
 
-    const provider = harness.app
-      .getProviders()
-      .find(
-        (candidate): candidate is WatchtowerServiceProvider =>
-          candidate instanceof WatchtowerServiceProvider,
-      )!;
+    // Key presence is the switch, so the hook must return before
+    // touching the router at all — not register routes that then refuse.
+    const router = { group: vi.fn() };
 
-    // Key presence is the switch. Asserted on the hook rather than by
-    // probing a request, so "no key means no routes" is pinned even
-    // before the dashboard exists.
-    expect(provider.routes).toBeUndefined();
+    provider().routes?.(router as never);
+
+    expect(router.group).not.toHaveBeenCalled();
+  });
+
+  it("registers the dashboard group when the key is present", async () => {
+    await boot({ dashboard: { prefix: "/ops/queue" } });
+
+    const registered: Array<[string, string]> = [];
+    const group = {
+      middleware: vi.fn(),
+      get: (path: string) => registered.push(["get", path]),
+      post: (path: string) => registered.push(["post", path]),
+    };
+    const router = {
+      group: (prefix: string, callback: (g: unknown) => void) => {
+        registered.push(["prefix", prefix]);
+        callback(group);
+      },
+    };
+
+    provider().routes?.(router as never);
+
+    expect(registered).toEqual([
+      ["prefix", "/ops/queue"],
+      // `/data` before the group root, so a root match cannot swallow it.
+      ["get", "/data"],
+      ["post", "/retry/{run}"],
+      ["get", "/"],
+    ]);
+  });
+
+  it("always appends the gate after the app's own middleware", async () => {
+    const appPipe = vi.fn();
+    await boot({ dashboard: { middleware: [appPipe] } });
+
+    const group = { middleware: vi.fn(), get: vi.fn(), post: vi.fn() };
+
+    provider().routes?.({
+      group: (_prefix: string, callback: (g: unknown) => void) => callback(group),
+    } as never);
+
+    // One call, before any route — `Router.middleware()` throws if it
+    // comes after one, precisely so a guard that guards nothing is a
+    // boot failure.
+    expect(group.middleware).toHaveBeenCalledTimes(1);
+
+    const pipes = group.middleware.mock.calls[0]!;
+
+    // The app establishes who the user is; the gate decides whether they
+    // may look, and it is last and not removable.
+    expect(pipes).toHaveLength(2);
+    expect(pipes[0]).toBe(appPipe);
+    expect(typeof pipes[1]).toBe("function");
+  });
+
+  it("appends the gate even when the app configures no middleware", async () => {
+    await boot({ dashboard: {} });
+
+    const group = { middleware: vi.fn(), get: vi.fn(), post: vi.fn() };
+
+    provider().routes?.({
+      group: (_prefix: string, callback: (g: unknown) => void) => callback(group),
+    } as never);
+
+    expect(group.middleware.mock.calls[0]).toHaveLength(1);
   });
 });
