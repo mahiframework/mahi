@@ -47,6 +47,27 @@ export interface PushOptions {
   delaySeconds?: number;
   chain?: ChainedJob[];
   queue?: string;
+  /**
+   * Ordering hint within one queue, higher first. Ignored by drivers that
+   * cannot honour it.
+   *
+   * Declared here rather than only where it is implemented so an
+   * application can actually set it: `QueueManager.dispatch()` forwards
+   * only the fields it knows about, so an option absent from this
+   * interface is unreachable through the dispatch API no matter which
+   * driver is configured.
+   *
+   * Honoured by `@mahiframework/watchtower`'s driver, whose table has the
+   * column and the index to order on. The built-in `database` driver and
+   * Redis's both ignore it: Redis's ready set is a LIST, which has no
+   * cheap priority insert, and `jobs` has no column to sort on. This is
+   * the same latitude `delaySeconds` already has on `sync`, where there
+   * is nothing to delay.
+   *
+   * Cross-queue priority is a worker's ordered queue list instead, which
+   * every driver supports.
+   */
+  priority?: number;
 }
 
 /**

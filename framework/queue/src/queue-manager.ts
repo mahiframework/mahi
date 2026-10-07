@@ -1,5 +1,5 @@
 import { Manager, type Application } from "@mahiframework/core";
-import { supportsAfterCommit, type QueueDriver } from "./queue-driver.js";
+import { supportsAfterCommit, type PushOptions, type QueueDriver } from "./queue-driver.js";
 import type { Job } from "./job.js";
 import { JobRegistry } from "./job-registry.js";
 import { encodeJob } from "./job-serialization.js";
@@ -52,6 +52,14 @@ export interface DispatchOptions {
    * connection's `afterCommit` config, then to `false`.
    */
   afterCommit?: boolean;
+  /**
+   * Ordering hint within the target queue, higher first. Silently ignored
+   * by connections that cannot honour it — see `PushOptions.priority`.
+   *
+   * For ordering ACROSS queues, give the worker an ordered queue list
+   * instead; that works on every connection.
+   */
+  priority?: number;
 }
 
 /**
@@ -148,9 +156,15 @@ export class QueueManager extends Manager<QueueDriver> {
     }
 
     const state = encodeJob(this.app, job);
-    const pushOptions = {
+    // Built field by field rather than spread from `options`: the two
+    // shapes differ (`chain` is encoded here, `connection`/`afterCommit`
+    // are this method's own concerns), so a driver never receives a
+    // dispatch-level option it has no meaning for. Anything a driver is
+    // meant to see has to be listed here.
+    const pushOptions: PushOptions = {
       delaySeconds: options?.delaySeconds,
       queue: options?.queue,
+      priority: options?.priority,
       chain: options?.chain?.map((link) => ({
         jobClass: registry.nameFor(link),
         state: encodeJob(this.app, link),

@@ -19,6 +19,7 @@ describe("FakeQueueDriver", () => {
         chain: [],
         queue: "default",
         afterCommit: false,
+        priority: 0,
       },
       {
         jobClass: "posts:log-created",
@@ -27,6 +28,7 @@ describe("FakeQueueDriver", () => {
         chain: [],
         queue: "default",
         afterCommit: false,
+        priority: 0,
       },
     ]);
   });
@@ -36,6 +38,18 @@ describe("FakeQueueDriver", () => {
     await driver.push("a", { n: 1 });
     await driver.push("b", { n: 2 });
     expect(driver.pushed().map((j) => j.jobClass)).toEqual(["a", "b"]);
+  });
+
+  it("records the priority a push asked for, so a filter can assert on it", async () => {
+    const driver = new FakeQueueDriver();
+
+    await driver.push("invoices:sync", { id: "i1" }, { priority: 10 });
+    await driver.push("invoices:sync", { id: "i2" });
+
+    // No built-in driver acts on `priority`, but a test asserting that
+    // the application asked for one is asserting about its own code.
+    expect(driver.pushed("invoices:sync", (job) => job.priority === 10)).toHaveLength(1);
+    expect(driver.pushed("invoices:sync").map((job) => job.priority)).toEqual([10, 0]);
   });
 
   it("pushed() accepts a filter predicate", async () => {

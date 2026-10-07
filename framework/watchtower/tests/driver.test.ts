@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { QueuedJob } from "@mahiframework/queue";
+import { Job, type PushOptions, type QueuedJob } from "@mahiframework/queue";
 import {
   WatchtowerQueueDriver,
   isWatchtowerJob,
@@ -13,6 +13,11 @@ let harness: Harness;
 afterEach(() => {
   harness?.cleanup();
 });
+
+/** Dispatched through `QueueManager` to prove `priority` survives the trip. */
+class PrioritisedJob extends Job {
+  handle(): void {}
+}
 
 function makeDriver(
   options: {
@@ -150,9 +155,9 @@ describe("WatchtowerQueueDriver", () => {
       harness = await createHarness();
       const driver = makeDriver();
 
-      await driver.push("app.jobs.low", {}, { priority: 0 } as never);
-      await driver.push("app.jobs.high", {}, { priority: 10 } as never);
-      await driver.push("app.jobs.mid", {}, { priority: 5 } as never);
+      await driver.push("app.jobs.low", {}, { priority: 0 });
+      await driver.push("app.jobs.high", {}, { priority: 10 });
+      await driver.push("app.jobs.mid", {}, { priority: 5 });
 
       expect((await driver.pop())?.jobClass).toBe("app.jobs.high");
       expect((await driver.pop())?.jobClass).toBe("app.jobs.mid");
@@ -163,8 +168,8 @@ describe("WatchtowerQueueDriver", () => {
       harness = await createHarness();
       const driver = makeDriver();
 
-      await driver.push("app.jobs.first", {}, { priority: 5 } as never);
-      await driver.push("app.jobs.second", {}, { priority: 5 } as never);
+      await driver.push("app.jobs.first", {}, { priority: 5 });
+      await driver.push("app.jobs.second", {}, { priority: 5 });
 
       expect((await driver.pop())?.jobClass).toBe("app.jobs.first");
       expect((await driver.pop())?.jobClass).toBe("app.jobs.second");
@@ -174,9 +179,55 @@ describe("WatchtowerQueueDriver", () => {
       harness = await createHarness();
       const driver = makeDriver();
 
-      // Postgres rejects NaN against a smallint outright, so this would
-      // be a hard insert failure rather than a wrong sort.
-      await driver.push("app.jobs.odd", {}, { priority: "high" } as never);
+      // The cast is the point: `priority` is typed `number`, so this is
+      // an untyped caller (plain JavaScript, a parsed query string).
+      // Postgres rejects NaN against a smallint outright, so coercing it
+      // here is the difference between a 0 and a hard insert failure.
+      await driver.push("app.jobs.odd", {}, { priority: "high" } as unknown as PushOptions);
+
+      const job = await driver.pop();
+      expect((await rowFor(job!.id)).priority).toBe(0);
+    });
+
+    it("truncates a fractional priority rather than rounding into the next band", async () => {
+      harness = await createHarness();
+      const driver = makeDriver();
+
+      await driver.push("app.jobs.fractional", {}, { priority: 5.9 });
+
+      const job = await driver.pop();
+      expect((await rowFor(job!.id)).priority).toBe(5);
+    });
+
+    it("carries a dispatched priority all the way to the column", async () => {
+      harness = await createHarness();
+      const driver = makeDriver();
+
+      // Through `QueueManager.dispatch()` rather than `driver.push()`,
+      // because that method forwards a hand-built options literal: a
+      // field it does not name is dropped before any driver sees it, so
+      // only an end-to-end dispatch proves the option is reachable at all
+      // from application code.
+      harness.registry.register("app.jobs.prioritised", PrioritisedJob);
+      harness.queue.extend("watchtower", () => driver);
+
+      await harness.queue.dispatch(new PrioritisedJob(), {
+        connection: "watchtower",
+        priority: 7,
+      });
+
+      const job = await driver.pop();
+      expect((await rowFor(job!.id)).priority).toBe(7);
+    });
+
+    it("defaults a dispatch that names no priority to zero", async () => {
+      harness = await createHarness();
+      const driver = makeDriver();
+
+      harness.registry.register("app.jobs.prioritised", PrioritisedJob);
+      harness.queue.extend("watchtower", () => driver);
+
+      await harness.queue.dispatch(new PrioritisedJob(), { connection: "watchtower" });
 
       const job = await driver.pop();
       expect((await rowFor(job!.id)).priority).toBe(0);

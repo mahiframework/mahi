@@ -21,7 +21,7 @@ export type JobIdentifier = string | JobClass;
  * registered name, its serialized `state` (the job-instance fields, with
  * any `Model` encoded to a `{ __model, __id }` reference), the
  * `delaySeconds` it was pushed with (0 when dispatched without a delay),
- * and any chain attached to it.
+ * its `priority`, and any chain attached to it.
  */
 export interface PushedJob {
   jobClass: string;
@@ -38,6 +38,15 @@ export interface PushedJob {
    * deferred and the transaction really did commit".
    */
   afterCommit: boolean;
+  /**
+   * The within-queue ordering hint it was pushed with, `0` by default.
+   *
+   * Recorded even though no built-in driver acts on it: a test asserting
+   * that a dispatch asked for a priority is asserting about its own code,
+   * not about the driver that would honour it, and dropping the value
+   * here would make such a test pass against nothing.
+   */
+  priority: number;
 }
 
 /**
@@ -138,6 +147,7 @@ export class FakeQueueDriver implements QueueDriver {
       chain: options.chain ?? [],
       queue: options.queue ?? "default",
       afterCommit: afterCommitFlag,
+      priority: options.priority ?? 0,
     });
   }
 

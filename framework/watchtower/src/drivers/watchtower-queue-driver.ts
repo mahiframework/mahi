@@ -696,15 +696,21 @@ function encodeChain(chain: ChainedJob[] | undefined): string | null {
 }
 
 /**
- * The priority a push asked for, if any.
+ * The priority a push asked for, or 0 when it did not ask.
  *
- * `PushOptions` has no `priority` field — it is this package's addition,
- * so a dispatch sets it through an extra property the core interface
- * ignores. Read defensively: anything non-finite becomes 0 rather than
- * reaching the database as `NaN`, which Postgres rejects outright.
+ * `PushOptions.priority` is typed `number | undefined`, but the check is
+ * not redundant: the value reaches here from an app, and an untyped
+ * caller (plain JavaScript, a JSON config, a parsed query string) can
+ * still hand over a string or `NaN`. `NaN` against a `smallint` is a hard
+ * insert failure on Postgres, so a bad value must become 0 here rather
+ * than a wrong sort order or a crash at the database.
+ *
+ * Truncated rather than rounded: `priority` is a band, and a fractional
+ * one is a caller error rather than a request to round up into the band
+ * above.
  */
 function priorityOf(options: PushOptions): number {
-  const priority = (options as PushOptions & { priority?: unknown }).priority;
+  const priority: unknown = options.priority;
 
   return typeof priority === "number" && Number.isFinite(priority) ? Math.trunc(priority) : 0;
 }

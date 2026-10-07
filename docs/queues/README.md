@@ -459,9 +459,27 @@ per-name caching, same as every other manager.
 | `chain(jobs, options?)` | Enqueue an ordered chain. |
 
 ```ts
-dispatch(job: Job, options?: { delaySeconds?: number; connection?: string; chain?: Job[] }): Promise<void>
-chain(jobs: Job[], options?: { delaySeconds?: number; connection?: string }): Promise<void>
+dispatch(job: Job, options?: {
+  delaySeconds?: number;
+  connection?: string;
+  queue?: string;
+  chain?: Job[];
+  afterCommit?: boolean;
+  priority?: number;
+}): Promise<void>
+chain(jobs: Job[], options?: Omit<DispatchOptions, "chain">): Promise<void>
 ```
+
+`priority` orders a job within its queue, higher first. **No built-in
+driver acts on it** — `jobs` has no column to sort on, Redis's ready set
+is a list, and `sync` runs the job before there is anything to order it
+against. `@mahiframework/watchtower`'s driver honours it.
+
+It is declared on core `PushOptions` anyway, because that is what makes it
+settable at all: `dispatch()` forwards a hand-built options object, so an
+option the interface does not name never reaches any driver. For ordering
+across queues, give the worker an ordered queue list instead — that works
+everywhere.
 
 ### The `Bus` facade
 
@@ -805,6 +823,7 @@ interface PushedJob {
   chain: ChainedJob[];       // [] when unchained
   queue: string;             // "default" unless a queue was named
   afterCommit: boolean;      // true if it was deferred and the tx committed
+  priority: number;          // 0 unless a priority was asked for
 }
 ```
 
@@ -849,6 +868,7 @@ runner-agnostic.
 | Reclaims a crashed worker's job | n/a | yes (`retryAfter`) | n/a | yes (`retryAfter`) |
 | Named queues | n/a | yes | records them | yes |
 | `afterCommit` | yes | yes | yes | no¹ |
+| Within-queue `priority` | n/a | no² | records it | no² |
 | Multi-process | n/a | yes | n/a | yes |
 | Needs a worker | no | yes | no | yes |
 
@@ -856,6 +876,10 @@ runner-agnostic.
 `{ afterCommit: true }` still works, `QueueManager` falls back to an
 immediate push, but it does not defer. Use the `database` connection for
 jobs that must not be visible before their rows are committed.
+
+² Accepted and ignored: `jobs` has no column to sort on, and Redis's ready
+set is a list with no cheap priority insert. `@mahiframework/watchtower`'s
+driver has both and honours it.
 
 ### `redis`
 
