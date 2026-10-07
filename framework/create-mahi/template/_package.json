@@ -33,7 +33,6 @@
     "@mahiframework/queue": "^0.1.4",
     "@mahiframework/redis": "^0.1.4",
     "@mahiframework/schedule": "^0.1.4",
-    "@mahiframework/snowflake": "^0.1.4",
     "@mahiframework/storage": "^0.1.4",
     "zod": "^4.6.5"
   },

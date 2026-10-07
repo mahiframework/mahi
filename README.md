@@ -88,7 +88,6 @@ framework/            The framework packages (published as @mahiframework/*)
   mail/                 MailManager, Mailable, SMTP/log/array transports
   notifications/        Notification, Notifiable, mail/database/broadcast channels
   testing/              createTestApplication(), TestClient — test helpers for apps built on Mahi
-  snowflake/            Snowflake IDs (microsecond, 63-bit), HasSnowflake, Cache/File sequence resolvers
   datetime/             Immutable DateTime, Duration, Interval, Period
   tui/                  Terminal UI — prompts, tables, spinners, progress bars
   create-mahi/          The `npm create mahi@latest` scaffolder + the base app template

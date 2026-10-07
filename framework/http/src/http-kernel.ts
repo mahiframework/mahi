@@ -5,7 +5,7 @@ import { METHOD_NAME_ALL } from "hono/router";
 import { TrieRouter } from "hono/router/trie-router";
 import { createNodeWebSocket, type NodeWebSocket } from "@hono/node-ws";
 import type { ServerType } from "@hono/node-server";
-import type { Application } from "@mahiframework/core";
+import { runInvocationScope, type Application } from "@mahiframework/core";
 import type { WebSocketSupport } from "./websocket.js";
 import { Router } from "./router.js";
 import { RouteRegistry } from "./route-registry.js";
@@ -431,14 +431,15 @@ export class HttpKernel {
   private installProviderMiddleware(): void {
     const pipes: HttpPipe[] = [];
 
-    // Open a per-request Context overlay FIRST, outermost of everything,
-    // ahead of even the maintenance check, so any context added by any
-    // downstream pipe or handler (request id, current user, …) is isolated
-    // to this request and can't bleed into another concurrent one. See
-    // `ContextRepository.runScoped()`. Cheap: one AsyncLocalStorage.run
-    // per request.
-    const context = this.app.context;
-    pipes.push((request, next) => context.runScoped(() => next(request)));
+    // Open the per-request invocation scope FIRST, outermost of
+    // everything, ahead of even the maintenance check, so any context
+    // added by any downstream pipe or handler (current user, …) is
+    // isolated to this request and can't bleed into another concurrent
+    // one, and so every log line this request produces carries its
+    // invocation id. This is the event that identifies a new request:
+    // it assigns the id, and every log line from here on is correlatable
+    // back to it. See `runInvocationScope()`.
+    pipes.push((request, next) => runInvocationScope(this.app, () => next(request)));
 
     // Maintenance-mode check runs next, ahead of every provider pipe,
     // so a downed app short-circuits before auth/throttle/etc. It's a

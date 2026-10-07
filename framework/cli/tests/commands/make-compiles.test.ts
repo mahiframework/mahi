@@ -49,7 +49,6 @@ const MAHI_PACKAGES = [
   "mail",
   "notifications",
   "queue",
-  "snowflake",
   "authorization",
   "cli",
   "tui",

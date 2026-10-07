@@ -56,7 +56,7 @@ export interface SettingRecordAttributes {
    * Who last changed it, or null for an unattributed write (a seeder, a
    * CLI command, a queue worker).
    *
-   * TEXT, not the app's key type: an app's user may key on a snowflake,
+   * TEXT, not the app's key type: an app's user may key on an integer,
    * a UUID or an int, and only text holds all three. No foreign key —
    * `users` is app-owned and the framework cannot assume its name.
    */

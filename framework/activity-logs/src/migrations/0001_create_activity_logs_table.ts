@@ -13,7 +13,7 @@ import { Schema, type Migration, type Blueprint } from "@mahiframework/database"
  * `model_id` and `user_id` are TEXT, not the owner's key type. The
  * reasoning is the one `0001_create_notifications_table` records for
  * `notifiable_id`: these hold the key of *any* model, and two models in
- * one app can key differently (a UUID `User`, a snowflake `Team`). Only
+ * one app can key differently (a UUID `User`, an integer `Team`). Only
  * text holds both. An activity log is strictly more polymorphic than a
  * notification, so it applies with more force.
  *

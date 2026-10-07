@@ -401,12 +401,15 @@ make every link fail verification behind a proxy that rewrites the host.
 installed as a single Hono `use("*")` handler ahead of route dispatch. The
 order is fixed:
 
-1. **Context overlay.** `(request, next) => context.runScoped(() => next(request))`.
-   Outermost of everything, ahead of even the maintenance check, so
-   anything a downstream pipe or handler adds to the [context](../container/)
-   (request id, current user, the request root the URL generator reads) is
-   isolated to this request and cannot bleed into a concurrent one. Cost is
-   one `AsyncLocalStorage.run` per request.
+1. **Invocation scope.** `(request, next) => runInvocationScope(this.app, () => next(request))`.
+   Outermost of everything, ahead of even the maintenance check. This is
+   the event that identifies a new request: it assigns the request's
+   [invocation id](../logging/#invocation-ids), so every log line from
+   here on is correlatable back to it, and opens the matching
+   [context](../container/) overlay and container resolution scope, so
+   anything a downstream pipe or handler adds (current user, the request
+   root the URL generator reads) is isolated to this request and cannot
+   bleed into a concurrent one. Cost is one `AsyncLocalStorage.run` each.
 2. **Maintenance mode**, if `MAINTENANCE_MODE_TOKEN` is bound. Ahead of every
    provider pipe, so a downed app short-circuits before auth, throttling, or
    anything else runs. When the app is up this is a cached check of the

@@ -15,7 +15,6 @@ import { BroadcastServiceProvider } from "@mahiframework/broadcasting";
 import { RedisServiceProvider } from "@mahiframework/redis";
 import { MailServiceProvider } from "@mahiframework/mail";
 import { NotificationsServiceProvider } from "@mahiframework/notifications";
-import { SnowflakeServiceProvider } from "@mahiframework/snowflake";
 import { HealthServiceProvider } from "@mahiframework/health";
 import { AppServiceProvider } from "../src/providers/app.provider.js";
 
@@ -86,7 +85,6 @@ export const providers: ServiceProviderClass[] = [
   RedisServiceProvider,
   MailServiceProvider,
   NotificationsServiceProvider,
-  SnowflakeServiceProvider,
   HealthServiceProvider,
 
   AppServiceProvider,

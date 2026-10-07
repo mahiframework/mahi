@@ -596,7 +596,6 @@ export const providers: ServiceProviderClass[] = [
   RedisServiceProvider,
   MailServiceProvider,
   NotificationsServiceProvider,
-  SnowflakeServiceProvider,
 
   AppServiceProvider,
 ];

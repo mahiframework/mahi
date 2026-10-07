@@ -58,8 +58,8 @@ export function resolveActor(actor: SettingActor | undefined): string | null {
  * when the primary key is not named `id`, then `id` itself for a
  * non-model user (a token-guard adapter, a test stub). `bigint` and
  * `number` both stringify: the framework treats keys as decimal strings
- * for cross-engine identity, and the scaffolded `User` keys on a
- * snowflake.
+ * for cross-engine identity, and the scaffolded `User` keys on an
+ * auto-increment `bigint`.
  *
  * Returns null rather than throwing on an unusual user source. A missing
  * attribution is a weaker failure than a rejected write, and the setting

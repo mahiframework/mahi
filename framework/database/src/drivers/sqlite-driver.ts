@@ -117,7 +117,7 @@ function wideColumns(db: BetterSqlite3.Database, columns: ColumnMetadata[]): Set
  * The decision is **by column type, never by value**: a `bigint` column
  * holding `5` still comes back as `5n`. Deciding per value would make a
  * column's JS type depend on its contents — `number` in a test with
- * small fixtures, `bigint` in production with real snowflakes — which is
+ * small fixtures, `bigint` in production with real 64-bit ids — which is
  * the kind of difference that passes CI and fails live.
  */
 function narrowByColumnType(rows: unknown[], wide: Set<string>): void {
@@ -280,7 +280,7 @@ export class SqliteDriver<DB = any> implements DatabaseDriver<DB> {
     // columns back to `number` (see `narrowByColumnType`).
     //
     // better-sqlite3 otherwise reads integers as JS `number`s, which
-    // **silently rounds anything past 2^53**: a snowflake id stored as
+    // **silently rounds anything past 2^53**: a 64-bit id stored as
     // `440463260157395208` reads back as `440463260157395200` — a
     // different row, with no error raised anywhere. Asking for `bigint`
     // is the only way to see the true value, and it is all-or-nothing,

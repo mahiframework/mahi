@@ -32,7 +32,7 @@ export function currentActorKey(userKey: string): string | null {
  * even when the primary key is not named `id`, then the configured
  * attribute. Both `bigint` and `number` stringify, matching how the
  * framework treats keys as decimal strings for cross-engine identity —
- * the scaffolded `User` keys on a snowflake, which is a `bigint`.
+ * the scaffolded `User` keys on an auto-increment id, which is a `bigint`.
  *
  * Returns null rather than throwing on an unusual user source: a missing
  * actor is a weaker failure than a failed request, and the write should

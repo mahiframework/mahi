@@ -24,8 +24,8 @@ describe("roles and permissions", () => {
 
     expect(role.name).toBe("admin");
     expect(role.guard_name).toBe("web");
-    // A snowflake-shaped key, not an auto-increment one: the column is a
-    // bigInteger primary key and the model assigns the id itself.
+    // An auto-increment key is 64-bit on every engine, so it reads back
+    // as a `bigint`.
     expect(typeof role.id).toBe("bigint");
   });
 

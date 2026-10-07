@@ -132,15 +132,6 @@ export const envSchema = z.object({
    * plaintext silently.
    */
   SMTP_REQUIRE_TLS: boolish(false),
-
-  SNOWFLAKE_TESTING: z.enum(["true", "false"]).optional(),
-  SNOWFLAKE_EPOCH: z.string().optional(),
-  SNOWFLAKE_CLUSTER: z.coerce.number().optional(),
-  SNOWFLAKE_WORKER: z.coerce.number().optional(),
-  SNOWFLAKE_SEQUENCE_RESOLVER: z.enum(["memory", "file", "cache"]).optional(),
-  SNOWFLAKE_CACHE_STORE: z.string().optional(),
-  SNOWFLAKE_CACHE_PREFIX: z.string().optional(),
-  SNOWFLAKE_SEQUENCE_FILE: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

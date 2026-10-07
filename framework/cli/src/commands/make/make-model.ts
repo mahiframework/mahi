@@ -14,9 +14,10 @@ import { MakeFactoryCommand } from "./make-factory.js";
  *   factory omits `id` (the DB assigns it on insert).
  * - `uuid`, client-generated UUID string. `id: string`,
  *   `keyType: "uuid"`, `table.string("id").primary()`, factory omits `id`.
- * - `snowflake`, client-generated Snowflake. `id: string`,
- *   `keyType: snowflake()` (from `@mahiframework/snowflake`),
- *   `table.string("id").primary()`, factory omits `id`.
+ * - `uuidv7`, client-generated time-ordered UUID. `id: string`,
+ *   `keyType: "uuidv7"`, `table.uuid("id").primary()`, factory omits
+ *   `id`. Prefer this over `uuid`: it sorts chronologically, so
+ *   `ORDER BY id` and cursor pagination on the key both work.
  *
  * The model, migration and factory a single `make:model -m -f` emits must
  * agree on one strategy; mixing them fails at `create()` with a datatype
@@ -32,20 +33,15 @@ function template(className: string, keyType: ModelKeyType): string {
   const table = Str.plural(Str.snake(className));
   const idTs = idType(keyType);
 
-  const importLine =
-    keyType === "snowflake"
-      ? `import { Model } from "@mahiframework/database";\nimport { snowflake } from "@mahiframework/snowflake";`
-      : `import { Model } from "@mahiframework/database";`;
-
   const configLines: string[] = [`  table: "${table}",`, `  primaryKey: "id",`];
 
   if (keyType === "uuid") {
     configLines.push(`  keyType: "uuid",`);
-  } else if (keyType === "snowflake") {
-    configLines.push(`  keyType: snowflake(),`);
+  } else if (keyType === "uuidv7") {
+    configLines.push(`  keyType: "uuidv7",`);
   }
 
-  return `${importLine}
+  return `import { Model } from "@mahiframework/database";
 
 /**
  * The ONE type you write: the model's shape. Plain columns are plain
@@ -71,17 +67,17 @@ ${configLines.join("\n")}
 `;
 }
 
-function resolveKeyType(options: { uuid?: boolean; snowflake?: boolean }): ModelKeyType {
-  if (options.uuid && options.snowflake) {
-    throw new Error("make:model: choose only one of --uuid / --snowflake.");
+function resolveKeyType(options: { uuid?: boolean; uuidv7?: boolean }): ModelKeyType {
+  if (options.uuid && options.uuidv7) {
+    throw new Error("make:model: choose only one of --uuid / --uuidv7.");
   }
 
   if (options.uuid) {
     return "uuid";
   }
 
-  if (options.snowflake) {
-    return "snowflake";
+  if (options.uuidv7) {
+    return "uuidv7";
   }
 
   return "id";
@@ -100,7 +96,7 @@ export class MakeModelCommand extends Command {
       .option("-m, --migration", "Also scaffold a create-table migration")
       .option("-f, --factory", "Also scaffold a model factory")
       .option("--uuid", "Use a client-generated UUID string primary key")
-      .option("--snowflake", "Use a client-generated Snowflake string primary key")
+      .option("--uuidv7", "Use a client-generated time-ordered UUID (v7) primary key")
       .option("--force", "Overwrite the file if it already exists");
   }
 
@@ -111,7 +107,7 @@ export class MakeModelCommand extends Command {
       migration?: boolean;
       factory?: boolean;
       uuid?: boolean;
-      snowflake?: boolean;
+      uuidv7?: boolean;
       force?: boolean;
     },
   ): Promise<void> {

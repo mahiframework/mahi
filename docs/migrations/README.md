@@ -1448,7 +1448,7 @@ special case:
 
 **The insert strategy depends on the model's `keyType`:**
 
-- a client-generated key, `keyType: "uuid"`, `snowflake()`, or any custom
+- a client-generated key, `keyType: "uuidv7"`, `"uuid"`, or any custom
   `KeyStrategy` (the common factory case), **one batch insert** for the
   whole set. `times(50).create()` is one round trip.
 - `keyType: "increment"` (the default, DB-generated): **row by row.**
@@ -1457,7 +1457,7 @@ special case:
   from a batched insert. Correctness wins over the batching guarantee.
 
 If you're generating thousands of rows, a client-generated primary key
-(UUID or Snowflake) makes seeding dramatically faster.
+(`keyType: "uuidv7"`) makes seeding dramatically faster.
 
 ### `createQuietly()`
 

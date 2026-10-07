@@ -104,7 +104,7 @@ describe("Activity.log", () => {
     expect((await harness.rows())[0]!.user_id).toBeNull();
   });
 
-  it("accepts a bigint actor, which a snowflake key is", async () => {
+  it("accepts a bigint actor, which an auto-increment key is", async () => {
     await Activity.log({
       type: "note",
       modelType: "Source",

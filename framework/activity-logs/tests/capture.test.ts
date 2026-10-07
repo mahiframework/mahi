@@ -203,7 +203,7 @@ describe("capturePlainUpdate", () => {
 
 describe("serialisation", () => {
   it("survives a bigint, which JSON.stringify alone throws on", () => {
-    // The scaffolded User keys on a snowflake, so a user id inside a
+    // The scaffolded User keys on an auto-increment id, so a user id inside a
     // payload is a bigint in a default app.
     expect(stringify({ user_id: 123n })).toBe('{"user_id":"123"}');
   });

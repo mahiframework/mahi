@@ -112,9 +112,8 @@ export class BelongsToMedia extends MediaCollection<BelongsToMedia> {
     }
 
     if (typeof raw === "number" || typeof raw === "string") {
-      // A snowflake does not fit a `number`, so the column should be a
-      // bigint — but a driver may hand back a string, and an app may
-      // have declared the column as text.
+      // The column should be a bigint — but a driver may hand back a
+      // string, and an app may have declared the column as text.
       try {
         return BigInt(raw);
       } catch {

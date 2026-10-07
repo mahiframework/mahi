@@ -1,5 +1,4 @@
 import { Model, belongsToMany, type BelongsToMany } from "@mahiframework/database";
-import { snowflake } from "@mahiframework/snowflake";
 import type { DateTime } from "@mahiframework/datetime";
 import { Permission } from "./permission.model.js";
 
@@ -22,7 +21,7 @@ import { Permission } from "./permission.model.js";
  * asymmetry between `morphToMany` and `morphedByMany`.
  */
 export interface RoleAttributes {
-  /** A snowflake, hence `bigint`: a 64-bit id does not fit a `number`. */
+  /** An auto-increment key, hence `bigint`: 64-bit on every engine. */
   id: bigint;
   name: string;
   /** The auth guard this role belongs to, e.g. `"web"`. Never null. */
@@ -36,7 +35,6 @@ export interface RoleAttributes {
 export class Role extends Model<RoleAttributes>()({
   table: "roles",
   primaryKey: "id",
-  keyType: snowflake(),
   morphName: "Role",
 }) {
   static override relationships = {

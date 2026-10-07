@@ -192,12 +192,12 @@ comparison can't distinguish them, and you get skipped or repeated rows.
 Compound cursors, tie-breaking on a second column, are not supported.
 
 In practice this means the primary key, and it means a **time-sortable**
-one. A `randomUUID()` primary key sorts in random order, which makes the
-pages meaningless. Use a Snowflake key strategy instead:
+one. A `keyType: "uuid"` primary key is a v4 UUID, pure entropy, so it
+sorts in random order, which makes the pages meaningless. Use
+`keyType: "uuidv7"` instead:
 
 ```ts
-import { Model } from "@mahiframework/database";
-import { snowflake } from "@mahiframework/snowflake";
+import { Model, uuidv7 } from "@mahiframework/database";
 
 interface PostAttributes {
   id: string;
@@ -207,15 +207,14 @@ interface PostAttributes {
 export class Post extends Model<PostAttributes>()({
   table: "posts",
   primaryKey: "id",
-  keyType: snowflake(),
+  keyType: uuidv7(),
   softDeletes: true,
 }) {}
 ```
 
-A Snowflake is a 63-bit time-ordered id, so `cursorPaginate({ column:
-"id", direction: "desc" })` pages newest-first with no separate
-`created_at` ordering and no tie-breaking (`@mahiframework/snowflake` provides
-the `snowflake()` key strategy).
+A UUID v7 is a 48-bit millisecond timestamp followed by entropy, so
+`cursorPaginate({ column: "id", direction: "desc" })` pages newest-first
+with no separate `created_at` ordering and no tie-breaking.
 
 An auto-increment integer primary key works equally well. A `created_at`
 timestamp works **only** if you can guarantee no two rows share one,

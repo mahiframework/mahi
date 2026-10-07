@@ -83,18 +83,20 @@ Routing is the notifiable's own explicit method.
 `id` is a stable identifier for this notification instance. `DatabaseChannel`
 uses it as the row's primary key, defaulting to a fresh `randomUUID()` at
 persist time when unset. Set it explicitly when you need a caller-chosen
-id, for example a time-sortable Snowflake, so the persisted rows page
+id, for example a time-sortable UUID v7, so the persisted rows page
 chronologically:
 
 ```ts
+import { randomUUIDv7 } from "node:crypto";
+
 const notification = new LikeNotification(like.user_id, post.id);
-notification.id = await snowflakeId();
+notification.id = randomUUIDv7();
 await notify(new UserNotifiable(post.user_id), notification);
 ```
 
 The reason is concrete: a notifications list paginated with
 `cursorPaginate({ column: "id" })` needs `id` to sort in creation order.
-A UUID doesn't.
+A v4 UUID, being pure entropy, doesn't.
 
 `locale` is a hint a channel *may* honour when rendering. Nothing in the
 framework reads it; it exists so a custom channel has a conventional place
@@ -599,8 +601,8 @@ The composite index on `(notifiable_type, notifiable_id)` is the one
 query this table exists to serve: "everything for this recipient".
 
 `id` is a **string** primary key, not an autoincrementing integer. Which
-is why assigning a Snowflake gives you chronological ordering and a UUID
-doesn't.
+is why assigning a UUID v7 gives you chronological ordering and the
+default v4 doesn't.
 
 ### Reading them back: `DatabaseNotification`
 
@@ -741,7 +743,7 @@ export class NotifyOnLike implements Listener<PostLiked> {
     if (post === undefined || post.user_id === like.user_id) return;   // no self-notify
 
     const notification = new LikeNotification(like.user_id, post.id);
-    notification.id = await snowflakeId();
+    notification.id = randomUUIDv7();
     await notify(new UserNotifiable(post.user_id), notification);
   }
 }

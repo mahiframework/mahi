@@ -37,11 +37,11 @@ export class PathGenerator {
    * A fresh path for a file with `extension` (no leading dot, may be
    * empty), optionally under a prefix.
    *
-   * The UUID is generated here rather than taken from the media row's
-   * snowflake id, deliberately. A snowflake encodes a timestamp and a
-   * sequence, so a path built from one would let anyone holding a single
-   * URL enumerate neighbouring uploads by decrementing it — which on a
-   * public disk is a data leak. A v4 UUID is unguessable.
+   * The UUID is generated here rather than derived from the media row's
+   * id, deliberately. The id is sequential, so a path built from one
+   * would let anyone holding a single URL enumerate neighbouring uploads
+   * by decrementing it — which on a public disk is a data leak. A v4
+   * UUID is unguessable.
    */
   generate(extension: string, prefix?: string | null): string {
     const groups = randomUUID().split("-");

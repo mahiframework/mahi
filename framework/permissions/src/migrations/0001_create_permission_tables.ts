@@ -23,8 +23,9 @@ import { Schema, type Migration, type Blueprint } from "@mahiframework/database"
  * allowed unlimited duplicate `('admin', NULL)` rows, which is exactly
  * the integrity this table exists to have.
  *
- * `id` on both is a `bigInteger` primary key, never auto-increment: the
- * models assign a snowflake via `keyType: snowflake()`.
+ * `id` on both is an auto-increment `bigIncrements` primary key, so the
+ * keys are assigned by the database. The pivots' `role_id`/
+ * `permission_id`/`model_id` stay `bigInteger` to match.
  *
  * COMPOSITE PRIMARY KEYS, not surrogate ids, on all three pivots. They
  * ARE the dedupe mechanism: nothing in the framework deduplicates pivot
@@ -52,7 +53,7 @@ import { Schema, type Migration, type Blueprint } from "@mahiframework/database"
  * a `varchar` column makes Postgres raise `operator does not exist`. Text
  * would therefore have broken the exported relation helpers, and with
  * them `with("roles")` and `whereHas("roles", ...)`. The cost is that
- * only snowflake-keyed models can hold roles, which
+ * only integer-keyed models can hold roles, which
  * `resolveAssignee()` enforces with a clear error rather than letting it
  * reach SQL.
  *
@@ -62,7 +63,7 @@ import { Schema, type Migration, type Blueprint } from "@mahiframework/database"
 const migration: Migration = {
   async up(): Promise<void> {
     await Schema.create("roles", (table: Blueprint) => {
-      table.bigInteger("id").primary();
+      table.bigIncrements("id");
       table.string("name");
       table.string("guard_name");
       table.timestamp("created_at");
@@ -71,7 +72,7 @@ const migration: Migration = {
     });
 
     await Schema.create("permissions", (table: Blueprint) => {
-      table.bigInteger("id").primary();
+      table.bigIncrements("id");
       table.string("name");
       table.string("guard_name");
       table.timestamp("created_at");

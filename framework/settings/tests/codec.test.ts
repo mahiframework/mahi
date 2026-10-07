@@ -71,7 +71,7 @@ describe("encode rejections", () => {
     // actionable.
     const error = (() => {
       try {
-        encode("snowflake_setting", "json", { id: 1n });
+        encode("bigint_setting", "json", { id: 1n });
       } catch (caught) {
         return caught;
       }
@@ -80,7 +80,7 @@ describe("encode rejections", () => {
     })();
 
     expect(error).toBeInstanceOf(SettingsError);
-    expect((error as Error).message).toContain("snowflake_setting");
+    expect((error as Error).message).toContain("bigint_setting");
   });
 
   it("rejects a circular structure", () => {

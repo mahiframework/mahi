@@ -146,10 +146,6 @@ const DESCRIPTIONS = {
     description: "Settings — database-persisted, cached global application settings for Mahi.",
     keywords: ["mahi", "settings", "configuration", "preferences"],
   },
-  "@mahiframework/snowflake": {
-    description: "Snowflake — distributed, time-sortable unique ID generation for Mahi.",
-    keywords: ["mahi", "snowflake", "id", "unique", "distributed"],
-  },
   "@mahiframework/socialite": {
     description: "Socialite — OAuth sign-in with third-party providers for Mahi.",
     keywords: ["mahi", "socialite", "oauth", "authentication", "github"],

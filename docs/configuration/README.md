@@ -107,13 +107,14 @@ The ordering makes this work: the app's `set()` calls all run in
 `merge()` then fills in keys the app didn't specify without clobbering the
 ones it did.
 
-`SnowflakeServiceProvider` uses a third variant, a presence check, then
-`set()`, because its config is an all-or-nothing structure rather than a
-set of independent leaves:
+A provider whose config is an all-or-nothing structure, rather than a set
+of independent leaves, uses a third variant: a presence check, then
+`set()`, so a partial app-supplied value is never half-merged with
+defaults:
 
 ```ts
-if (this.app.config.get("snowflake") === undefined) {
-  this.app.config.set("snowflake", defaultSnowflakeConfig());
+if (this.app.config.get("media") === undefined) {
+  this.app.config.set("media", defaultMediaConfig());
 }
 ```
 
@@ -187,7 +188,6 @@ export const envSchema = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_PASSWORD: z.string().optional(),
 
-  SNOWFLAKE_TESTING: z.enum(["true", "false"]).optional(),
   // ...
 });
 
@@ -231,7 +231,6 @@ app.config.set("auth", authConfig(env));
 app.config.set("broadcasting", broadcastingConfig());
 app.config.set("redis", redisConfig(env));
 app.config.set("mail", mailConfig(env));
-app.config.set("snowflake", snowflakeConfig(env));
 ```
 
 They're regular TypeScript, type-checked against the interface each
@@ -623,39 +622,6 @@ Entirely optional; read with a `?? {}` fallback, so an app that never sets
 the namespace gets both defaults. The endpoint's own settings live under
 `http.healthCheck`, not here. See [Health checks](../health/).
 
-### config/snowflake.ts
-
-```ts
-export function snowflakeConfig(env: Env): SnowflakeConfig {
-  return {
-    testing: env.SNOWFLAKE_TESTING === "true",
-    sequencing: {
-      resolver: env.SNOWFLAKE_SEQUENCE_RESOLVER ?? null,
-      store: env.SNOWFLAKE_CACHE_STORE,
-      prefix: env.SNOWFLAKE_CACHE_PREFIX ?? "",
-      file: env.SNOWFLAKE_SEQUENCE_FILE,
-    },
-    constants: {
-      epoch: env.SNOWFLAKE_EPOCH ?? "2025-01-01 00:00:00",
-      cluster: env.SNOWFLAKE_CLUSTER ?? 1,
-      worker: env.SNOWFLAKE_WORKER ?? 1,
-    },
-  };
-}
-```
-
-| Key | Meaning |
-|---|---|
-| `testing` | Emit sequential `9000000000000000001`, `…002` IDs grouped by model class, predictable in tests, still 19 digits wide. |
-| `sequencing.resolver` | `"memory"` (in-process), `"file"` (lockfile), `"cache"`, or `null` to keep the core memory resolver. |
-| `constants.epoch` | Timestamp origin. A recent epoch keeps the generator valid ~35 years. |
-| `constants.cluster` / `worker` | Must fit the configured bit widths (0–31 by default). |
-
-**The epoch and bit signature must never change once IDs exist in the
-database.** Prefer a unique `worker` per process, which makes the default
-in-memory sequencer sufficient; only use `"file"` or `"cache"` when
-processes share a worker id. Opt in per model with `keyType: snowflake()`
-in the model's config.
 
 ## Path helpers
 

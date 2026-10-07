@@ -42,12 +42,11 @@ function attributes(overrides: Record<string, unknown> = {}): Record<string, unk
 }
 
 describe("the media table", () => {
-  it("assigns a snowflake id", async () => {
+  it("assigns an auto-increment id", async () => {
     const media = await MediaFile.create(attributes());
 
-    // `keyType: snowflake()` resolves SNOWFLAKE_TOKEN at generate time,
-    // so this also asserts the provider is a genuine runtime dependency
-    // rather than a compile-time one.
+    // An auto-increment key is 64-bit on every engine, so it reads back
+    // as a `bigint`.
     expect(typeof media.id).toBe("bigint");
     expect(media.id).toBeGreaterThan(0n);
   });
@@ -119,7 +118,7 @@ describe("the media table", () => {
 });
 
 describe("model_id is text, not bigInteger", () => {
-  it("holds a snowflake-keyed owner", async () => {
+  it("holds an integer-keyed owner", async () => {
     const user = await makeUser();
 
     const created = await MediaFile.create(
@@ -132,7 +131,7 @@ describe("model_id is text, not bigInteger", () => {
   it("holds a uuid-keyed owner", async () => {
     // The whole justification for the text column. `permissions` makes
     // its `model_id` a bigInteger because the value is bound raw into a
-    // pivot query, and documents snowflake-keyed assignees as a hard
+    // pivot query, and documents integer-keyed assignees as a hard
     // limit. Nothing here does that, so any key type can own media — and
     // a suite with only bigint owners would let this regress to
     // `unsignedBigInteger` unnoticed, which is what `nullableMorphs()`

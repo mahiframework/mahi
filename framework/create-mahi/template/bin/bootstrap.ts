@@ -11,7 +11,6 @@ import { authConfig } from "../config/auth.js";
 import { broadcastingConfig } from "../config/broadcasting.js";
 import { redisConfig } from "../config/redis.js";
 import { mailConfig } from "../config/mail.js";
-import { snowflakeConfig } from "../config/snowflake.js";
 import { providers } from "../config/app.js";
 
 /**
@@ -42,7 +41,6 @@ export async function bootstrap(): Promise<Application> {
   app.config.set("broadcasting", broadcastingConfig(env));
   app.config.set("redis", redisConfig(env));
   app.config.set("mail", mailConfig(env));
-  app.config.set("snowflake", snowflakeConfig(env));
 
   for (const providerClass of providers) {
     app.register(providerClass);

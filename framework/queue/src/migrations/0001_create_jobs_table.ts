@@ -1,13 +1,21 @@
 import { Schema, type Migration, type Blueprint } from "@mahiframework/database";
 
 /**
- * The original `jobs`/`failed_jobs` tables backing `DatabaseQueueDriver`.
+ * The `jobs`/`failed_jobs` tables backing `DatabaseQueueDriver`.
  *
- * Kept as-is because its name is recorded in the `migrations` table of
- * every app that has ever run it; the columns and indexes the driver
- * actually relies on today are added by `0002_queue_reliability` (named
- * queues, the `pop()` index, failed-job chain/connection/queue). Read
- * that one for the current shape.
+ * The columns and indexes the driver additionally relies on (named
+ * queues, the `pop()` index, failed-job chain/connection/queue) are added
+ * by `0002_queue_reliability`; read that one alongside this.
+ *
+ * `jobs.id` is auto-increment, which is what makes `ORDER BY
+ * available_at, id` FIFO within a one-second `available_at` bucket:
+ * `available_at` has only second precision, so a burst dispatched inside
+ * one ties on it and `id` alone decides the order. See
+ * `DatabaseQueueDriver.pop()`.
+ *
+ * `failed_jobs.id` is NOT auto-increment: a failed row carries over the
+ * id of the `jobs` row it came from, so `queue:retry <id>` names the
+ * same job the operator saw in `queue:failed`.
  *
  * `reserved_at` is the reservation marker: a row is eligible for `pop()`
  * when it is due and either unreserved or reserved longer ago than the
@@ -18,7 +26,7 @@ import { Schema, type Migration, type Blueprint } from "@mahiframework/database"
 const migration: Migration = {
   async up(): Promise<void> {
     await Schema.create("jobs", (table: Blueprint) => {
-      table.bigInteger("id").primary();
+      table.bigIncrements("id");
       table.string("job_class");
       table.text("payload_json");
       table.integer("attempts").default(0);

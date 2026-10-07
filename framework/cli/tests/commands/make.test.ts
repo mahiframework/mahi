@@ -86,18 +86,17 @@ describe("make:* generators", () => {
     expect(contents).not.toContain("randomUUID()");
   });
 
-  it("make:model --snowflake uses a client-generated snowflake key", async () => {
-    await new MakeModelCommand(app).handle("post", { dir, snowflake: true });
+  it("make:model --uuidv7 uses a client-generated time-ordered UUID key", async () => {
+    await new MakeModelCommand(app).handle("post", { dir, uuidv7: true });
     const contents = await read("post.model.ts");
     expect(contents).toContain("id: string;");
-    expect(contents).toContain('import { snowflake } from "@mahiframework/snowflake";');
-    expect(contents).toContain("keyType: snowflake(),");
+    expect(contents).toContain('keyType: "uuidv7",');
     expect(contents).not.toContain("incrementing");
   });
 
-  it("make:model rejects both --uuid and --snowflake", async () => {
+  it("make:model rejects both --uuid and --uuidv7", async () => {
     await expect(
-      new MakeModelCommand(app).handle("post", { dir, uuid: true, snowflake: true }),
+      new MakeModelCommand(app).handle("post", { dir, uuid: true, uuidv7: true }),
     ).rejects.toThrow(/only one/);
   });
 
@@ -257,13 +256,21 @@ describe("make:* generators", () => {
     expect(contents).toContain('await Schema.table("gadgets"');
   });
 
-  it("make:migration --keyType uuid uses a string primary key", async () => {
+  it("make:migration --keyType uuid uses a uuid primary key", async () => {
     await new MakeMigrationCommand(app).handle("create_things_table", { dir, keyType: "uuid" });
     const names = await readdir(dir);
     const migration = names.find((f) => f.endsWith("_create_things_table.ts"));
     const contents = await read(migration!);
-    expect(contents).toContain('table.string("id").primary();');
+    expect(contents).toContain('table.uuid("id").primary();');
     expect(contents).not.toContain("table.id();");
+  });
+
+  it("make:migration --keyType uuidv7 uses a uuid primary key too", async () => {
+    await new MakeMigrationCommand(app).handle("create_things_table", { dir, keyType: "uuidv7" });
+    const names = await readdir(dir);
+    const migration = names.find((f) => f.endsWith("_create_things_table.ts"));
+    const contents = await read(migration!);
+    expect(contents).toContain('table.uuid("id").primary();');
   });
 
   it("make:request appends the Request suffix with a rules() method", async () => {

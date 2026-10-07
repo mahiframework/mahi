@@ -79,6 +79,13 @@ await app.runScoped(async () => {
 // on the process-global container.
 ```
 
+You rarely need to open one by hand: every framework entry point already
+does. An HTTP request, a queue job and a CLI command each run inside
+`runInvocationScope()`, which opens the container scope alongside the
+context overlay and the [invocation id](../logging/#invocation-ids). So a
+`scoped()` binding resolves once per request, once per job, once per
+command, with no wiring.
+
 ### Test / lifecycle helpers
 
 | Method | Behaviour |
@@ -241,7 +248,6 @@ Package-private tokens stay in their own package:
 | `SCHEDULE_TOKEN` | `"schedule"` | `Schedule` | `@mahiframework/schedule` |
 | `JOB_REGISTRY_TOKEN` | `"queue.jobs"` | `JobRegistry` | `@mahiframework/queue` |
 | `REDIS_TOKEN` | `"redis"` | `RedisManager` | `@mahiframework/redis` |
-| `SNOWFLAKE_TOKEN` | `"snowflake"` | `SnowflakeGenerator` | `@mahiframework/snowflake` |
 
 The base app also binds `"env"`, the validated environment object, via
 `app.instance("env", env)` in `bin/bootstrap.ts`. That is an application

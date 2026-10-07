@@ -103,7 +103,7 @@ export type {
 export { accessor } from "./accessors.js";
 export type { AccessorDefinition } from "./accessors.js";
 export type { KeyStrategy, KeyStrategyContext, ResolvedKeyType } from "./key-strategy.js";
-export { uuidKeyStrategy, resolveKeyType } from "./key-strategy.js";
+export { uuidKeyStrategy, uuidv7KeyStrategy, uuidv7, resolveKeyType } from "./key-strategy.js";
 
 export { Relation, ClassMorphViolationError } from "./morph-map.js";
 export type { MorphMap, MorphMapEntry } from "./morph-map.js";

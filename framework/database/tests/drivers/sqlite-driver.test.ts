@@ -109,7 +109,7 @@ describe("SqliteDriver", () => {
 
   /**
    * better-sqlite3 reads integers as JS numbers by default, which rounds
-   * anything past 2^53 with no error — a snowflake id comes back
+   * anything past 2^53 with no error — a large 64-bit id comes back
    * addressing a different row. The driver asks for `bigint` instead,
    * which is all-or-nothing, so everything that is *not* a 64-bit column
    * has to be narrowed back.
@@ -140,7 +140,7 @@ describe("SqliteDriver", () => {
 
       await driver.kysely
         .insertInto("widgets" as any)
-        .values({ id: 440463260157395208n, count: 1, name: "snowflake" })
+        .values({ id: 440463260157395208n, count: 1, name: "big-id" })
         .execute();
 
       const row = (await driver.kysely
@@ -272,7 +272,7 @@ describe("SqliteDriver", () => {
 
       await driver.kysely
         .insertInto("widgets" as any)
-        .values({ id: 440463260157395208n, count: 7, name: "snowflake" })
+        .values({ id: 440463260157395208n, count: 7, name: "big-id" })
         .execute();
 
       const seen: { id: bigint; count: number }[] = [];

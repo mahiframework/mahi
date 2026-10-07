@@ -31,8 +31,8 @@ export interface ActivityLogAttributes {
  *
  * `keyType: "uuid"` so the id is client-generated: an insert then needs no
  * `RETURNING` round-trip, which matters on a table written once per
- * mutation. Not a snowflake, which would mean depending on
- * `@mahiframework/snowflake` for an id nothing sorts by.
+ * mutation. Not a client-generated key, which would buy nothing for an
+ * id nothing sorts by.
  *
  * `timestamps` sets `updatedAt: null` because a row is immutable, and
  * `morphName` is set so the model can appear in a queued job payload.

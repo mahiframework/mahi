@@ -13,8 +13,8 @@ export interface ChainedJob {
 export interface QueuedJob {
   /**
    * The driver's handle for this job, opaque to callers and passed back
-   * to `ack()`/`retry()` as-is. A `bigint` snowflake on the database
-   * driver, a string elsewhere.
+   * to `ack()`/`retry()` as-is. A UUIDv7 string on the database driver;
+   * drivers are free to use their own shape.
    */
   id: string | bigint;
   jobClass: string;

@@ -18,8 +18,8 @@ export class UserFactory extends Factory<typeof User> {
 
   protected definition() {
     // A random token only for a locally-unique email default, the real
-    // primary key `id` is filled by the `snowflake()` key strategy on
-    // insert, and `created_at`/`updated_at` are auto-stamped.
+    // primary key `id` is assigned by the database on insert, and
+    // `created_at`/`updated_at` are auto-stamped.
     const token = randomUUID();
 
     return {

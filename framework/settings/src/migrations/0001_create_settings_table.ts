@@ -30,7 +30,7 @@ import { Schema, type Blueprint, type Migration } from "@mahiframework/database"
  * `edited_by_user_id` is nullable TEXT with NO foreign key. Nullable
  * because a write from a seeder, a CLI command or a queue worker has no
  * actor, and that is a null rather than an error. TEXT because an app's
- * user may key on a snowflake, a UUID or an int, and only text holds all
+ * user may key on an int or a UUID, and only text holds both
  * three (the rationale `0001_create_notifications_table` records for
  * `notifiable_id`). No foreign key because `users` is app-owned and the
  * framework cannot assume its name, the same reason the sessions and

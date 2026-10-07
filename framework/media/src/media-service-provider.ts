@@ -17,20 +17,11 @@ export { IMAGE_TOKEN, MEDIA_TOKEN };
  * and the `MediaFile` model.
  *
  * ORDERING: list this provider AFTER `DatabaseServiceProvider` (it owns
- * a table and a model), AFTER `StorageServiceProvider` (every write goes
- * through a disk), and AFTER `SnowflakeServiceProvider`.
+ * a table and a model) and AFTER `StorageServiceProvider` (every write
+ * goes through a disk).
  *
- * That last one is a HARD RUNTIME REQUIREMENT, not merely a
- * compile-time one. `MediaFile` declares `keyType: snowflake()`, which
- * resolves `SNOWFLAKE_TOKEN` at key-generation time, so an app that
- * omits the provider gets `BindingNotFoundError` on its first upload
- * rather than at boot — late, and far from the cause. `permissions` hit
- * exactly this and now registers the real provider in its test harness
- * rather than stubbing ids; this package does the same, so the
- * requirement stays visible.
- *
- * You cannot enforce any of that; the app's `config/app.ts` decides, and
- * this docstring is the whole mechanism.
+ * You cannot enforce either; the app's `config/app.ts` decides, and this
+ * docstring is the whole mechanism.
  *
  * Registers NO routes and NO middleware, deliberately. Private media is
  * served by the application, either through `media.temporaryUrl()` or

@@ -58,7 +58,7 @@ export class DuplicateNameError extends PermissionsError {
  * The assignee's primary key is not a `bigint`.
  *
  * `model_has_roles.model_id` is a `bigInteger` column, so only
- * snowflake-keyed models can hold roles. Thrown here rather than letting
+ * integer-keyed models can hold roles. Thrown here rather than letting
  * the value reach SQL: Postgres rejects a non-numeric string against a
  * `bigint` with `operator does not exist`, which is a 500 that says
  * nothing about why, and SQLite would accept it and simply never match.
@@ -70,8 +70,8 @@ export class UnsupportedAssigneeKeyError extends PermissionsError {
   ) {
     super(
       `"${morphType}" keys on ${typeof key}, but model_has_roles.model_id is a bigInteger, ` +
-        `so only snowflake-keyed models can hold roles or permissions. ` +
-        `Give the model \`keyType: snowflake()\`, or assign to a model that has one.`,
+        `so only integer-keyed models can hold roles or permissions. ` +
+        `Assign to a model whose primary key is a bigint.`,
     );
   }
 }

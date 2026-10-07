@@ -222,7 +222,7 @@ export class RedisQueueDriver implements QueueDriver, FailedJobRepository {
 
     const envelope: JobEnvelope = {
       // Redis ids are strings of this driver's own making; the wider
-      // `QueuedJob.id` exists for the database driver's snowflakes.
+      // `QueuedJob.id` exists for the database driver's row ids.
       id: String(job.id),
       jobClass: job.jobClass,
       state: job.state ?? null,

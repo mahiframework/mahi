@@ -26,7 +26,6 @@
     "@mahiframework/facades": "workspace:*",
     "@mahiframework/mail": "workspace:*",
     "@mahiframework/pipeline": "workspace:*",
-    "@mahiframework/snowflake": "workspace:*",
     "@mahiframework/tui": "workspace:*",
     "commander": "^12.1.0",
     "kysely": "^0.29.5"
@@ -51,7 +50,7 @@
     "node": ">=26"
   },
   "sideEffects": false,
-  "description": "Queues — background job dispatch and workers over sync, database, and Redis drivers, for Mahi.",
+  "description": "Queues \u2014 background job dispatch and workers over sync, database, and Redis drivers, for Mahi.",
   "keywords": [
     "mahi",
     "queue",

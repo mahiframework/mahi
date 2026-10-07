@@ -9,7 +9,6 @@ import type { Dialect } from "@mahiframework/database";
 import type { QueueDriver, QueuedJob, PushOptions, ChainedJob } from "../queue-driver.js";
 import type { JobState } from "../job-serialization.js";
 import type { FailedJobRepository, FailedJobRecord } from "../failed-job-repository.js";
-import { Snowflake } from "@mahiframework/snowflake";
 
 interface JobRow {
   id: bigint;
@@ -117,7 +116,7 @@ export interface DatabaseQueueDriverOptions {
  * ## Ordering
  *
  * Jobs due at the same time run in the order they were pushed. That
- * falls out of `id` being a snowflake — time-ordered by construction —
+ * falls out of `id` being auto-increment — monotonic by construction —
  * since `available_at` is only second-precision and cannot separate a
  * burst dispatched within one.
  *
@@ -176,7 +175,6 @@ export class DatabaseQueueDriver implements QueueDriver, FailedJobRepository {
     await this.db
       .insertInto("jobs")
       .values({
-        id: await Snowflake.id("job"),
         queue: options.queue ?? this.queue,
         job_class: jobClass,
         payload_json: JSON.stringify(state ?? null),
@@ -300,8 +298,8 @@ export class DatabaseQueueDriver implements QueueDriver, FailedJobRepository {
    * whatever order the engine feels like, which makes concurrent workers
    * collide on the same row far more often than they need to.
    *
-   * `id` is the tiebreak specifically because a snowflake sorts by the
-   * time it was minted. `available_at` is truncated to whole seconds, so
+   * `id` is the tiebreak specifically because it ascends with insert
+   * order. `available_at` is truncated to whole seconds, so
    * a burst dispatched in one request ties on it and `id` alone decides
    * the order — with a random id that made the burst run shuffled, which
    * is not what FIFO promises.
@@ -440,7 +438,6 @@ export class DatabaseQueueDriver implements QueueDriver, FailedJobRepository {
       await trx
         .insertInto("jobs")
         .values({
-          id: await Snowflake.id("job"),
           queue: row.queue ?? this.queue,
           job_class: row.job_class,
           payload_json: row.payload_json,
@@ -521,7 +518,7 @@ export class DatabaseQueueDriver implements QueueDriver, FailedJobRepository {
     const chain = row.chain_json ? (JSON.parse(row.chain_json) as ChainedJob[]) : undefined;
 
     return {
-      // `id` is a snowflake in the column and a string in the public
+      // `id` is a bigint in the column and a string in the public
       // record, which is what `queue:retry <id>` echoes and takes back.
       id: String(row.id),
       jobClass: row.job_class,
@@ -556,13 +553,13 @@ function encodeChain(chain: ChainedJob[] | undefined): string | null {
  * Coerce a failed-job id to the `bigint` its column holds.
  *
  * The repository API takes a `string` because these ids come off a
- * command line (`queue:forget <id>`), but `failed_jobs.id` is a
- * snowflake. Postgres rejects a non-numeric string against a `bigint`
- * with a hard error rather than simply not matching, so a typo'd id
- * would surface as a database exception instead of "no such job".
+ * command line (`queue:forget <id>`), but `failed_jobs.id` is a 64-bit
+ * integer. Postgres rejects a non-numeric string against a `bigint` with
+ * a hard error rather than simply not matching, so a typo'd id would
+ * surface as a database exception instead of "no such job".
  *
  * Anything that isn't a decimal integer is passed through untouched: it
- * cannot match a snowflake, so the caller gets `undefined`/`false`.
+ * cannot match a real id, so the caller gets `undefined`/`false`.
  */
 function failedJobKey(id: string): string | bigint {
   return /^-?\d+$/.test(id) ? BigInt(id) : id;

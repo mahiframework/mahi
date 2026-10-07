@@ -21,7 +21,7 @@ import { Schema, type Migration, type Blueprint } from "@mahiframework/database"
  *
  * `notifiable_id` is text because this is a morph column: it holds the
  * key of *any* notifiable model, and two models in one app can key
- * differently (a UUID `User`, a snowflake `Team`). Only text holds both.
+ * differently (a UUID `User`, an integer `Team`). Only text holds both.
  */
 const migration: Migration = {
   async up(): Promise<void> {

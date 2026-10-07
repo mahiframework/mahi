@@ -211,7 +211,7 @@ than reinventing the format. `ConsoleLogger`, `FileLogger` and
 output.
 
 ```
-[2026-08-27 09:14:02] production.ERROR: Payment failed {"orderId":"427185966743560456"} {"requestId":"a1b2c3"}
+[2026-08-27 09:14:02] production.ERROR: Payment failed {"orderId":"427185966743560456"} {"invocation":"9048372019229466888"}
 ```
 
 | Part | Source |
@@ -221,7 +221,7 @@ output.
 | `ERROR` | `level.toUpperCase()` |
 | `Payment failed` | the message |
 | `{"orderId":...}` | the per-call `context` argument |
-| `{"requestId":...}` | the global `source.context.all()` |
+| `{"invocation":...}` | the global `source.context.all()`, which every entry point seeds with the [invocation id](#invocation-ids) |
 
 **The timestamp is UTC**, always, regardless of the machine's timezone.
 Log lines from a fleet of servers in different regions are directly
@@ -728,28 +728,104 @@ have to check.
 runScoped<T>(fn: () => T): T
 ```
 
-The HTTP kernel opens exactly one per request, as the **outermost** pipe,
-ahead of even the maintenance-mode check:
+Every framework entry point already opens one for you, via
+`runInvocationScope()` (see [Invocation ids](#invocation-ids)): the HTTP
+kernel as its **outermost** pipe, ahead of even the maintenance-mode
+check; the queue worker around each job; the console kernel around each
+command. So anything added by a pipe, a handler, a job or a command is
+isolated to that unit of work and discarded when it ends. It's cheap: one
+`AsyncLocalStorage.run` per invocation.
 
-```ts
-const context = this.app.context;
-pipes.push((request, next) => context.runScoped(() => next(request)));
-```
+That last part matters most for a queue worker, which is a daemon that
+can run for days. Without a per-job scope, anything a job adds to the
+context accumulates in the process-global store and shows up on the log
+lines of every job that follows it.
 
-so any context added by any downstream pipe or handler is isolated to
-that request. It's cheap: one `AsyncLocalStorage.run` per request.
-
-Use it directly only in non-HTTP entry points that want the same
-per-invocation isolation, a queue job, a CLI command, a test:
+Use it directly only in an entry point the framework doesn't own, or to
+nest a narrower scope inside one:
 
 ```ts
 await Context.runScoped(async () => {
-  Context.add("jobId", queued.id);
-  await job.handle();
+  Context.add("batchId", batch.id);
+  await processBatch(batch);
 });
 ```
 
 `hasScope()` tells you whether one is currently active on this call stack.
+
+## Invocation ids
+
+Every log line carries an `invocation` id identifying the single unit of
+work that produced it — one HTTP request, one queue job, one CLI command:
+
+```
+[2026-10-07 12:00:05] production.INFO: payment captured {"invocation":"01a11521-ebe0-71f6-bc76-199e0b807ad4"}
+```
+
+A log line on its own says what happened; a log line with an invocation
+id says what happened *during what*, which is the difference between
+reading a concurrent server's output and guessing at it. Filter a log
+aggregator by one id and you get exactly the lines from that one request.
+
+Nothing at the call site passes it. Each entry point calls
+`runInvocationScope()`, which generates the id and writes it into the
+context overlay, and `formatLogLine()` appends the context to every line.
+
+### Reading it
+
+```ts
+import { Invocation } from "@mahiframework/core";
+
+Invocation.id();       // string — generates and memoizes on first call
+Invocation.current();  // string | null — the memoized id, never generates one
+Invocation.reset();    // drop it; the next id() generates a fresh one
+Invocation.hasScope(); // whether an invocation scope is active here
+```
+
+Useful for stamping the id onto something durable — an audit row, an
+outbound webhook header, an error report — so a record in your database
+can be tied back to the log lines that produced it.
+
+`id()` is **synchronous**, which is what lets `formatLogLine()` read it —
+a log formatter cannot await. It is memoized per invocation, so asking
+twice gives the same answer. `current()` is the variant that reports
+absence instead of generating.
+
+### A UUIDv7
+
+The id is a v7 UUID: a 48-bit millisecond timestamp followed by 74 bits
+of entropy. That shape is deliberate, and gives the three properties an
+invocation id needs:
+
+- **time-sortable**, so ids sort chronologically in an aggregator;
+- **no coordination**, uniqueness comes from entropy rather than from an
+  operator assigning a distinct node id per process. Any number of
+  processes, containers or hosts generate ids concurrently with no shared
+  state and no configuration. A scheme deriving uniqueness from a
+  configured worker id instead emits *duplicate* ids when two processes
+  share that config — for the one value whose entire job is to
+  disambiguate concurrent work, the worst possible failure;
+- **cheap** (~80ns), so stamping one on every request and job is free.
+
+Ordering is millisecond-granular: two ids from the same millisecond have
+no guaranteed order relative to each other. For correlating log lines
+that is irrelevant — the id is an identity, not a sequence.
+
+It needs no provider, no config and no container. `Invocation.id()` works
+in a bare unit test.
+
+### Per-invocation isolation
+
+The id is held in an `AsyncLocalStorage` scope, not a static field,
+because this framework boots one long-lived `Application` and serves
+every request from it. A plain static would be shared by every request in
+flight: one request's `reset()` would be observed by another mid-flight,
+and two concurrent requests would log the same id — exactly the confusion
+the id exists to remove.
+
+Outside any scope (boot, a script, a test) `id()` and `reset()` fall back
+to a process-global holder, so the API behaves identically whether or not
+a scope is open and callers never have to check.
 
 ### The full API
 

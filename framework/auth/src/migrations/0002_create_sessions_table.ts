@@ -11,7 +11,7 @@ import { Schema, type Migration, type Blueprint } from "@mahiframework/database"
  * the framework can't assume its name.
  *
  * `user_id` is text on purpose, even though an app keying `User` by a
- * snowflake or an auto-increment stores a 64-bit number in it. The key
+ * an auto-increment key stores a 64-bit number in it. The key
  * type is the app's choice — `keyType: "uuid"` is equally supported —
  * and a `bigInteger` column would make Postgres reject a UUID outright
  * rather than simply not match. Text holds every key type losslessly,

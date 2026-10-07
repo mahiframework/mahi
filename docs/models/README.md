@@ -21,7 +21,7 @@ export interface PostAttributes {
 export class Post extends Model<PostAttributes>()({
   table: "posts",
   primaryKey: "id",
-  keyType: "uuid",
+  keyType: "uuidv7",
 }) {}
 ```
 
@@ -108,7 +108,7 @@ class Bad extends Model<BadAttributes>()({ table: "bad" }) {}
 | A `boolean` column needs `Cast.boolean()` | SQLite/MySQL return `0`/`1`, so it would read back as a number, and `0` is falsy but `Number(0)` boxed is truthy. |
 | A `DateTime` column needs `Cast.datetime()` | The driver hands back a string, so `post.published_at.addDays(1)` throws `not a function` while the type says it's fine. |
 | A column may not use a reserved member name | `save`, `delete`, `fill`, `relations`, `toJSON`, …. The attribute would shadow the method. |
-| `keyType` must agree with the key's type | `"uuid"` and a `KeyStrategy` both assign strings, so `id: number` is a guaranteed mismatch on insert. |
+| `keyType` must agree with the key's type | `"uuid"`, `"uuidv7"` and a string `KeyStrategy` all assign strings, so `id: number` is a guaranteed mismatch on insert. |
 | The soft-delete column must be nullable | `restore()` writes `null` to it. |
 | A class static may not be written in the config | `dispatchesEvents`, `relationships`, `accessors`, …. See [statics are not config keys](#statics-are-not-config-keys). |
 | An unrecognised key is not a config key | A typo (`softDelete` for `softDeletes`) is otherwise absorbed and ignored. |
@@ -202,7 +202,7 @@ type are all compile errors.
 | `table` | `string` | *(none, required)* | The table name. |
 | `connection` | `string` | *(default connection)* | Named connection to resolve. |
 | `primaryKey` | *a column of `A`* | `"id"` | Used by `find()`/`whereKey()`. Types `Key<M>`. |
-| `keyType` | `"increment" \| "uuid" \| KeyStrategy` | `"increment"` | How the primary key is produced. |
+| `keyType` | `"increment" \| "uuid" \| "uuidv7" \| KeyStrategy` | `"increment"` | How the primary key is produced. |
 | `timestamps` | `boolean \| { createdAt?, updatedAt? }` | **`true`** | Auto-stamp created/updated columns. |
 | `softDeletes` | `boolean \| { column }` | `false` | Enables the soft-delete lifecycle. |
 | `casts` | `{ [column]?: Cast }` | `{}` | Per-column bidirectional casts. |
@@ -223,38 +223,35 @@ see. Two of these defaults are worth calling out because they bite.
 ### `keyType` defaults to `"increment"`
 
 **Matching Laravel.** A model with a client-generated primary key, a
-UUID, a Snowflake, must say so, or `create()`'s DB-generated-id
-read-back path runs against a column nothing auto-increments. That's
-harmless (nothing breaks), but no key ever gets generated for it.
+UUID, must say so, or `create()`'s DB-generated-id read-back path runs
+against a column nothing auto-increments. That's harmless (nothing
+breaks), but no key ever gets generated for it.
 
 ```ts
 export class User extends Model<UserAttributes>()({
   table: "users",
   primaryKey: "id",
-  keyType: "uuid",              // id is a client-generated UUID
+  keyType: "uuidv7",            // id is a client-generated UUID v7
 }) {}
 ```
 
-`keyType` takes `"increment"`, `"uuid"`, or a `KeyStrategy` object for
-anything else, `snowflake()` from `@mahiframework/snowflake` is one:
-
-```ts
-import { snowflake } from "@mahiframework/snowflake";
-
-export class Message extends Model<MessageAttributes>()({
-  table: "messages",
-  keyType: snowflake(),
-}) {}
-```
+`keyType` takes `"increment"`, `"uuid"`, `"uuidv7"`, or a `KeyStrategy`
+object for anything else. Of the two string forms, prefer `"uuidv7"` for
+a primary key: a v4 UUID (`"uuid"`) is pure entropy, so rows land in
+random index positions and `ORDER BY id` means nothing, whereas a v7
+UUID is a 48-bit millisecond timestamp followed by entropy, so it sorts
+chronologically, consecutive inserts land next to each other in the
+index, and uniqueness still needs no coordination between processes.
+Both store in a `uuid` column (`table.uuid("id").primary()`).
 
 ### 64-bit keys are `bigint`
 
-A snowflake is a 64-bit integer, which does not fit a JS `number`:
-`440463260157395208` rounds to `...200` as a double. So ids are
-`bigint`, the attribute is declared `id: bigint`, and the column is
-`bigInteger()`. The same applies to an auto-increment key, which is
-64-bit on every supported engine (`bigserial`, `BIGINT AUTO_INCREMENT`,
-a SQLite rowid).
+An auto-increment key is a 64-bit integer on every supported engine
+(`bigserial`, `BIGINT AUTO_INCREMENT`, a SQLite rowid), which does not
+fit a JS `number`: `440463260157395208` rounds to `...200` as a double.
+So ids are `bigint`, the attribute is declared `id: bigint`, and the
+column is `bigIncrements()` (or `bigInteger()` where the application
+assigns a 64-bit key itself).
 
 ```ts
 interface MessageAttributes {
@@ -278,10 +275,9 @@ client that parses it as a double):
 Inside your own code an id stays a `bigint`, so compare with `===`
 against another `bigint` (`id === 42n`), not against a number.
 
-This replaces the old `static incrementing = false` + `HasSnowflake`
-mixin pair: one key now says both *whether* the database generates the
-key and *what* generates it instead. (`Model.incrementing` still exists
-as a read-only getter derived from `keyType`, for code that asks.)
+One key says both *whether* the database generates the key and *what*
+generates it. (`Model.incrementing` is a read-only getter derived from
+`keyType`, for code that asks.)
 
 When the key is DB-generated, `create()` reads back the generated key
 and merges it into the row, via `RETURNING` on SQLite/Postgres and
@@ -316,10 +312,10 @@ skips that column.
 
 ### Writing a key strategy
 
-Anything beyond `"increment"` and `"uuid"` is a `KeyStrategy` object:
-`type` declares whether the key is a string or a number (validated
-against the primary-key column's declared type), and `generate` produces
-the value.
+Anything beyond `"increment"`, `"uuid"` and `"uuidv7"` is a
+`KeyStrategy` object: `type` declares whether the key is a string, a
+number or a `bigint` (validated against the primary-key column's
+declared type), and `generate` produces the value.
 
 ```ts
 import type { KeyStrategy } from "@mahiframework/database";
@@ -337,8 +333,8 @@ export class Invoice extends Model<InvoiceAttributes>()({
 }) {}
 ```
 
-`generate` may be async, and receives the model class name. Which is
-what `@mahiframework/snowflake` uses as its per-model sequence group.
+`generate` may be async, and receives the model class name, so a
+strategy can vary by model, a per-model prefix, a per-model counter.
 
 Timing matters: it runs **after** `saving` and **before** `creating`. So a
 `saving` hook can still supply an explicit key and win, and both `creating`
@@ -502,8 +498,8 @@ The two built-ins are config keys:
 ```ts
 export class Post extends Model<PostAttributes>()({
   table: "posts",
-  softDeletes: true,       // was Model.use(SoftDeletes)
-  keyType: snowflake(),    // was Model.use(HasSnowflake)
+  softDeletes: true,       // the soft-delete lifecycle
+  keyType: "uuidv7",       // a client-generated primary key
 }) {}
 ```
 

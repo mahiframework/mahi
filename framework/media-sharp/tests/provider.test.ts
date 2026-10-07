@@ -13,7 +13,7 @@ import { SharpImageDriver, type SharpConfig } from "../src/sharp-image-driver.js
 /**
  * Boot an application with the two providers in a given order.
  *
- * `media` needs a database, storage and snowflake for its own manager,
+ * `media` needs a database and storage for its own manager,
  * but NOT for `IMAGE_TOKEN` — which is bound unconditionally, precisely
  * so a driver package can extend it. So `register()` is called directly
  * rather than going through `app.bootstrap()`: the image seam is what is

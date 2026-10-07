@@ -10,7 +10,7 @@
  *
  * `bigint` and `number` both stringify, matching how the framework treats
  * keys as decimal strings for cross-engine identity. The scaffolded `User`
- * keys on a snowflake, which is a `bigint`.
+ * keys on an auto-increment id, which is a `bigint`.
  *
  * Its own module rather than a member of `AuthManager` so the guards can
  * use it without importing the manager, which would create a cycle

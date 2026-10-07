@@ -28,7 +28,7 @@ export abstract class AuthEvent extends AbstractEvent {}
  *
  * `userId` is a `string` throughout this package even though a model's key
  * may be a `number` or a `bigint` (the scaffolded `User` uses
- * `keyType: snowflake()`, a `bigint`). Guards already take and return
+ * an auto-increment key, a `bigint`). Guards already take and return
  * string ids, so this is the type the subsystem speaks, and a listener
  * writing the value to a polymorphic column needs a string anyway.
  */

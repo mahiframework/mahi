@@ -16,7 +16,6 @@
     { "path": "../datetime" },
     { "path": "../events" },
     { "path": "../facades" },
-    { "path": "../http" },
-    { "path": "../snowflake" }
+    { "path": "../http" }
   ]
 }

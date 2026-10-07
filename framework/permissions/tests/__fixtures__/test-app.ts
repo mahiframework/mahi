@@ -17,7 +17,6 @@ import {
 } from "@mahiframework/database";
 import { ArrayCacheStore, CacheManager, type CacheStore } from "@mahiframework/cache";
 import { EventDispatcher } from "@mahiframework/events";
-import { SnowflakeServiceProvider } from "@mahiframework/snowflake";
 import { PermissionsServiceProvider } from "../../src/permissions-service-provider.js";
 import { PermissionRegistrar } from "../../src/permission-registrar.js";
 import { PERMISSIONS_TOKEN } from "../../src/tokens.js";
@@ -28,10 +27,10 @@ import type { Role } from "../../src/models/role.model.js";
 import createPermissionTables from "../../src/migrations/0001_create_permission_tables.js";
 
 /**
- * A snowflake-keyed user, which is what the pivots require: `model_id` is
+ * An integer-keyed user, which is what the pivots require: `model_id` is
  * a `bigInteger`, so the key has to be a `bigint`. Ids are assigned by
- * hand here rather than via `keyType: snowflake()`, which would need the
- * snowflake provider booted for every test to no purpose.
+ * hand here rather than left to the database, so a failure message names
+ * a predictable id.
  */
 export interface UserAttributes {
   id: bigint;
@@ -132,18 +131,6 @@ export async function createHarness(config: PermissionsConfig = {}): Promise<Har
   app.instance(EVENTS_TOKEN, events);
   setCurrentApp(app);
 
-  // `Role` and `Permission` declare `keyType: snowflake()`, which
-  // resolves `SNOWFLAKE_TOKEN` at generate time — so this provider is a
-  // hard requirement of the package, not harness convenience, and a test
-  // suite that stubbed the ids would hide that. `testing: true` makes the
-  // ids sequential so a failure message names a readable id.
-  app.config.set("snowflake", {
-    testing: true,
-    sequencing: { resolver: null, prefix: "" },
-    constants: { epoch: "2025-01-01 00:00:00", cluster: 1, worker: 1 },
-  });
-  new SnowflakeServiceProvider(app).register();
-
   app.config.set("permissions", { guard: "web", ...config });
 
   const provider = new PermissionsServiceProvider(app);
@@ -189,7 +176,7 @@ export async function createHarness(config: PermissionsConfig = {}): Promise<Har
 
 let nextKey = 1n;
 
-/** A user with a unique snowflake-shaped key. */
+/** A user with a unique integer key. */
 export async function makeUser(email = `user${nextKey}@example.com`): Promise<User> {
   const id = 9_000_000_000_000_000_000n + nextKey++;
 

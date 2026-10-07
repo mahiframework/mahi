@@ -88,7 +88,7 @@ One table, `activity_logs`:
 
 `model_id` and `user_id` are text because they are polymorphic: they hold
 the key of *any* model, and two models in one app can key differently (a
-UUID `User`, a snowflake `Team`). Only text holds both.
+UUID `User`, an auto-increment `Team`). Only text holds both.
 
 There is deliberately **no subjectless row**. A nullable `model_type`
 would make every read query branch, and the case it would serve is a log

@@ -237,8 +237,9 @@ yourself; for a filename suffix or a test fixture, this is fine.
 `Str.ulid()` is lexicographically sortable by generation time, the first
 10 characters are `Date.now()` in Crockford base32, the remaining 16 are
 80 random bits. Two ULIDs generated in the same millisecond do **not**
-have a defined relative order (there is no monotonic counter). For
-guaranteed-ordered IDs, see [`@mahiframework/snowflake`](../models/).
+have a defined relative order (there is no monotonic counter). For ids
+that are ordered by the database rather than by a clock, use an
+auto-increment primary key, see [Models](../models/).
 
 `Str.uuid7()` is the UUID-shaped equivalent: a 48-bit millisecond
 timestamp followed by 74 random bits, so ids sort in creation order while

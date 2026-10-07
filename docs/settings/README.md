@@ -292,8 +292,8 @@ why the package reads `currentAuthState()` rather than `Auth.user()` or
 outside a request scope, `userOrNull()` included.
 
 The column is nullable `TEXT` with no foreign key: an app's user may key
-on a snowflake, a UUID or an int, and the framework cannot assume the
-`users` table's name.
+on an int or a UUID, and the framework cannot assume the `users` table's
+name.
 
 ## Authorization is yours
 

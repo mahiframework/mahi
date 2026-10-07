@@ -1,5 +1,4 @@
 import { Cast, Model } from "@mahiframework/database";
-import { snowflake } from "@mahiframework/snowflake";
 import type { DateTime } from "@mahiframework/datetime";
 import { UserFactory } from "../../database/factories/user-factory.js";
 import { UserResource } from "../http/resources/user.resource.js";
@@ -17,7 +16,12 @@ import { UserResource } from "../http/resources/user.resource.js";
  * code.
  */
 export interface UserAttributes {
-  /** A snowflake, hence `bigint`: a 64-bit id does not fit a `number`. */
+  /**
+   * An auto-increment key, hence `bigint`: it is 64-bit on every engine,
+   * so it would not survive a `number`. Swap `keyType: uuidv7()` (from
+   * `@mahiframework/database`) and `id: string` if you would rather the
+   * app assign a time-ordered UUID.
+   */
   id: bigint;
   name: string;
   email: string;
@@ -33,7 +37,6 @@ export interface UserAttributes {
 export class User extends Model<UserAttributes>()({
   table: "users",
   primaryKey: "id",
-  keyType: snowflake(),
   softDeletes: true,
   morphName: "User",
   hidden: ["password"],

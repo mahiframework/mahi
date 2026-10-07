@@ -174,7 +174,6 @@ Mahi is a set of packages, not a monolith. Install what you use.
 | `@mahiframework/cli` | Console kernel, `make:*` generators, migration commands |
 | `@mahiframework/testing` | Test application, HTTP client, database assertions |
 | `@mahiframework/datetime` | Immutable date/time library |
-| `@mahiframework/snowflake` | Distributed 63-bit IDs |
 | `@mahiframework/tui` | Terminal UI: prompts, tables, spinners, progress bars |
 | `@mahiframework/pipeline` | Send a value through a series of pipes |
 | `@mahiframework/process` | Run external commands |

@@ -1,4 +1,5 @@
 import type { Command as CommanderCommand } from "commander";
+import { runInvocationScope } from "@mahiframework/core";
 import { Command, trap } from "@mahiframework/cli";
 import { QueueManager } from "../queue-manager.js";
 import { JobRegistry } from "../job-registry.js";
@@ -224,7 +225,17 @@ export class QueueWorkCommand extends Command {
           continue;
         }
 
-        await this.processJob(driver, registry, job);
+        // Each job is its own invocation: a fresh id, a fresh Context
+        // overlay, a fresh container scope. This is the event that marks
+        // a job being picked up, so every log line the job produces (and
+        // every lifecycle event it fires) is correlatable back to it.
+        //
+        // The Context overlay matters independently of the id here. A
+        // `queue:work` process is a daemon that can run for days, so
+        // without a per-job scope anything a job adds to the context
+        // accumulates in the process-global store and leaks into the log
+        // lines of every job that follows it.
+        await runInvocationScope(this.app, () => this.processJob(driver, registry, job));
         processed += 1;
 
         if (options.once) {

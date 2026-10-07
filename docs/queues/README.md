@@ -633,7 +633,7 @@ No new infrastructure.
 
 ```
 jobs
-  id            bigint  primary  (snowflake)
+  id            bigint  primary  (auto-increment)
   queue         string  default 'default'
   job_class     string
   payload_json  text
@@ -648,7 +648,7 @@ jobs
 
 ```
 failed_jobs
-  id            bigint  primary  (snowflake)
+  id            bigint  primary  (carried over from jobs.id)
   connection    string  nullable
   queue         string  nullable
   job_class     string
@@ -743,10 +743,10 @@ pushed. That is what the `id` half of `ORDER BY available_at, id` is for:
 `available_at` only has second precision, so a fan-out dispatched inside
 one second ties on it, and `id` is the only thing left to break the tie.
 
-So `jobs.id` is a **snowflake** — a microsecond timestamp followed by a
-counter — which sorts by the time it was minted. A random UUID would
-make a burst run in an arbitrary order, which is not what a queue
-described as FIFO should do.
+So `jobs.id` is **auto-increment**, which the database hands out
+monotonically, so it sorts by the order rows were inserted. A random
+UUID would make a burst run in an arbitrary order, which is not what a
+queue described as FIFO should do.
 
 This orders the *popping*, not the finishing. Several workers pop in
 order and then run concurrently, so they complete in whatever order they
@@ -1096,6 +1096,31 @@ doesn't any more.)
 
 `--backoff <seconds>` sets a flat fallback for jobs that define no
 `backoff()`; a job's own `backoff()` always wins.
+
+### Each job is its own invocation
+
+The worker runs every job inside `runInvocationScope()`, so each job gets
+a fresh [invocation id](../logging/#invocation-ids), a fresh
+[context](../logging/#context) overlay and a fresh container resolution
+scope. Every log line a job emits therefore carries an id unique to that
+job, and filtering an aggregator by it gives you exactly that job's
+output.
+
+The context overlay matters independently of the id. A `queue:work`
+process is a daemon that can run for days, so without a per-job scope
+anything a job adds to the context accumulates in the process-global
+store and leaks onto the log lines of every job that follows it:
+
+```ts
+async handle(): Promise<void> {
+  // Scoped to this job, discarded when it finishes.
+  Context.add("invoiceId", this.invoice.id);
+  Log.info("charging card"); // ... {"invocation":"904…","invoiceId":"42"}
+}
+```
+
+A `scoped()` binding likewise resolves once per job rather than behaving
+as a transient.
 
 ### Queue events
 

@@ -2,7 +2,7 @@
  * `JSON.stringify` that survives a `bigint`.
  *
  * `JSON.stringify` throws on one, and the scaffolded `User` keys on a
- * snowflake, so a `user_id` inside a captured payload is a `bigint` in a
+ * auto-increment id, so a `user_id` inside a captured payload is a `bigint` in a
  * default application. Copied from `DatabaseChannel`, which hit the same
  * thing writing notification payloads.
  */

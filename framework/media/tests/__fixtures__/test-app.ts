@@ -19,7 +19,6 @@ import {
 } from "@mahiframework/database";
 import { EventDispatcher } from "@mahiframework/events";
 import { FakeStorageDriver, StorageManager } from "@mahiframework/storage";
-import { SnowflakeServiceProvider } from "@mahiframework/snowflake";
 import { belongsToMedia } from "../../src/builders/belongs-to-media.js";
 import { hasManyMedia } from "../../src/builders/has-many-media.js";
 import { hasOneMedia } from "../../src/builders/has-one-media.js";
@@ -32,11 +31,11 @@ import type { MediaConfig } from "../../src/media-config.js";
 import createMediaTable from "../../src/migrations/0001_create_media_table.js";
 
 /**
- * A snowflake-keyed owner, which is the common case and what
+ * An integer-keyed owner, which is the common case and what
  * `create-mahi`'s template `User` is.
  *
- * Ids are assigned by hand rather than via `keyType: snowflake()`:
- * `MediaFile` needs the snowflake provider for its own key and the
+ * Ids are assigned by hand rather than left to the database:
+ * `MediaFile` has its own auto-increment key and the
  * harness registers it, but the owner's key is incidental to every test
  * here and sequential literals make a failure message readable.
  */
@@ -79,7 +78,7 @@ export class User extends Model<UserAttributes>()({
  * Not a nicety. `media.model_id` is TEXT precisely so that any key type
  * can own media, which is the one place this schema deliberately
  * diverges from `permissions` (whose `bigInteger model_id` makes
- * snowflake-keyed assignees a hard limit). A test suite with only
+ * integer-keyed assignees a hard limit). A test suite with only
  * `bigint` owners would let that column silently regress to
  * `unsignedBigInteger` — which is what `nullableMorphs()` would have
  * given it.
@@ -135,12 +134,6 @@ export interface Harness {
  * answers from storage config and must get right in both directions: a
  * `url` prefix makes `url()` work, its absence makes `url()` throw.
  *
- * `SnowflakeServiceProvider` is registered rather than stubbed because
- * `MediaFile` declares `keyType: snowflake()`, which resolves
- * `SNOWFLAKE_TOKEN` at generate time — so the provider is a hard runtime
- * requirement of the package, not harness convenience, and a suite that
- * faked the ids would hide that. `testing: true` makes them sequential so
- * a failure message names a readable id.
  */
 export async function createHarness(config: MediaConfig = {}): Promise<Harness> {
   const app = new Application();
@@ -179,13 +172,6 @@ export async function createHarness(config: MediaConfig = {}): Promise<Harness> 
   app.instance(EVENTS_TOKEN, events);
 
   setCurrentApp(app);
-
-  app.config.set("snowflake", {
-    testing: true,
-    sequencing: { resolver: null, prefix: "" },
-    constants: { epoch: "2025-01-01 00:00:00", cluster: 1, worker: 1 },
-  });
-  new SnowflakeServiceProvider(app).register();
 
   app.config.set("media", config);
 
@@ -237,7 +223,7 @@ export async function createHarness(config: MediaConfig = {}): Promise<Harness> 
 
 let nextKey = 1n;
 
-/** A user with a unique snowflake-shaped key. */
+/** A user with a unique integer key. */
 export async function makeUser(email = `user${nextKey}@example.com`): Promise<User> {
   const id = 9_000_000_000_000_000_000n + nextKey++;
 

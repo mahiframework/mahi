@@ -11,7 +11,7 @@ import { FileExistsError } from "./make/scaffold.js";
  * `make:model -m` never produces a `bigint` auto-increment column against a
  * client-generated string key (or vice versa). See `make-model.ts`.
  */
-export type KeyType = "id" | "uuid" | "snowflake";
+export type KeyType = "id" | "uuid" | "uuidv7";
 
 export interface MakeMigrationOptions {
   /** Directory to write into. */
@@ -76,9 +76,15 @@ function planFor(name: string, options: MakeMigrationOptions): Plan {
   return { kind: "stub", table: "" };
 }
 
-/** The primary-key line inside a `create` blueprint. */
+/**
+ * The primary-key line inside a `create` blueprint.
+ *
+ * Both UUID forms get a real `uuid` column rather than a generic string:
+ * Postgres then stores 16 bytes instead of 36 and validates the format,
+ * and the other engines fall back to a fixed-width char.
+ */
 function idLine(keyType: KeyType): string {
-  return keyType === "id" ? "table.id();" : 'table.string("id").primary();';
+  return keyType === "id" ? "table.id();" : 'table.uuid("id").primary();';
 }
 
 function template(name: string, options: MakeMigrationOptions): string {

@@ -27,10 +27,8 @@ import { SETTINGS_TOKEN } from "../../src/tokens.js";
  * A user for the actor tests.
  *
  * `timestamps: false` and ids assigned by hand: `edited_by_user_id` is
- * TEXT and the registry stringifies whatever key it is handed, so the
- * key type here is deliberately a plain `bigint` rather than a real
- * `snowflake()` — which would need the snowflake provider booted to no
- * purpose.
+ * TEXT and the registry stringifies whatever key it is handed, so a
+ * plain `bigint` key is all this fixture needs.
  */
 export interface UserAttributes {
   id: bigint;

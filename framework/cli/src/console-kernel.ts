@@ -1,5 +1,5 @@
 import { Command as CommanderProgram } from "commander";
-import type { Application } from "@mahiframework/core";
+import { runInvocationScope, type Application } from "@mahiframework/core";
 import type { CommandClass } from "./command.js";
 import { deriveProgramName, resolveRuntimeMode, type RuntimeMode } from "./runtime-mode.js";
 
@@ -286,7 +286,14 @@ export class ConsoleKernel {
     }
 
     try {
-      await this.program.parseAsync(argv);
+      // One command is one invocation: it gets an invocation id, a
+      // Context overlay and a container scope, so its log lines are
+      // correlatable and `scoped()` bindings resolve once rather than
+      // per-`make()`. Wrapping the dispatch rather than each command
+      // means a command author cannot forget, and an embedder driving
+      // several `run()` calls against one long-lived Application gets a
+      // distinct invocation per call instead of one shared forever.
+      await runInvocationScope(this.app, () => this.program.parseAsync(argv));
     } finally {
       if (this.options.terminate !== false) {
         await this.app.terminate();

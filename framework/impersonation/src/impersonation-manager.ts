@@ -592,7 +592,7 @@ export class ImpersonationManager {
 
   /**
    * A user's id as a string. Mirrors `AuthManager.id()`: the framework
-   * never knows the app's key type (snowflake, bigint, uuid), and every
+   * never knows the app's key type (bigint, uuid), and every
    * id it stores is text, so stringify at the boundary.
    */
   private idOf(user: object): string {

@@ -225,7 +225,7 @@ describe("DatabaseQueueDriver", () => {
       await driver.fail(job!, new Error("smtp down"));
 
       // The failed-job API is keyed by string (ids reach it from a
-      // command line), while the driver handle is a snowflake.
+      // command line), while the driver handle is a bigint.
       return { ...job!, id: String(job!.id) };
     }
 
@@ -453,7 +453,7 @@ describe("DatabaseQueueDriver", () => {
       // the table back in id order proves nothing on its own. This asks
       // whether the ids ascend *with the push sequence*.
       const rows = (await db.selectFrom("jobs").select(["id", "payload_json"]).execute()) as {
-        id: string;
+        id: bigint;
         payload_json: string;
       }[];
 
@@ -463,9 +463,13 @@ describe("DatabaseQueueDriver", () => {
             (JSON.parse(a.payload_json) as { n: number }).n -
             (JSON.parse(b.payload_json) as { n: number }).n,
         )
-        .map((row) => row.id);
+        .map((row) => BigInt(row.id));
 
-      expect([...ids].sort()).toEqual(ids);
+      // Numeric compare, not the default lexicographic one, which would
+      // call 10 smaller than 9.
+      const ascending = [...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+
+      expect(ascending).toEqual(ids);
     });
 
     it("runs a job due sooner before one pushed earlier but delayed", async () => {

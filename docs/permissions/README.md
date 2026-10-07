@@ -4,7 +4,7 @@ Roles, permissions, and the cache that keeps checking them cheap. A port
 of the ideas in `spatie/laravel-permission`, adapted to this framework's
 gate and its lack of traits.
 
-A `Role` holds `Permission`s. Any snowflake-keyed model holds `Role`s and
+A `Role` holds `Permission`s. Any integer-keyed model holds `Role`s and
 inherits their permissions, and may also hold a `Permission` directly.
 
 ```ts
@@ -38,7 +38,6 @@ export const providers: ServiceProviderClass[] = [
   CacheServiceProvider,
   AuthServiceProvider,
   AuthorizationServiceProvider,
-  SnowflakeServiceProvider,
   PermissionsServiceProvider,  // ← here
   // ...
   HttpServiceProvider,
@@ -53,11 +52,6 @@ The ordering constraints, all of which are real:
   two models.
 - **After `CacheServiceProvider`** — the role/permission map lives in a
   cache store.
-- **After `SnowflakeServiceProvider`** — `Role` and `Permission` declare
-  `keyType: snowflake()`, so they resolve `SNOWFLAKE_TOKEN` when
-  assigning a key. The resolution is lazy (at first write, not at boot),
-  but a missing provider is a `BindingNotFoundError` the first time a
-  role is created.
 - **After `AuthServiceProvider`** — the per-request memo pipe should run
   inside the ambient auth scope, and the default guard is read from
   `auth.default`.
@@ -76,7 +70,7 @@ Then run the migration:
 
 ## Read this first: two hard limits
 
-**Only snowflake-keyed models can hold roles.** `model_has_roles.model_id`
+**Only integer-keyed models can hold roles.** `model_has_roles.model_id`
 is a `bigInteger`, so a model keyed on a uuid or a string cannot be
 assigned a role or a permission. Attempting it throws
 `UnsupportedAssigneeKeyError` rather than reaching SQL.

@@ -1074,8 +1074,8 @@ soft-delete global scope adds `WHERE deleted_at IS NULL` to every
 lookup, and by `retrieveById()` on every subsequent authenticated
 request, so existing tokens and sessions stop working too.
 
-The base app's `User` model is configured with `softDeletes: true` and
-`keyType: snowflake()`, so this is the default behaviour out of the box.
+The base app's `User` model is configured with `softDeletes: true`, so
+this is the default behaviour out of the box.
 Any global scope you add to the user model participates: a `tenant` scope,
 an `active` scope, a `banned_at IS NULL` scope. See
 [Models](../models/#global-scopes) and

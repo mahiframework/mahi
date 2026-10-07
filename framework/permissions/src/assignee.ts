@@ -42,8 +42,8 @@ export interface ResolvedAssignee {
  * Postgres raises `operator does not exist: bigint = character varying`,
  * a 500 that names no model, while SQLite happily stores the string and
  * then never matches it — a permission check that silently returns false
- * forever. A `number` is rejected for the same reason the snowflake
- * package returns `bigint`: a 64-bit id does not survive the round trip.
+ * forever. A `number` is rejected because a 64-bit id does not survive
+ * the round trip through one.
  *
  * `morphAlias()` resolves through a `Relation.morphMap()` entry, then
  * `static morphName`, then the TABLE NAME. That last fallback is why the

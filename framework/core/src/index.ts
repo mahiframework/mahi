@@ -18,6 +18,9 @@ export type { Logger, LogLevel, LogSource } from "./logger.js";
 export { ContextRepository } from "./context.js";
 export { Context } from "./context-facade.js";
 
+export { Invocation } from "./invocation.js";
+export { runInvocationScope, INVOCATION_CONTEXT_KEY } from "./invocation-scope.js";
+
 export {
   LogManager,
   LogChannelNotConfiguredError,

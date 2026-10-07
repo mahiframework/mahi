@@ -536,7 +536,7 @@ The model exposes a `can()` method returning the map:
 export class Post extends Model<PostAttributes>()({
   table: "posts",
   primaryKey: "id",
-  keyType: snowflake(),
+  keyType: "uuidv7",
   softDeletes: true,
 }) {
   // ...

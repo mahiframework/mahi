@@ -450,7 +450,7 @@ export abstract class BaseModel {
   /**
    * Client-side primary-key generator used when the key strategy is not
    * DB-`increment` and the insert payload has no key yet. Delegates to the
-   * resolved `keyStrategy.generate` (`"uuid"`, snowflake, or a custom
+   * resolved `keyStrategy.generate` (`"uuid"`, `"uuidv7"`, or a custom
    * `KeyStrategy`); a no-op for `"increment"`. Runs after the `saving`
    * hook and before `creating`, so both see the generated value.
    */
@@ -1140,7 +1140,7 @@ export abstract class BaseModel {
    * that column explicitly, in which case the DB won't have
    * auto-generated anything and the caller's value passes through
    * unchanged. Declare `keyType` on models with a client-generated
-   * primary key, `"uuid"`, or `snowflake()` from `@mahiframework/snowflake`;
+   * primary key, `"uuid"` or `"uuidv7"`;
    * `incrementing` is a read-only accessor derived from it.
    *
    * When `incrementing` is false and the payload has no primary key,
@@ -3927,7 +3927,7 @@ export interface ModelConfig<A> {
   table: string;
   connection?: string;
   primaryKey?: ColumnKeys<A>;
-  keyType?: "increment" | "uuid" | KeyStrategy;
+  keyType?: "increment" | "uuid" | "uuidv7" | KeyStrategy;
   timestamps?: boolean | { createdAt?: ColumnKeys<A> | null; updatedAt?: ColumnKeys<A> | null };
   softDeletes?: boolean | { column: ColumnKeys<A> };
   casts?: { [K in ColumnKeys<A>]?: Cast<Unextend<A[K]>, any> };
@@ -4042,11 +4042,11 @@ type SoftDeleteColumn<C> = C extends { softDeletes: infer S }
  */
 
 /**
- * `keyType` and the primary key's declared type must agree: `"uuid"`
- * assigns a string and `snowflake()` a bigint, so `id: number` with
- * either is a guaranteed runtime type mismatch on insert.
+ * `keyType` and the primary key's declared type must agree: `"uuid"` and
+ * `"uuidv7"` assign a string, so `id: number` with either is a guaranteed
+ * runtime type mismatch on insert.
  *
- * The strategy's own `type` decides which is expected, so a
+ * A `KeyStrategy` object's own `type` decides which is expected, so a
  * `KeyStrategy<bigint>` requires `id: bigint` and a `KeyStrategy<string>`
  * requires `id: string`, rather than both being lumped in as strings.
  */
@@ -4201,7 +4201,7 @@ type ModelLint<A, C extends ModelConfig<A>> = Rule<
   Rule<ReservedCollisions<A>, "column collides with a reserved model member"> &
   Rule<
     KeyTypeMismatch<A, C>,
-    "the primary key column's type must match what keyType generates (string, or bigint for snowflake())"
+    "the primary key column's type must match what keyType generates (string for uuid/uuidv7, or bigint for a bigint KeyStrategy)"
   > &
   Rule<SoftDeleteColumnNotNullable<A, C>, "the soft-delete column must be nullable"> &
   Rule<
@@ -4611,14 +4611,19 @@ function validateModelConfig(config: ModelConfig<A_ANY>): void {
     fail("`morphName` must be a string.");
   }
 
-  // `keyType` is either one of the two built-in names or a KeyStrategy.
+  // `keyType` is either one of the built-in names or a KeyStrategy.
   const keyType = config.keyType;
 
-  if (keyType !== undefined && keyType !== "increment" && keyType !== "uuid") {
+  if (
+    keyType !== undefined &&
+    keyType !== "increment" &&
+    keyType !== "uuid" &&
+    keyType !== "uuidv7"
+  ) {
     if (typeof keyType !== "object" || keyType === null || typeof keyType.generate !== "function") {
       fail(
-        '`keyType` must be "increment", "uuid", or a KeyStrategy ' +
-          "({ type, generate }) — e.g. snowflake() from @mahiframework/snowflake.",
+        '`keyType` must be "increment", "uuid", "uuidv7", or a KeyStrategy ' +
+          "({ type, generate }) — e.g. uuidv7() from @mahiframework/database.",
       );
     }
 

@@ -3,8 +3,8 @@ import { Schema, type Migration, type Blueprint } from "@mahiframework/database"
 /**
  * One table for every kind of file: avatars, logos, documents, uploads.
  *
- * `id` is a `bigInteger` primary key, never auto-increment: the model
- * assigns a snowflake via `keyType: snowflake()`.
+ * `id` is an auto-increment `bigIncrements` primary key, assigned by the
+ * database.
  *
  * `model_type`/`model_id` are BOTH NULLABLE, which is unusual for a morph
  * pair and is the `belongsToMedia` case. There the foreign key lives on
@@ -19,7 +19,7 @@ import { Schema, type Migration, type Blueprint } from "@mahiframework/database"
  * local side of a `morphToMany` pivot, and `buildPivotQuery()` binds the
  * local key value RAW — a `bigint` against a `varchar` makes Postgres
  * raise `operator does not exist` — so it has no choice but
- * `bigInteger`, and it documents snowflake-keyed assignees as a hard
+ * `bigInteger`, and it documents integer-keyed assignees as a hard
  * limit. Nothing here does that. This column is only ever read back by
  * equality through `morphMany` eager loading, which stringifies both
  * sides, so text holds every key type losslessly and ANY model can own
@@ -69,7 +69,7 @@ import { Schema, type Migration, type Blueprint } from "@mahiframework/database"
 const migration: Migration = {
   async up(): Promise<void> {
     await Schema.create("media", (table: Blueprint) => {
-      table.bigInteger("id").primary();
+      table.bigIncrements("id");
 
       // Written by hand rather than `nullableMorphs("model")`, which
       // would make `model_id` an `unsignedBigInteger`. See the header.

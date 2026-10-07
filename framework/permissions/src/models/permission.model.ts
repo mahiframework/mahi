@@ -1,5 +1,4 @@
 import { Model, belongsToMany, type BelongsToMany } from "@mahiframework/database";
-import { snowflake } from "@mahiframework/snowflake";
 import type { DateTime } from "@mahiframework/datetime";
 import { Role } from "./role.model.js";
 
@@ -20,7 +19,7 @@ import { Role } from "./role.model.js";
  * guard" would have meant unlimited duplicate rows in dev.
  */
 export interface PermissionAttributes {
-  /** A snowflake, hence `bigint`: a 64-bit id does not fit a `number`. */
+  /** An auto-increment key, hence `bigint`: 64-bit on every engine. */
   id: bigint;
   name: string;
   /** The auth guard this permission belongs to, e.g. `"web"`. Never null. */
@@ -34,7 +33,6 @@ export interface PermissionAttributes {
 export class Permission extends Model<PermissionAttributes>()({
   table: "permissions",
   primaryKey: "id",
-  keyType: snowflake(),
   morphName: "Permission",
 }) {
   static override relationships = {

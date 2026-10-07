@@ -17,10 +17,9 @@
  * ## The serialisation boundary
  *
  * `RedisCacheStore` and `FileCacheStore` persist with `JSON.stringify`,
- * and `JSON.stringify` THROWS on a `bigint` — deliberately, per
- * `@mahiframework/snowflake`: an id cannot be serialised without a
- * decision being made about it. The decision here is a decimal string,
- * matching `Resource` and `Model.toJSON()`.
+ * and `JSON.stringify` THROWS on a `bigint` — deliberately: an id cannot
+ * be serialised without a decision being made about it. The decision
+ * here is a decimal string, matching `Resource` and `Model.toJSON()`.
  *
  * So the cached form (`SerializedPermissionMap`) carries strings and the
  * in-memory form (`PermissionMap`) carries `bigint`, with
