@@ -11,6 +11,7 @@ export type { ConsoleKernelOptions } from "./console-kernel.js";
 
 export { deriveProgramName, isCompiledBinary, resolveRuntimeMode } from "./runtime-mode.js";
 export type { RuntimeMode } from "./runtime-mode.js";
+export { consoleWorkerArgs, resolveTsxCli } from "./console-worker-args.js";
 
 export { ConsoleServiceProvider, CONSOLE_KERNEL_TOKEN } from "./console-service-provider.js";
 

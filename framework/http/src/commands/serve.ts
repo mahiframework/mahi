@@ -1,9 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { once } from "node:events";
-import path from "node:path";
 import type { Command as CommanderCommand } from "commander";
-import { Command, isCompiledBinary, trap } from "@mahiframework/cli";
+import { Command, consoleWorkerArgs, resolveTsxCli, trap } from "@mahiframework/cli";
 import { base_path, type Application } from "@mahiframework/core";
 import { bindWithRetries, type ListeningServer } from "../listen.js";
 import {
@@ -72,61 +71,22 @@ async function waitForExit(child: ChildProcess): Promise<void> {
 }
 
 /**
- * Path to `tsx/dist/cli.mjs`, the real Node entry, not `node_modules/.bin/tsx`.
- * The bin file is a POSIX shim; `spawn(process.execPath, [shim, console.ts])`
- * makes Node run `console.ts` natively, which does not rewrite `.js` imports
- * to `.ts` and fails with `Cannot find module '.../bootstrap.js'`.
- */
-export function resolveTsxCli(cwd = process.cwd()): string | undefined {
-  const candidates = [
-    path.join(cwd, "node_modules", "tsx", "dist", "cli.mjs"),
-    path.join(cwd, "..", "node_modules", "tsx", "dist", "cli.mjs"),
-  ];
-
-  return candidates.find((candidate) => existsSync(candidate));
-}
-
-/**
  * The arguments the supervisor should re-execute itself with, to be passed to
  * `spawn(process.execPath, ...)`.
  *
- * Three shapes, because `process.execPath` means something different in each:
- *
- * | Running as | `execPath` | args |
- * |---|---|---|
- * | `./artisan serve` (tsx) | `node` | `[tsx/cli.mjs, bin/console.ts, serve, ...]` |
- * | `node dist/bin/console.js serve` | `node` | `[dist/bin/console.js, serve, ...]` |
- * | a compiled binary | the binary itself | `[serve, ...]` |
- *
- * The compiled case is the one that needs stating. Such a binary reports
- * `argv[1]` as a path inside its virtual filesystem (`/$bunfs/root/<name>`)
- * which does not exist on disk, so the old fallback of `argv.slice(1)` handed
- * that path back to the binary as its first argument, and Commander, which
- * sees it as a subcommand name, exited with
- * `error: unknown command '/$bunfs/root/hivemind'`. The binary re-executes
- * itself, so everything before the command word must simply be dropped.
+ * A thin wrapper over `@mahiframework/cli`'s `consoleWorkerArgs()`, which owns
+ * the three-runtime table (tsx / compiled-`.js` / compiled binary) so it lives
+ * in one place rather than inside an HTTP command. Everything after the
+ * command word is preserved, because `serve` re-runs itself with its own
+ * flags.
  */
+export { resolveTsxCli };
+
 export function serveWorkerArgs(argv = process.argv, cwd = process.cwd()): string[] {
-  // A compiled binary IS the interpreter: `spawn(process.execPath, ...)`
-  // re-runs it, so it needs the command and its flags and nothing else.
-  if (isCompiledBinary(argv)) {
-    return argv.slice(2);
-  }
+  const commandIdx = argv.indexOf("serve");
+  const flags = commandIdx === -1 ? [] : argv.slice(commandIdx + 1);
 
-  const scriptIdx = argv.findIndex(
-    (arg) => arg.endsWith("console.ts") || arg.endsWith("console.js"),
-  );
-  const rest = scriptIdx === -1 ? ["bin/console.ts", "serve"] : argv.slice(scriptIdx);
-
-  // `.ts` entry points need tsx to load them; a built `.js` one does not, and
-  // handing tsx a `.js` file is merely redundant rather than wrong.
-  const tsxCli = rest[0]?.endsWith(".ts") === true ? resolveTsxCli(cwd) : undefined;
-
-  if (tsxCli) {
-    return [tsxCli, ...rest];
-  }
-
-  return rest;
+  return consoleWorkerArgs("serve", flags, argv, cwd);
 }
 
 /**
