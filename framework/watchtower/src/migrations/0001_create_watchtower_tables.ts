@@ -90,7 +90,13 @@ const migration: Migration = {
       table.uuid("id").primary();
       table.uuid("watchtower_job_type_id");
 
-      table.uuid("dispatch_id");
+      // `string`, not `uuid`. It usually IS a UUIDv7 — that is what this
+      // package's driver assigns — but the history also records jobs from
+      // drivers that have no such column, where the id is derived from
+      // the queue row instead. A native Postgres `uuid` column would
+      // reject those outright, and only on Postgres, which is the worst
+      // place to find out.
+      table.string("dispatch_id");
       table.uuid("invocation_id").nullable();
 
       table.string("process").nullable();

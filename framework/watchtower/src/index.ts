@@ -66,3 +66,8 @@ export type {
   WatchtowerQueuedJob,
   DeferrableQueueDriver,
 } from "./drivers/watchtower-queue-driver.js";
+
+export { RunRecorder, isTerminal } from "./run-recorder.js";
+export type { JobRunObservation } from "./run-recorder.js";
+export { RecordJobRunListener } from "./listeners/record-job-run.listener.js";
+export { RecordJobRunJob, RECORD_JOB_RUN_JOB } from "./jobs/record-job-run.job.js";

@@ -5,8 +5,17 @@ import {
   type DatabaseManager,
   type RegisteredMigration,
 } from "@mahiframework/database";
-import type { QueueManager } from "@mahiframework/queue";
+import type { ListenerRegistration } from "@mahiframework/events";
+import {
+  JobFailed,
+  JobProcessed,
+  JobProcessing,
+  type JobClass,
+  type QueueManager,
+} from "@mahiframework/queue";
 import { WatchtowerManager } from "./watchtower-manager.js";
+import { RecordJobRunListener } from "./listeners/record-job-run.listener.js";
+import { RECORD_JOB_RUN_JOB, RecordJobRunJob } from "./jobs/record-job-run.job.js";
 import { resolveConfig, type WatchtowerConfig } from "./watchtower-config.js";
 import { configErrors } from "./validate-config.js";
 import { WatchtowerConfigError } from "./errors.js";
@@ -137,6 +146,37 @@ export class WatchtowerServiceProvider extends ServiceProvider {
       { name: "0001_create_watchtower_tables", migration: createWatchtowerTables },
       { name: "0002_create_watchtower_jobs_table", migration: createWatchtowerJobsTable },
     ];
+  }
+
+  /**
+   * Record every job the worker reports on.
+   *
+   * All three events, subscribed as classes. The listener itself decides
+   * what to ignore — it hard-excludes its own job to avoid recursing, so
+   * that cannot be expressed by subscribing selectively here.
+   *
+   * One listener instance per registration is fine: its only state is
+   * the in-memory start-time map, and `EventDispatcher` constructs the
+   * class once per event type.
+   */
+  listeners(): ReadonlyArray<ListenerRegistration> {
+    return [
+      [JobProcessing, RecordJobRunListener],
+      [JobProcessed, RecordJobRunListener],
+      [JobFailed, RecordJobRunListener],
+    ] as const;
+  }
+
+  /**
+   * The queued-recording job.
+   *
+   * It MUST be here: `QueueManager.dispatch()` resolves a job's name
+   * through `JobRegistry.nameFor()`, which throws for an unregistered
+   * class — so an omission surfaces at the first recorded run rather
+   * than at boot.
+   */
+  jobs(): Record<string, JobClass> {
+    return { [RECORD_JOB_RUN_JOB]: RecordJobRunJob };
   }
 
   /** Registered so a queued job can carry either row. */

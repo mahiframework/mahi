@@ -27,6 +27,8 @@ export interface Harness {
   events: EventDispatcher;
   queue: QueueManager;
   registry: JobRegistry;
+  /** Collect `jobs()` hooks, as `QueueServiceProvider.boot()` would. */
+  collectJobs: () => void;
   cleanup: () => void;
 }
 
@@ -83,6 +85,19 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
     events,
     queue,
     registry: jobRegistry,
+    collectJobs: () => {
+      // What `QueueServiceProvider.boot()` does. That provider is not
+      // registered here, so nothing otherwise collects the `jobs()`
+      // hooks that `QueueManager.dispatch()` resolves names through —
+      // and a dispatch of an unregistered class throws. Called by hand
+      // after `bootstrap()` so a job a provider forgot to declare fails
+      // in the test that needs it, rather than silently never queueing.
+      for (const provider of app.getProviders()) {
+        for (const [name, jobClass] of Object.entries(provider.jobs?.() ?? {})) {
+          jobRegistry.register(name, jobClass);
+        }
+      }
+    },
     cleanup: () => {
       clearCurrentApp();
     },
