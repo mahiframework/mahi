@@ -88,13 +88,15 @@ export class WatchtowerServiceProvider extends ServiceProvider {
    * registered but never *resolved* unless config points something at
    * it, so merely listing this provider costs nothing.
    *
-   * The cooldown hook is deliberately NOT wired here. A deferral lives
-   * in the cache and needs the process name, neither of which a
-   * container factory knows — the worker builds its own driver instance
-   * with `onDefer` bound to its process. A driver resolved through the
-   * manager therefore defers correctly in every respect except holding
-   * the queue back, which is the right behaviour for a bare
-   * `Bus.dispatch()` with no worker involved.
+   * Neither `fifo` nor the cooldown hook is wired here, and that is
+   * deliberate: both are properties of a *process*, and a container
+   * factory has no process. The worker builds its own instance with
+   * `fifo` and `onDefer` taken from the process it is running
+   * (`watchtower:worker`).
+   *
+   * So a driver resolved through the manager — by `Bus.dispatch()`, by
+   * `queue:failed --connection=watchtower` — releases the ordinary way.
+   * That is correct: with no worker involved there is no process to hold.
    */
   private registerQueueConnection(): void {
     if (!this.app.has(QUEUE_TOKEN)) {

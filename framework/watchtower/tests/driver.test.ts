@@ -15,7 +15,11 @@ afterEach(() => {
 });
 
 function makeDriver(
-  options: { onDefer?: (seconds: number) => Promise<void>; queue?: string } = {},
+  options: {
+    onDefer?: (seconds: number) => Promise<void>;
+    queue?: string;
+    fifo?: boolean;
+  } = {},
 ): WatchtowerQueueDriver {
   return new WatchtowerQueueDriver(harness.database.driver().kysely, {
     connectionName: "watchtower",
@@ -179,144 +183,8 @@ describe("WatchtowerQueueDriver", () => {
     });
   });
 
-  describe("releaseInPlace", () => {
-    it("spends the attempt, exactly as a release does", async () => {
-      harness = await createHarness();
-      const driver = makeDriver();
-
-      await driver.push("app.jobs.xero", {});
-      const job = (await driver.pop()) as WatchtowerQueuedJob;
-
-      await driver.releaseInPlace(job, 60);
-
-      const row = await rowFor(job.id);
-
-      // Being rate-limited is not a free pass: this attempt did not
-      // complete, so it counts, and a job that keeps getting throttled
-      // still fails once it exhausts `maxAttempts`.
-      expect(row.attempts).toBe(1);
-
-      // Tracked separately for reporting, so "throttled 4 times" is
-      // distinguishable from "failed 4 times" on the dashboard.
-      expect(row.deferrals).toBe(1);
-    });
-
-    it("keeps the job at the head of the queue", async () => {
-      harness = await createHarness();
-      const driver = makeDriver();
-
-      await driver.push("app.jobs.first", {});
-      await driver.push("app.jobs.second", {});
-
-      const job = (await driver.pop()) as WatchtowerQueuedJob;
-      expect(job.jobClass).toBe("app.jobs.first");
-
-      const before = await rowFor(job.id);
-      // A second boundary, so a moved `available_at` would be visible.
-      await new Promise((resolve) => setTimeout(resolve, 1100));
-      await driver.releaseInPlace(job, 60);
-      const after = await rowFor(job.id);
-
-      // The ONLY difference from `release()`, and the reason this method
-      // exists: `available_at` is untouched, so the job does not sort
-      // behind everything already waiting.
-      expect(after.available_at).toBe(before.available_at);
-      expect((await driver.pop())?.jobClass).toBe("app.jobs.first");
-    });
-
-    it("differs from release() only in queue position", async () => {
-      harness = await createHarness();
-      const driver = makeDriver();
-
-      await driver.push("app.jobs.first", {});
-      await driver.push("app.jobs.second", {});
-
-      const job = (await driver.pop())!;
-      await new Promise((resolve) => setTimeout(resolve, 1100));
-      await driver.release(job, 0);
-
-      // The contrast, measured: a plain release — even with no delay —
-      // stamps a newer `available_at` and loses the job's place. This is
-      // why a process pause alone cannot deliver the ordering.
-      expect((await driver.pop())?.jobClass).toBe("app.jobs.second");
-    });
-
-    it("un-reserves the job so the same worker can take it again", async () => {
-      harness = await createHarness();
-      const driver = makeDriver();
-
-      await driver.push("app.jobs.xero", {});
-      const job = (await driver.pop()) as WatchtowerQueuedJob;
-
-      await driver.releaseInPlace(job, 60);
-
-      const row = await rowFor(job.id);
-      expect(row.reserved_at).toBeNull();
-      expect(row.reserved_by).toBeNull();
-    });
-
-    it("accumulates both counters across repeated cooldowns", async () => {
-      harness = await createHarness();
-      const driver = makeDriver();
-
-      await driver.push("app.jobs.xero", {});
-
-      for (let round = 1; round <= 3; round += 1) {
-        const job = (await driver.pop()) as WatchtowerQueuedJob;
-        expect(job.attempts).toBe(round - 1);
-        expect(job.deferrals).toBe(round - 1);
-        await driver.releaseInPlace(job, 1);
-      }
-
-      const job = (await driver.pop()) as WatchtowerQueuedJob;
-
-      // Three throttles, three attempts spent. A job with
-      // `maxAttempts: 3` is now out of budget and the worker will fail
-      // it, which is the documented behaviour.
-      expect(job.attempts).toBe(3);
-      expect(job.deferrals).toBe(3);
-    });
-
-    it("records the cooldown through the injected hook", async () => {
-      harness = await createHarness();
-      const onDefer = vi.fn(async () => {});
-      const driver = makeDriver({ onDefer });
-
-      await driver.push("app.jobs.xero", {});
-      const job = (await driver.pop())!;
-
-      await driver.releaseInPlace(job, 45);
-
-      expect(onDefer).toHaveBeenCalledWith(45);
-    });
-
-    it("still releases when no cooldown hook is wired", async () => {
-      harness = await createHarness();
-      const driver = makeDriver();
-
-      await driver.push("app.jobs.xero", {});
-      const job = (await driver.pop())!;
-
-      await driver.releaseInPlace(job, 60);
-
-      // The right degradation for a test or a single-worker script: the
-      // job is runnable again, just nothing holds the process back.
-      const row = await rowFor(job.id);
-      expect(row.reserved_at).toBeNull();
-      expect(row.attempts).toBe(1);
-    });
-
-    it("is detected by supportsDeferral, and a plain object is not", async () => {
-      harness = await createHarness();
-
-      expect(supportsDeferral(makeDriver())).toBe(true);
-      expect(supportsDeferral({})).toBe(false);
-      expect(supportsDeferral(null)).toBe(false);
-    });
-  });
-
   describe("release", () => {
-    it("bumps attempts and pushes availability out", async () => {
+    it("reschedules and spends an attempt by default", async () => {
       harness = await createHarness();
       const driver = makeDriver();
 
@@ -327,11 +195,29 @@ describe("WatchtowerQueueDriver", () => {
       await driver.release(job, 60);
       const after = await rowFor(job.id);
 
-      // Both counters move, which is what sends the job to the back of
-      // the queue. `releaseInPlace()` moves only the first.
       expect(after.attempts).toBe(1);
       expect(after.available_at > before.available_at).toBe(true);
       expect(after.reserved_at).toBeNull();
+    });
+
+    it("sends the job to the back, even with no delay", async () => {
+      harness = await createHarness();
+      const driver = makeDriver();
+
+      await driver.push("app.jobs.first", {});
+      await driver.push("app.jobs.second", {});
+
+      const job = (await driver.pop())!;
+      expect(job.jobClass).toBe("app.jobs.first");
+
+      // A second boundary, so the restamped `available_at` is visible.
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      await driver.release(job, 0);
+
+      // Measured, and the reason `fifo` needs its own behaviour at all:
+      // reservation order is `available_at asc`, so ANY delay >= 0 makes
+      // the released job newer than everything already waiting.
+      expect((await driver.pop())?.jobClass).toBe("app.jobs.second");
     });
 
     it("leaves deferrals alone", async () => {
@@ -344,6 +230,171 @@ describe("WatchtowerQueueDriver", () => {
       await driver.release(job, 0);
 
       expect((await rowFor(job.id)).deferrals).toBe(0);
+    });
+  });
+
+  describe("release on a fifo process", () => {
+    it("spends the attempt, exactly as an ordinary release does", async () => {
+      harness = await createHarness();
+      const driver = makeDriver({ fifo: true });
+
+      await driver.push("app.jobs.xero", {});
+      const job = (await driver.pop()) as WatchtowerQueuedJob;
+
+      await driver.release(job, 60);
+
+      const row = await rowFor(job.id);
+
+      // Being rate-limited is not a free pass: this attempt did not
+      // complete, so it counts, and a job that keeps being released
+      // still fails once it exhausts `maxAttempts`.
+      expect(row.attempts).toBe(1);
+
+      // Tracked separately for reporting, so "throttled 4 times" is
+      // distinguishable from "failed 4 times" on the dashboard.
+      expect(row.deferrals).toBe(1);
+    });
+
+    it("keeps the job at the head of the queue", async () => {
+      harness = await createHarness();
+      const driver = makeDriver({ fifo: true });
+
+      await driver.push("app.jobs.first", {});
+      await driver.push("app.jobs.second", {});
+
+      const job = (await driver.pop()) as WatchtowerQueuedJob;
+      expect(job.jobClass).toBe("app.jobs.first");
+
+      const before = await rowFor(job.id);
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      await driver.release(job, 60);
+      const after = await rowFor(job.id);
+
+      // The only divergence from the ordinary path: `available_at` is
+      // untouched, so the job does not sort behind what is already
+      // waiting. The process does the waiting instead.
+      expect(after.available_at).toBe(before.available_at);
+      expect((await driver.pop())?.jobClass).toBe("app.jobs.first");
+    });
+
+    it("is the SAME call a job makes on a non-fifo process", async () => {
+      harness = await createHarness();
+
+      // The point of the whole design. One job body, one call, run
+      // against two differently-configured processes — no branching, no
+      // second method, no extra argument. Only the outcome differs.
+      const releaseLikeAJobWould = async (driver: WatchtowerQueueDriver) => {
+        const job = (await driver.pop())!;
+        await driver.release(job, 60);
+
+        return job;
+      };
+
+      const ordinary = makeDriver({ queue: "ordinary" });
+      await ordinary.push("app.jobs.a", {}, { queue: "ordinary" });
+      await ordinary.push("app.jobs.b", {}, { queue: "ordinary" });
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      await releaseLikeAJobWould(ordinary);
+
+      const strict = makeDriver({ queue: "strict", fifo: true });
+      await strict.push("app.jobs.a", {}, { queue: "strict" });
+      await strict.push("app.jobs.b", {}, { queue: "strict" });
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      await releaseLikeAJobWould(strict);
+
+      // Same code, different queue ordering, both perfectly valid.
+      expect((await ordinary.pop("ordinary"))?.jobClass).toBe("app.jobs.b");
+      expect((await strict.pop("strict"))?.jobClass).toBe("app.jobs.a");
+    });
+
+    it("un-reserves the job so the same worker can take it again", async () => {
+      harness = await createHarness();
+      const driver = makeDriver({ fifo: true });
+
+      await driver.push("app.jobs.xero", {});
+      const job = (await driver.pop()) as WatchtowerQueuedJob;
+
+      await driver.release(job, 60);
+
+      const row = await rowFor(job.id);
+      expect(row.reserved_at).toBeNull();
+      expect(row.reserved_by).toBeNull();
+    });
+
+    it("accumulates both counters across repeated cooldowns", async () => {
+      harness = await createHarness();
+      const driver = makeDriver({ fifo: true });
+
+      await driver.push("app.jobs.xero", {});
+
+      for (let round = 1; round <= 3; round += 1) {
+        const job = (await driver.pop()) as WatchtowerQueuedJob;
+        expect(job.attempts).toBe(round - 1);
+        expect(job.deferrals).toBe(round - 1);
+        await driver.release(job, 1);
+      }
+
+      const job = (await driver.pop()) as WatchtowerQueuedJob;
+
+      // Three throttles, three attempts spent. A job with
+      // `maxAttempts: 3` is now out of budget and the worker fails it,
+      // which is the documented behaviour.
+      expect(job.attempts).toBe(3);
+      expect(job.deferrals).toBe(3);
+    });
+
+    it("records the cooldown through the injected hook", async () => {
+      harness = await createHarness();
+      const onDefer = vi.fn(async () => {});
+      const driver = makeDriver({ fifo: true, onDefer });
+
+      await driver.push("app.jobs.xero", {});
+      const job = (await driver.pop())!;
+
+      await driver.release(job, 45);
+
+      expect(onDefer).toHaveBeenCalledWith(45);
+    });
+
+    it("does not record a cooldown on a non-fifo process", async () => {
+      harness = await createHarness();
+      const onDefer = vi.fn(async () => {});
+      const driver = makeDriver({ onDefer });
+
+      await driver.push("app.jobs.sync", {});
+      await driver.release((await driver.pop())!, 45);
+
+      expect(onDefer).not.toHaveBeenCalled();
+    });
+
+    it("still releases when no cooldown hook is wired", async () => {
+      harness = await createHarness();
+      const driver = makeDriver({ fifo: true });
+
+      await driver.push("app.jobs.xero", {});
+      const job = (await driver.pop())!;
+
+      await driver.release(job, 60);
+
+      // The right degradation for a test or a single-worker script: the
+      // job is runnable again, just nothing holds the process back.
+      const row = await rowFor(job.id);
+      expect(row.reserved_at).toBeNull();
+      expect(row.attempts).toBe(1);
+    });
+
+    it("reports its mode, and supportsDeferral detects it", async () => {
+      harness = await createHarness();
+
+      expect(makeDriver({ fifo: true }).fifo).toBe(true);
+      expect(makeDriver().fifo).toBe(false);
+
+      // The guard is about whether the driver UNDERSTANDS fifo, not
+      // whether it is enabled — so a worker can refuse to start a
+      // `fifo: true` process against a driver that would ignore it.
+      expect(supportsDeferral(makeDriver())).toBe(true);
+      expect(supportsDeferral({})).toBe(false);
+      expect(supportsDeferral(null)).toBe(false);
     });
   });
 
