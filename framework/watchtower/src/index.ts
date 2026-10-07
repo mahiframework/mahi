@@ -130,3 +130,13 @@ export {
   formatRelative,
   summariseTrace,
 } from "./dashboard/format.js";
+
+export { WatchtowerWorkCommand } from "./commands/watchtower-work.js";
+export {
+  WatchtowerWorkerCommand,
+  WORKER_ENV,
+  PROCESS_ENV,
+  RUN_ID_ENV,
+} from "./commands/watchtower-worker.js";
+export { Supervisor } from "./supervisor/supervisor.js";
+export { SupervisedChild } from "./supervisor/supervised-child.js";

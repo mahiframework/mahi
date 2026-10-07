@@ -43,6 +43,9 @@ export {
   JobTimeoutError,
   MaxAttemptsExceededError,
 } from "./commands/queue-work.js";
+// Exported so a subclass overriding `handle()` can type its parameter
+// against the real option set rather than widening it.
+export type { WorkOptions } from "./commands/queue-work.js";
 export { QueueFailedCommand } from "./commands/queue-failed.js";
 export { QueueRetryCommand } from "./commands/queue-retry.js";
 export { QueueForgetCommand } from "./commands/queue-forget.js";

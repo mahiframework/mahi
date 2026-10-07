@@ -98,7 +98,7 @@ function retryDeadlinePassed(job: { retryUntil?(): Date | number }): boolean {
   return Date.now() >= at;
 }
 
-interface WorkOptions {
+export interface WorkOptions {
   connection?: string;
   queue?: string;
   sleep: string;

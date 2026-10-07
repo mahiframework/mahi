@@ -220,6 +220,8 @@ describe("the provider's command list", () => {
       .map((CommandClass) => new CommandClass(harness.app).signature);
 
     expect(signatures).toEqual([
+      "watchtower:work",
+      "watchtower:worker",
       "watchtower:status",
       "watchtower:list",
       "watchtower:check",
