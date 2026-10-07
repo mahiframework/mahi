@@ -5,7 +5,7 @@ import { Schema, type Blueprint, type Migration } from "@mahiframework/database"
  *
  * A separate table from `jobs` rather than columns added to it. The
  * driver needs `dispatch_id` (stable across retries), `deferrals` (a
- * cooldown counter that must NOT be `attempts`) and `priority`, and
+ * cooldown counter alongside `attempts`) and `priority`, and
  * `dispatch_id` additionally requires changing what `retry()` does.
  * Adding all that to a table every existing app has already migrated
  * would be a breaking change to the core queue package in service of an
@@ -45,14 +45,17 @@ import { Schema, type Blueprint, type Migration } from "@mahiframework/database"
  * exactly the shuffle FIFO promises not to have. The history tables use
  * UUIDv7 because nothing orders on their keys; this one cannot.
  *
- * ## `deferrals` is not `attempts`
+ * ## `deferrals` counts cooldowns, `attempts` counts tries
  *
- * A deferral is a process-wide cooldown: the job goes back to the head
- * of its queue and the whole process waits. It must not consume an
- * attempt, because the job did not fail — an upstream rate limit said
- * "not yet". Counting it would fail jobs that never failed, after a few
- * cooldowns. `deferrals` bounds the behaviour separately so a job that
- * defers forever still eventually falls back to a normal retry.
+ * A `fifo` process reinterprets a release as "pause the process and
+ * retry this job first" rather than "move on to the next job". The
+ * attempt is spent either way — a job being rate-limited still fails
+ * once it exhausts `maxAttempts` — so `deferrals` is not a second
+ * budget. It exists for two narrower reasons: reporting, so
+ * `watchtower:status` can show "throttled 4 times" distinctly from
+ * "failed 4 times"; and `maxDeferrals`, which bounds how long one job
+ * may hold its PROCESS idle before releases revert to the ordinary
+ * form.
  *
  * ## `reserved_by`, not `process`
  *

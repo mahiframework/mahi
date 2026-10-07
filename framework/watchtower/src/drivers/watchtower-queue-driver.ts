@@ -57,7 +57,13 @@ interface FailedJobRow {
 export interface WatchtowerQueuedJob extends QueuedJob {
   /** Stable across retries; groups a job's attempts in the run history. */
   dispatchId: string;
-  /** How many times this job has been deferred by a `fifo` cooldown. */
+  /**
+   * How many times this job has paused its process on a `fifo` release.
+   *
+   * Alongside `attempts`, not instead of it: a release spends an attempt
+   * either way. This counts cooldowns for reporting and for
+   * `maxDeferrals`.
+   */
   deferrals: number;
 }
 
@@ -66,8 +72,8 @@ export function isWatchtowerJob(job: QueuedJob): job is WatchtowerQueuedJob {
 }
 
 /**
- * A driver that can hold its whole queue back rather than rescheduling
- * one job.
+ * A driver that can release a job without it losing its place in the
+ * queue.
  *
  * Declared as an optional extension to `QueueDriver`, the same shape
  * `pushAfterCommit`/`size`/`clear` take, so a worker asks
@@ -75,33 +81,44 @@ export function isWatchtowerJob(job: QueuedJob): job is WatchtowerQueuedJob {
  */
 export interface DeferrableQueueDriver {
   /**
-   * Un-reserve `job` WITHOUT counting an attempt, and hold its queue off
-   * for `deferQueueForSeconds`.
+   * Release `job` keeping its queue position, and hold its process off
+   * for `deferProcessForSeconds`.
    *
-   * This exists because `release()` cannot express it. Every
-   * implementation of `release()` sets `attempts: job.attempts + 1`, and
-   * `attempts` is the budget the worker fails a job against — so using
-   * it for a rate-limit cooldown burns a try per cooldown and eventually
-   * fails a job that never failed. A deferral is not a failure: an
-   * upstream 429 said "not yet", and the job keeps its place.
+   * A release in every respect that counts — the attempt IS spent, so a
+   * job that keeps getting throttled still fails once it exhausts
+   * `maxAttempts`, exactly as it would on a normal queue. The only
+   * difference from `release()` is *where the job ends up*.
+   *
+   * That difference is the whole point, and `release()` genuinely cannot
+   * express it. Reservation order is `available_at asc, id asc`, and
+   * `release(job, n)` sets `available_at` to `now + n`. Any `n >= 0`
+   * therefore makes the released job's timestamp NEWER than everything
+   * already waiting, so it sorts to the back — measured, not inferred:
+   * with `A, B` queued and `release(A, 0)`, the next `pop()` returns
+   * `B`. Leaving `available_at` alone is the only way the job stays at
+   * the head.
+   *
+   * The process cooldown is what stops the worker simply picking the
+   * same job straight back up: it sleeps for the delay the job asked
+   * for, then retries it ahead of the rest of the queue.
    */
-  defer(job: QueuedJob, deferQueueForSeconds: number): Promise<void>;
+  releaseInPlace(job: QueuedJob, deferProcessForSeconds: number): Promise<void>;
 }
 
 /**
- * Narrowing guard, whether a resolved driver can defer a whole queue.
+ * Narrowing guard, whether a resolved driver can release a job in place.
  *
  * Takes `unknown` rather than `QueueDriver`, matching
- * `supportsFailedJobs()`: `defer` is not on the core interface at all, so
- * a `QueueDriver`-typed parameter would need an `as unknown as` cast at
- * the one place the check happens — which is exactly where a cast is
- * least welcome.
+ * `supportsFailedJobs()`: `releaseInPlace` is not on the core interface
+ * at all, so a `QueueDriver`-typed parameter would need an
+ * `as unknown as` cast at the one place the check happens — which is
+ * exactly where a cast is least welcome.
  */
 export function supportsDeferral(driver: unknown): driver is DeferrableQueueDriver {
   return (
     typeof driver === "object" &&
     driver !== null &&
-    typeof (driver as DeferrableQueueDriver).defer === "function"
+    typeof (driver as DeferrableQueueDriver).releaseInPlace === "function"
   );
 }
 
@@ -384,35 +401,40 @@ export class WatchtowerQueueDriver
   }
 
   /**
-   * Put the job back where it was and hold its queue off for
-   * `deferQueueForSeconds`.
+   * Release the job without it losing its place, and hold the process
+   * off for `deferProcessForSeconds`.
    *
-   * Three things are deliberate:
+   * **The attempt is spent**, exactly as `release()` spends it. A job
+   * that keeps getting throttled still fails once it exhausts
+   * `maxAttempts` — being rate-limited is not a free pass, it is a
+   * reason this attempt did not complete.
    *
-   * **`attempts` is untouched.** That is the entire reason this method
-   * exists rather than calling `release(job, seconds)`. A cooldown is
-   * not a failure, and spending an attempt on one would fail a job after
-   * a few rate limits without it ever having gone wrong.
+   * **`available_at` is deliberately NOT moved**, and that is the only
+   * behavioural difference from `release()`. Reservation order is
+   * `available_at asc, id asc`, so any `release(job, n >= 0)` stamps a
+   * timestamp newer than everything already waiting and sends the job to
+   * the back. Leaving the column alone is what keeps it at the head. The
+   * waiting is done by the process, not by the row.
    *
-   * **`available_at` is untouched too.** The job keeps its place at the
-   * head of the queue, which is what makes the ordering `fifo` promises
-   * hold: pushing it out by the cooldown would let anything dispatched
-   * in the meantime overtake it.
-   *
-   * **The un-reserve commits BEFORE the cooldown is recorded.** The
-   * other order has a failure mode: a crash in between would leave the
-   * process asleep for the cooldown over a job still marked reserved,
-   * which then gets reclaimed by the retry-after path and burns the
-   * attempt this method exists to protect. This order's worst case is a
-   * cooldown that did not happen, which is a retry too early rather than
-   * a job failed too soon.
+   * **The release commits BEFORE the cooldown is recorded.** The other
+   * order has a worse failure mode: a crash between them would leave the
+   * process asleep over a job still marked reserved, which the
+   * retry-after path then reclaims and charges a *second* attempt for.
+   * This order's worst case is a cooldown that did not happen — a retry
+   * too early, rather than a job that failed twice as fast as configured.
    */
-  async defer(job: QueuedJob, deferQueueForSeconds: number): Promise<void> {
+  async releaseInPlace(job: QueuedJob, deferProcessForSeconds: number): Promise<void> {
     const deferrals = isWatchtowerJob(job) ? job.deferrals : 0;
 
     await this.db
       .updateTable("watchtower_jobs")
       .set({
+        // A release is a release: the attempt counts.
+        attempts: job.attempts + 1,
+        // Counted separately from `attempts` for reporting only — it is
+        // what `watchtower:status` shows as "throttled N times" and what
+        // `maxDeferrals` bounds, so a job stuck in a cooldown loop is
+        // distinguishable from one failing outright.
         deferrals: deferrals + 1,
         reserved_at: null,
         reserved_by: null,
@@ -420,7 +442,7 @@ export class WatchtowerQueueDriver
       .where("id", "=", job.id)
       .execute();
 
-    await this.onDefer?.(deferQueueForSeconds);
+    await this.onDefer?.(deferProcessForSeconds);
   }
 
   async delete(job: QueuedJob): Promise<void> {

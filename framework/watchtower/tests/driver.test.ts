@@ -179,23 +179,25 @@ describe("WatchtowerQueueDriver", () => {
     });
   });
 
-  describe("defer", () => {
-    it("leaves attempts untouched and bumps deferrals", async () => {
+  describe("releaseInPlace", () => {
+    it("spends the attempt, exactly as a release does", async () => {
       harness = await createHarness();
       const driver = makeDriver();
 
       await driver.push("app.jobs.xero", {});
       const job = (await driver.pop()) as WatchtowerQueuedJob;
 
-      await driver.defer(job, 60);
+      await driver.releaseInPlace(job, 60);
 
       const row = await rowFor(job.id);
 
-      // THE most important assertion in the package. A cooldown is not a
-      // failure: an upstream 429 said "not yet". Spending an attempt on
-      // it would fail a job, after a few rate limits, that never once
-      // went wrong.
-      expect(row.attempts).toBe(0);
+      // Being rate-limited is not a free pass: this attempt did not
+      // complete, so it counts, and a job that keeps getting throttled
+      // still fails once it exhausts `maxAttempts`.
+      expect(row.attempts).toBe(1);
+
+      // Tracked separately for reporting, so "throttled 4 times" is
+      // distinguishable from "failed 4 times" on the dashboard.
       expect(row.deferrals).toBe(1);
     });
 
@@ -210,16 +212,33 @@ describe("WatchtowerQueueDriver", () => {
       expect(job.jobClass).toBe("app.jobs.first");
 
       const before = await rowFor(job.id);
-      await driver.defer(job, 60);
+      // A second boundary, so a moved `available_at` would be visible.
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      await driver.releaseInPlace(job, 60);
       const after = await rowFor(job.id);
 
-      // `available_at` must NOT move. Pushing it out by the cooldown
-      // would let anything dispatched meanwhile overtake it, which is
-      // precisely the ordering `fifo` promises to keep.
+      // The ONLY difference from `release()`, and the reason this method
+      // exists: `available_at` is untouched, so the job does not sort
+      // behind everything already waiting.
       expect(after.available_at).toBe(before.available_at);
-
-      // And it is the next job out, ahead of the one behind it.
       expect((await driver.pop())?.jobClass).toBe("app.jobs.first");
+    });
+
+    it("differs from release() only in queue position", async () => {
+      harness = await createHarness();
+      const driver = makeDriver();
+
+      await driver.push("app.jobs.first", {});
+      await driver.push("app.jobs.second", {});
+
+      const job = (await driver.pop())!;
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      await driver.release(job, 0);
+
+      // The contrast, measured: a plain release — even with no delay —
+      // stamps a newer `available_at` and loses the job's place. This is
+      // why a process pause alone cannot deliver the ordering.
+      expect((await driver.pop())?.jobClass).toBe("app.jobs.second");
     });
 
     it("un-reserves the job so the same worker can take it again", async () => {
@@ -229,14 +248,14 @@ describe("WatchtowerQueueDriver", () => {
       await driver.push("app.jobs.xero", {});
       const job = (await driver.pop()) as WatchtowerQueuedJob;
 
-      await driver.defer(job, 60);
+      await driver.releaseInPlace(job, 60);
 
       const row = await rowFor(job.id);
       expect(row.reserved_at).toBeNull();
       expect(row.reserved_by).toBeNull();
     });
 
-    it("accumulates deferrals across repeated cooldowns", async () => {
+    it("accumulates both counters across repeated cooldowns", async () => {
       harness = await createHarness();
       const driver = makeDriver();
 
@@ -244,16 +263,18 @@ describe("WatchtowerQueueDriver", () => {
 
       for (let round = 1; round <= 3; round += 1) {
         const job = (await driver.pop()) as WatchtowerQueuedJob;
+        expect(job.attempts).toBe(round - 1);
         expect(job.deferrals).toBe(round - 1);
-        await driver.defer(job, 1);
+        await driver.releaseInPlace(job, 1);
       }
 
       const job = (await driver.pop()) as WatchtowerQueuedJob;
 
-      // Three cooldowns, still zero attempts. `maxDeferrals` is what
-      // bounds this, not the attempt budget.
+      // Three throttles, three attempts spent. A job with
+      // `maxAttempts: 3` is now out of budget and the worker will fail
+      // it, which is the documented behaviour.
+      expect(job.attempts).toBe(3);
       expect(job.deferrals).toBe(3);
-      expect(job.attempts).toBe(0);
     });
 
     it("records the cooldown through the injected hook", async () => {
@@ -264,23 +285,25 @@ describe("WatchtowerQueueDriver", () => {
       await driver.push("app.jobs.xero", {});
       const job = (await driver.pop())!;
 
-      await driver.defer(job, 45);
+      await driver.releaseInPlace(job, 45);
 
       expect(onDefer).toHaveBeenCalledWith(45);
     });
 
-    it("still un-reserves when no cooldown hook is wired", async () => {
+    it("still releases when no cooldown hook is wired", async () => {
       harness = await createHarness();
       const driver = makeDriver();
 
       await driver.push("app.jobs.xero", {});
       const job = (await driver.pop())!;
 
-      await driver.defer(job, 60);
+      await driver.releaseInPlace(job, 60);
 
       // The right degradation for a test or a single-worker script: the
-      // job is runnable again, just nothing holds the queue back.
-      expect((await rowFor(job.id)).reserved_at).toBeNull();
+      // job is runnable again, just nothing holds the process back.
+      const row = await rowFor(job.id);
+      expect(row.reserved_at).toBeNull();
+      expect(row.attempts).toBe(1);
     });
 
     it("is detected by supportsDeferral, and a plain object is not", async () => {
@@ -304,8 +327,8 @@ describe("WatchtowerQueueDriver", () => {
       await driver.release(job, 60);
       const after = await rowFor(job.id);
 
-      // The contrast with `defer()`: a release IS a failure to run, so
-      // it spends an attempt and the job waits its turn.
+      // Both counters move, which is what sends the job to the back of
+      // the queue. `releaseInPlace()` moves only the first.
       expect(after.attempts).toBe(1);
       expect(after.available_at > before.available_at).toBe(true);
       expect(after.reserved_at).toBeNull();

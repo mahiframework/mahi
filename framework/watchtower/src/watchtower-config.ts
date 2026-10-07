@@ -96,35 +96,43 @@ export interface WatchtowerProcessConfig {
   workers?: number;
 
   /**
-   * Treat a released job as a queue-wide cooldown instead of a
-   * reschedule. Off by default.
+   * Make a release pause the whole process instead of moving on to the
+   * next job. Off by default.
    *
-   * With this off (the default, and how `queue:work` behaves), a job
-   * throwing `ReleaseJobError(60)` goes back on the queue to be retried
-   * in 60 seconds while the worker moves on to the next job. That is
-   * right for a job that failed for its own reasons.
+   * This reinterprets what a `ReleaseJobError(60)` means, and ONLY
+   * that — the attempt is spent either way, so a job that keeps being
+   * released still fails once it exhausts `maxAttempts`.
    *
-   * With it on, the same throw pauses the ENTIRE process for 60 seconds
-   * and the job keeps its place at the head of the queue. That is right
-   * for a shared rate limit: an upstream 429 means the next job would
-   * fail too, so working ahead just burns attempts against a service
-   * that already said to wait.
+   * Off (the default, and how `queue:work` behaves):
+   *   "Retry this job after 60s, and meanwhile run anything scheduled
+   *   before it."
    *
-   * Requires a driver with `defer()` (so not `storage: "redis"`) and a
-   * cache store shared across processes. Both are boot errors rather
-   * than silent downgrades, because the failure mode is a process that
-   * keeps hammering an API the config said to back off from.
+   * On:
+   *   "Pause this process for 60s and retry this job before continuing
+   *   with the others."
+   *
+   * The second is right for a shared rate limit. An upstream 429 means
+   * the next job would be rejected too, so working ahead just spends
+   * attempts against a service that already said to wait.
+   *
+   * Requires a driver that can release a job without it losing its
+   * queue position (so not `storage: "redis"`) and a cache store shared
+   * across processes. Both are errors rather than silent downgrades,
+   * because the failure mode is a process that keeps hammering an API
+   * the config said to back off from.
    */
   fifo?: boolean;
 
   /**
-   * How many times one job may defer before it is released normally.
-   * Defaults to 10.
+   * How many times one job may pause its process before a release
+   * behaves normally again. Defaults to 10.
    *
-   * A job that throws `ReleaseJobError` unconditionally would otherwise
-   * hold its process forever. Bounding it is what turns "stuck until
-   * someone notices" into "falls back to a normal retry, with a
-   * warning".
+   * The attempt budget already bounds how long a job can live, so this
+   * is not about the job — it is about the PROCESS. A job allowed 25
+   * tries that is released every time would hold its whole process idle
+   * for 25 cooldowns while the rest of the queue waits behind it. Past
+   * this count the release reverts to the ordinary form: the job goes to
+   * the back, the process keeps working, and a warning is logged.
    */
   maxDeferrals?: number;
 
