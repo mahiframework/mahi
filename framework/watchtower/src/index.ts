@@ -71,3 +71,11 @@ export { RunRecorder, isTerminal } from "./run-recorder.js";
 export type { JobRunObservation } from "./run-recorder.js";
 export { RecordJobRunListener } from "./listeners/record-job-run.listener.js";
 export { RecordJobRunJob, RECORD_JOB_RUN_JOB } from "./jobs/record-job-run.job.js";
+
+export { watchtowerGate } from "./http/gate.js";
+
+export { WatchtowerCheckCommand } from "./commands/watchtower-check.js";
+export { WatchtowerPauseCommand } from "./commands/watchtower-pause.js";
+export { WatchtowerUnpauseCommand } from "./commands/watchtower-unpause.js";
+export { WatchtowerRestartCommand } from "./commands/watchtower-restart.js";
+export { WatchtowerPruneCommand } from "./commands/watchtower-prune.js";

@@ -20,6 +20,11 @@ import { resolveConfig, type WatchtowerConfig } from "./watchtower-config.js";
 import { configErrors } from "./validate-config.js";
 import { WatchtowerConfigError } from "./errors.js";
 import { WatchtowerQueueDriver } from "./drivers/watchtower-queue-driver.js";
+import { WatchtowerCheckCommand } from "./commands/watchtower-check.js";
+import { WatchtowerPauseCommand } from "./commands/watchtower-pause.js";
+import { WatchtowerPruneCommand } from "./commands/watchtower-prune.js";
+import { WatchtowerRestartCommand } from "./commands/watchtower-restart.js";
+import { WatchtowerUnpauseCommand } from "./commands/watchtower-unpause.js";
 import { WatchtowerJobType } from "./models/watchtower-job-type.model.js";
 import { WatchtowerJobRun } from "./models/watchtower-job-run.model.js";
 import createWatchtowerTables from "./migrations/0001_create_watchtower_tables.js";
@@ -184,6 +189,16 @@ export class WatchtowerServiceProvider extends ServiceProvider {
     return [
       WatchtowerJobType as unknown as AnyModelClass,
       WatchtowerJobRun as unknown as AnyModelClass,
+    ];
+  }
+
+  commands() {
+    return [
+      WatchtowerCheckCommand,
+      WatchtowerPauseCommand,
+      WatchtowerUnpauseCommand,
+      WatchtowerRestartCommand,
+      WatchtowerPruneCommand,
     ];
   }
 }
