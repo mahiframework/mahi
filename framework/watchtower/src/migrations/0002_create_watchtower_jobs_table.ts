@@ -16,12 +16,21 @@ import { Schema, type Blueprint, type Migration } from "@mahiframework/database"
  * over means changing the connection and draining the old queue; no
  * migration moves in-flight rows.
  *
- * There is deliberately NO `watchtower_failed_jobs`. The driver
- * implements `FailedJobRepository` against the existing `failed_jobs`
- * table, so `queue:failed`, `queue:retry`, `queue:forget` and
- * `queue:flush` keep working unchanged. A second failed-job store would
- * fork the one part of the queue CLI operators actually reach for during
- * an incident.
+ * `watchtower_failed_jobs` is separate from the core `failed_jobs` for a
+ * reason worth stating, because sharing it looks cheaper: `failed_jobs`
+ * has a `connection` column that NOTHING filters on.
+ * `DatabaseQueueDriver.listFailed()` reads the whole table and its
+ * `retry()` re-inserts into a hardcoded `jobs`. A Watchtower failure
+ * living there would therefore be resurrected into the core queue, where
+ * no Watchtower worker is looking, and silently never run — while
+ * `queue:failed` listed both connections' failures interleaved and
+ * indistinguishable.
+ *
+ * The CLI still works, because every failed-job command already takes
+ * `--connection`: `queue:failed --connection=watchtower` resolves this
+ * package's driver and reads this table. Keeping them apart also lets a
+ * retry preserve `dispatch_id`, which the shared table has no column
+ * for.
  *
  * ## `id` is auto-increment, and that is load-bearing
  *
@@ -107,9 +116,35 @@ const migration: Migration = {
       table.index(["queue", "priority", "available_at", "id"]);
       table.index(["dispatch_id"]);
     });
+
+    await Schema.create("watchtower_failed_jobs", (table: Blueprint) => {
+      // NOT auto-increment: a failed row carries over the id of the
+      // `watchtower_jobs` row it came from, so `queue:retry <id>` names
+      // the same job the operator saw in `queue:failed`. The same shape
+      // the core `failed_jobs` table uses, for the same reason.
+      table.bigInteger("id").primary();
+
+      // Preserved across the failure so a retry keeps its place in the
+      // run history rather than starting a new chain.
+      table.uuid("dispatch_id");
+
+      table.string("connection").nullable();
+      table.string("queue").nullable();
+      table.smallInteger("priority").default(0);
+      table.string("job_class");
+      table.text("payload_json");
+      table.text("chain_json").nullable();
+      table.text("error");
+      table.timestamp("failed_at");
+
+      // `queue:failed` lists newest first, and `queue:flush --hours`
+      // prunes on this column.
+      table.index(["failed_at"]);
+    });
   },
 
   async down(): Promise<void> {
+    await Schema.drop("watchtower_failed_jobs");
     await Schema.drop("watchtower_jobs");
   },
 };

@@ -28,7 +28,8 @@
     "@mahiframework/http": "workspace:*",
     "@mahiframework/queue": "workspace:*",
     "@mahiframework/tui": "workspace:*",
-    "commander": "^12.1.0"
+    "commander": "^12.1.0",
+    "kysely": "^0.29.5"
   },
   "devDependencies": {
     "typescript": "^6.0.3",

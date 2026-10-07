@@ -55,3 +55,14 @@ export {
   GLOBAL_PAUSE_KEY,
 } from "./deferral.js";
 export type { WaitState, WorkerHeartbeat } from "./deferral.js";
+
+export {
+  WatchtowerQueueDriver,
+  isWatchtowerJob,
+  supportsDeferral,
+} from "./drivers/watchtower-queue-driver.js";
+export type {
+  WatchtowerQueueDriverOptions,
+  WatchtowerQueuedJob,
+  DeferrableQueueDriver,
+} from "./drivers/watchtower-queue-driver.js";

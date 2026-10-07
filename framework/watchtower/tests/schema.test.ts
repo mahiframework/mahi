@@ -16,7 +16,7 @@ afterEach(() => {
  * models against them.
  */
 describe("watchtower schema", () => {
-  it("creates the three tables", async () => {
+  it("creates the four tables", async () => {
     harness = await createHarness();
 
     const tables = (await harness.database
@@ -31,6 +31,7 @@ describe("watchtower schema", () => {
     expect(names).toContain("watchtower_job_types");
     expect(names).toContain("watchtower_job_runs");
     expect(names).toContain("watchtower_jobs");
+    expect(names).toContain("watchtower_failed_jobs");
   });
 
   it("assigns a uuidv7 key to a job type without a RETURNING round trip", async () => {

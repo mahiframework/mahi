@@ -1,27 +1,52 @@
-import { ServiceProvider } from "@mahiframework/core";
-import type { AnyModelClass, RegisteredMigration } from "@mahiframework/database";
+import { QUEUE_TOKEN, ServiceProvider } from "@mahiframework/core";
+import {
+  DATABASE_TOKEN,
+  type AnyModelClass,
+  type DatabaseManager,
+  type RegisteredMigration,
+} from "@mahiframework/database";
+import type { QueueManager } from "@mahiframework/queue";
 import { WatchtowerManager } from "./watchtower-manager.js";
 import { resolveConfig, type WatchtowerConfig } from "./watchtower-config.js";
 import { configErrors } from "./validate-config.js";
 import { WatchtowerConfigError } from "./errors.js";
+import { WatchtowerQueueDriver } from "./drivers/watchtower-queue-driver.js";
 import { WatchtowerJobType } from "./models/watchtower-job-type.model.js";
 import { WatchtowerJobRun } from "./models/watchtower-job-run.model.js";
 import createWatchtowerTables from "./migrations/0001_create_watchtower_tables.js";
 import createWatchtowerJobsTable from "./migrations/0002_create_watchtower_jobs_table.js";
-import { WATCHTOWER_TOKEN } from "./tokens.js";
+import { WATCHTOWER_CONNECTION, WATCHTOWER_TOKEN } from "./tokens.js";
 
 export { WATCHTOWER_TOKEN };
+
+/** `connections.watchtower` in `config/queue.ts`. */
+interface WatchtowerConnectionConfig {
+  /** Which *database* connection holds `watchtower_jobs`. The app's default when omitted. */
+  connection?: string;
+  /** The default named queue this connection pushes to. Default `"default"`. */
+  queue?: string;
+  /**
+   * Seconds before a reserved job is presumed abandoned. Must exceed the
+   * longest a job can run, including its own timeout. Default 90.
+   */
+  retryAfter?: number;
+  /** Candidate rows read per `pop()` on SQLite. Default 10. */
+  popBatchSize?: number;
+}
 
 /**
  * Registers the `WatchtowerManager` singleton, the run-history models and
  * the migrations.
  *
- * ORDERING: list this provider AFTER `DatabaseServiceProvider` (it owns
- * three tables and two models), AFTER `CacheServiceProvider` (pause,
- * deferral and heartbeat keys live in a cache store), and AFTER
- * `EventsServiceProvider` (it contributes `listeners()`). You cannot
- * enforce any of that; the app's `config/app.ts` decides, and this
- * docstring is the whole mechanism.
+ * ORDERING: list this provider AFTER `QueueServiceProvider` — a hard
+ * requirement, since `register()` resolves `QUEUE_TOKEN` to register the
+ * `watchtower` connection, the same arrangement `RedisServiceProvider`
+ * has with the three managers it extends. Also AFTER
+ * `DatabaseServiceProvider` (it owns four tables and two models), AFTER
+ * `CacheServiceProvider` (pause, deferral and heartbeat keys live in a
+ * cache store), and AFTER `EventsServiceProvider` (it contributes
+ * `listeners()`). You cannot enforce any of that; the app's
+ * `config/app.ts` decides, and this docstring is the whole mechanism.
  */
 export class WatchtowerServiceProvider extends ServiceProvider {
   register(): void {
@@ -49,6 +74,51 @@ export class WatchtowerServiceProvider extends ServiceProvider {
       }
 
       return new WatchtowerManager(app, config);
+    });
+
+    this.registerQueueConnection();
+  }
+
+  /**
+   * Register the `watchtower` queue connection.
+   *
+   * Guarded on the token so an app without the queue package registered
+   * is simply unaffected, the `app.has(TOKEN)` pattern
+   * `RedisServiceProvider` uses for the same reason. The driver is
+   * registered but never *resolved* unless config points something at
+   * it, so merely listing this provider costs nothing.
+   *
+   * The cooldown hook is deliberately NOT wired here. A deferral lives
+   * in the cache and needs the process name, neither of which a
+   * container factory knows — the worker builds its own driver instance
+   * with `onDefer` bound to its process. A driver resolved through the
+   * manager therefore defers correctly in every respect except holding
+   * the queue back, which is the right behaviour for a bare
+   * `Bus.dispatch()` with no worker involved.
+   */
+  private registerQueueConnection(): void {
+    if (!this.app.has(QUEUE_TOKEN)) {
+      return;
+    }
+
+    const queue = this.app.make<QueueManager>(QUEUE_TOKEN);
+
+    queue.extend(WATCHTOWER_CONNECTION, (app) => {
+      const settings = (queue.connectionConfig(WATCHTOWER_CONNECTION) ??
+        {}) as WatchtowerConnectionConfig;
+      const database = app.make<DatabaseManager>(DATABASE_TOKEN);
+      // A named `connection` points this at a database other than the
+      // app's default, for a dedicated queue database.
+      const driver = database.driver(settings.connection);
+
+      // The dialect — which selects the reservation strategy — is read
+      // from the connection itself by the driver, so it cannot drift.
+      return new WatchtowerQueueDriver(driver.kysely, {
+        queue: settings.queue ?? "default",
+        retryAfterSeconds: settings.retryAfter ?? 90,
+        ...(settings.popBatchSize !== undefined ? { popBatchSize: settings.popBatchSize } : {}),
+        connectionName: WATCHTOWER_CONNECTION,
+      });
     });
   }
 
