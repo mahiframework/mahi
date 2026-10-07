@@ -146,8 +146,14 @@ export class QueueWorkCommand extends Command {
 
   /** The connection this worker is draining, chained jobs stay on it. */
   private connection?: string;
-  /** The named queue this worker is draining, chained jobs stay on it too. */
-  private queue?: string;
+  /**
+   * The named queue this worker is draining, chained jobs stay on it too.
+   *
+   * `protected` alongside `reserve()`: a subclass that drains several
+   * queues sets this to whichever one it actually took a job from, so a
+   * chained job lands back on the same queue rather than the default.
+   */
+  protected queue?: string;
   /** `--tries`, overriding each job's own `maxAttempts` when given. */
   private tries?: number;
   /** `--timeout`, the fallback soft timeout for jobs that define none. */
@@ -209,7 +215,7 @@ export class QueueWorkCommand extends Command {
 
     try {
       do {
-        const job = await this.popSafely(driver, sleepMs);
+        const job = await this.reserve(driver, sleepMs);
 
         if (job === undefined) {
           if (options.once || options.stopWhenEmpty) {
@@ -264,8 +270,21 @@ export class QueueWorkCommand extends Command {
    *
    * Returns `undefined` for both "nothing to do" and "couldn't ask",
    * which the caller treats identically: sleep, then go round again.
+   *
+   * ## The one seam
+   *
+   * `protected`, and the only `protected` member here, because "how do I
+   * get the next job" is the single thing a specialised worker needs to
+   * change. A subclass can drain several queues in priority order, or
+   * decline to reserve while its process is in a cooldown, and inherit
+   * the rest of this loop — every attempt, backoff, timeout, failure,
+   * chain-advance and shutdown rule — rather than reimplementing it.
+   *
+   * The rest stays private on purpose. Those rules were each earned by a
+   * specific failure (see the class docstring), and a worker that
+   * overrode one would be a worker that silently loses jobs.
    */
-  private async popSafely(driver: QueueDriver, sleepMs: number): Promise<QueuedJob | undefined> {
+  protected async reserve(driver: QueueDriver, sleepMs: number): Promise<QueuedJob | undefined> {
     try {
       return await driver.pop(this.queue);
     } catch (error) {
