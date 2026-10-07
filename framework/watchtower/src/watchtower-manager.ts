@@ -1,4 +1,7 @@
 import type { Application } from "@mahiframework/core";
+import { DateTime } from "@mahiframework/datetime";
+import { StatsReader } from "./stats-reader.js";
+import type { JobRunSummary, JobTypeDetail, JobTypeSummary, WatchtowerStats } from "./stats.js";
 import { DeferralStore, type WorkerHeartbeat } from "./deferral.js";
 import { GateAlreadyRegisteredError, UnknownProcessError } from "./errors.js";
 import type { ResolvedProcessConfig, ResolvedWatchtowerConfig } from "./watchtower-config.js";
@@ -201,6 +204,40 @@ export class WatchtowerManager {
   /** Publish the run ids a supervisor is currently running for a process. */
   async publishRunIds(name: string, runIds: string[], ttlSeconds: number): Promise<void> {
     await this.deferrals.store()?.put(`watchtower:workers:${name}`, runIds, ttlSeconds);
+  }
+
+  // ---------------------------------------------------------------------
+  // Reading
+  // ---------------------------------------------------------------------
+
+  /**
+   * The read model.
+   *
+   * Built fresh per call rather than held, so it cannot cache a stale
+   * database handle across a reconnect in a long-lived worker.
+   */
+  reader(): StatsReader {
+    return new StatsReader(this.app, this.config, this.deferrals, (name) => this.runIds(name));
+  }
+
+  /** The overview: totals, processes, queues, job types, recent failures. */
+  stats(windowHours?: number): Promise<WatchtowerStats> {
+    return this.reader().stats(windowHours);
+  }
+
+  /** Rolling aggregates per job type, busiest first. */
+  async jobTypes(windowHours = 24): Promise<JobTypeSummary[]> {
+    return this.reader().jobTypes(DateTime.now().subHours(windowHours));
+  }
+
+  /** One job type with its recent runs and attempt chains. */
+  jobType(name: string, windowHours?: number): Promise<JobTypeDetail | undefined> {
+    return this.reader().jobTypeDetail(name, windowHours);
+  }
+
+  /** Failures across every job type, newest first. */
+  recentFailures(limit?: number): Promise<JobRunSummary[]> {
+    return this.reader().recentFailures(limit);
   }
 
   /** The application, for callers holding only the manager. */

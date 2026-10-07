@@ -79,3 +79,30 @@ export { WatchtowerPauseCommand } from "./commands/watchtower-pause.js";
 export { WatchtowerUnpauseCommand } from "./commands/watchtower-unpause.js";
 export { WatchtowerRestartCommand } from "./commands/watchtower-restart.js";
 export { WatchtowerPruneCommand } from "./commands/watchtower-prune.js";
+
+export { StatsReader } from "./stats-reader.js";
+export { severityForAge, severityForFailureRate, severityForState } from "./stats.js";
+export type {
+  Severity,
+  WatchtowerStats,
+  WatchtowerTotals,
+  ProcessStatus,
+  ProcessState,
+  QueueDepth,
+  JobTypeSummary,
+  JobRunSummary,
+  AttemptChain,
+  JobTypeDetail,
+} from "./stats.js";
+
+export { WatchtowerStatusCommand } from "./commands/watchtower-status.js";
+export { WatchtowerListCommand } from "./commands/watchtower-list.js";
+export {
+  formatAge,
+  formatDuration,
+  formatCount,
+  formatRate,
+  formatThroughput,
+  formatRelative,
+  summariseTrace,
+} from "./dashboard/format.js";

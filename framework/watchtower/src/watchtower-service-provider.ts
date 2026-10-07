@@ -21,6 +21,8 @@ import { configErrors } from "./validate-config.js";
 import { WatchtowerConfigError } from "./errors.js";
 import { WatchtowerQueueDriver } from "./drivers/watchtower-queue-driver.js";
 import { WatchtowerCheckCommand } from "./commands/watchtower-check.js";
+import { WatchtowerListCommand } from "./commands/watchtower-list.js";
+import { WatchtowerStatusCommand } from "./commands/watchtower-status.js";
 import { WatchtowerPauseCommand } from "./commands/watchtower-pause.js";
 import { WatchtowerPruneCommand } from "./commands/watchtower-prune.js";
 import { WatchtowerRestartCommand } from "./commands/watchtower-restart.js";
@@ -194,6 +196,8 @@ export class WatchtowerServiceProvider extends ServiceProvider {
 
   commands() {
     return [
+      WatchtowerStatusCommand,
+      WatchtowerListCommand,
       WatchtowerCheckCommand,
       WatchtowerPauseCommand,
       WatchtowerUnpauseCommand,

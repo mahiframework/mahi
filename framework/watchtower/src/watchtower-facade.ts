@@ -2,6 +2,7 @@ import { Facade } from "@mahiframework/facades";
 import type { WatchtowerManager, WatchtowerGate } from "./watchtower-manager.js";
 import type { ResolvedProcessConfig } from "./watchtower-config.js";
 import type { WorkerHeartbeat } from "./deferral.js";
+import type { JobRunSummary, JobTypeDetail, JobTypeSummary, WatchtowerStats } from "./stats.js";
 import { WATCHTOWER_TOKEN } from "./tokens.js";
 
 /**
@@ -65,5 +66,31 @@ export class Watchtower extends Facade<WatchtowerManager>(() => WATCHTOWER_TOKEN
   /** Live worker heartbeats for a process. */
   static workers(process: string): Promise<WorkerHeartbeat[]> {
     return this.instance().workers(process);
+  }
+
+  /**
+   * The overview: totals, process states, queue depths, job-type
+   * aggregates and recent failures.
+   *
+   * Plain serializable data, so an app rendering its own admin UI can
+   * consume this directly instead of adopting the bundled dashboard.
+   */
+  static stats(windowHours?: number): Promise<WatchtowerStats> {
+    return this.instance().stats(windowHours);
+  }
+
+  /** Rolling aggregates per job type, busiest first. */
+  static jobTypes(windowHours?: number): Promise<JobTypeSummary[]> {
+    return this.instance().jobTypes(windowHours);
+  }
+
+  /** One job type with its recent runs and attempt chains. */
+  static jobType(name: string, windowHours?: number): Promise<JobTypeDetail | undefined> {
+    return this.instance().jobType(name, windowHours);
+  }
+
+  /** Failures across every job type, newest first. */
+  static recentFailures(limit?: number): Promise<JobRunSummary[]> {
+    return this.instance().recentFailures(limit);
   }
 }
