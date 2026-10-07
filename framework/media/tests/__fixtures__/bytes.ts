@@ -11,8 +11,17 @@
  * which is a different question.
  */
 
-/** Pad to `length` so a sniffed prefix has something to read. */
-function padded(header: number[], length = 64): Buffer {
+/**
+ * Pad to `length` so a sniffed prefix has something to read.
+ *
+ * Returns `Buffer<ArrayBuffer>`, not a bare `Buffer`. `Buffer`'s default
+ * type argument is `ArrayBufferLike`, which also covers a
+ * `SharedArrayBuffer`-backed view, and `new File([...])` rejects those —
+ * its `BufferSource` is `NonSharedArrayBufferView | ArrayBuffer`.
+ * `Buffer.alloc` only ever returns the non-shared form, so the annotation
+ * was widening a value that was already narrow.
+ */
+function padded(header: number[], length = 64): Buffer<ArrayBuffer> {
   const buffer = Buffer.alloc(length);
 
   Buffer.from(header).copy(buffer);
@@ -43,7 +52,7 @@ export const WEBP = riff("WEBP");
 /** The same container with `WAVE`, which must not read as an image. */
 export const WAV = riff("WAVE");
 
-function riff(form: string): Buffer {
+function riff(form: string): Buffer<ArrayBuffer> {
   const buffer = Buffer.alloc(64);
 
   buffer.write("RIFF", 0, "latin1");
@@ -54,7 +63,7 @@ function riff(form: string): Buffer {
 }
 
 /** An ISO base media file with `ftyp` at offset 4 and a brand at 8. */
-function isoBmff(brand: string): Buffer {
+function isoBmff(brand: string): Buffer<ArrayBuffer> {
   const buffer = Buffer.alloc(64);
 
   buffer.writeUInt32BE(32, 0);
@@ -78,7 +87,7 @@ export const OGG = padded([0x4f, 0x67, 0x67, 0x53]);
 export const WOFF2 = padded([0x77, 0x4f, 0x46, 0x32]);
 
 /** A ZIP local file header, with room for an entry name. */
-function zip(entry: string): Buffer {
+function zip(entry: string): Buffer<ArrayBuffer> {
   const buffer = Buffer.alloc(64);
 
   Buffer.from([0x50, 0x4b, 0x03, 0x04]).copy(buffer);

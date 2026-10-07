@@ -4,7 +4,7 @@ import { ClientRequest, type ClientRequestBody } from "./client-request.js";
 import { makeClientResponse, type ClientResponse } from "./client-response.js";
 import { ConnectionError, RequestFailedError } from "./errors.js";
 import { ConnectionFailed, RequestSending, ResponseReceived, type EventSink } from "./events.js";
-import { buildMultipart, type Attachment } from "./multipart.js";
+import { buildMultipart, type Attachment, type AttachmentContents } from "./multipart.js";
 import { fetchTransport, type Transport } from "./transport.js";
 import { encodeNested } from "./query-encoder.js";
 import { appendQuery, expandUrlTemplate, resolveUrl } from "./url-template.js";
@@ -179,7 +179,7 @@ export class PendingRequest {
    */
   attach(
     name: string,
-    contents: Blob | Uint8Array | string | ReadableStream<Uint8Array>,
+    contents: AttachmentContents,
     filename?: string,
     headers?: Record<string, string>,
   ): PendingRequest {

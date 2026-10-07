@@ -79,7 +79,10 @@ function tsconfig(): string {
         esModuleInterop: true,
         types: ["node"],
         typeRoots: [path.join(repoRoot, "node_modules", "@types")],
-        baseUrl: ".",
+        // No `baseUrl`. Every value in `paths` is already absolute (see
+        // above), so there was nothing for it to resolve against, and
+        // TypeScript 6 deprecates it — emitting TS5101 here, which this
+        // test correctly reported as generated code failing to compile.
         paths,
       },
       include: ["**/*.ts"],

@@ -1,10 +1,24 @@
 import { attachedText, type FetchBody } from "./client-request.js";
 import { encodeNested } from "./query-encoder.js";
 
+/**
+ * What `attach()` accepts as a file's bytes.
+ *
+ * `Uint8Array<ArrayBuffer>` rather than a bare `Uint8Array`, whose default
+ * type argument is `ArrayBufferLike` and therefore also admits a
+ * `SharedArrayBuffer`-backed view. `Blob`/`File` cannot take one — their
+ * `BufferSource` is `NonSharedArrayBufferView | ArrayBuffer` — so the wider
+ * type was never actually constructible here. Naming it narrowly reports
+ * the mistake at the `attach()` call instead of inside the body builder.
+ * `Buffer` satisfies it, which is what callers pass in practice.
+ */
+export type AttachmentContents =
+  Blob | Uint8Array<ArrayBuffer> | string | ReadableStream<Uint8Array>;
+
 /** A single `attach()` call, held until the body is built at send time. */
 export interface Attachment {
   name: string;
-  contents: Blob | Uint8Array | string | ReadableStream<Uint8Array>;
+  contents: AttachmentContents;
   filename?: string;
   headers?: Record<string, string>;
 }

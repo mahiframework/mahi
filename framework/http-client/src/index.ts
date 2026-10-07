@@ -47,7 +47,7 @@ export type { Transport } from "./transport.js";
 
 export type { StubResponse, StubHandler, StubEntry, StubResponseSpec } from "./stub.js";
 export type { Sink } from "./sink.js";
-export type { Attachment } from "./multipart.js";
+export type { Attachment, AttachmentContents } from "./multipart.js";
 
 export { ConnectionError, RequestFailedError, StrayRequestError } from "./errors.js";
 

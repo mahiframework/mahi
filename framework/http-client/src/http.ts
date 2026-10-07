@@ -4,6 +4,7 @@ import type { ClientRequest } from "./client-request.js";
 import type { ClientResponse } from "./client-response.js";
 import { HttpClientFactory, type RecordedPair } from "./http-client-factory.js";
 import { urlMatch } from "./matching.js";
+import type { AttachmentContents } from "./multipart.js";
 import type { BodyFormat, PendingRequest } from "./pending-request.js";
 import { ResponseSequence } from "./response-sequence.js";
 import type { StubEntry, StubHandler, StubResponse, StubResponseSpec } from "./stub.js";
@@ -93,7 +94,7 @@ export class Http {
 
   static attach(
     name: string,
-    contents: Blob | Uint8Array | string | ReadableStream<Uint8Array>,
+    contents: AttachmentContents,
     filename?: string,
     headers?: Record<string, string>,
   ): PendingRequest {
