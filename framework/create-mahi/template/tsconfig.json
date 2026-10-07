@@ -4,6 +4,14 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "lib": ["ES2022"],
+    // TypeScript 6 stopped loading every `@types` package it could find and
+    // only loads what is named here. This app does resolve `@types/node`
+    // without it, because the dependency is declared directly and so sits in
+    // its own `node_modules/@types`, but that makes the type environment a
+    // side effect of the installer's layout. Naming it keeps `process`,
+    // `Buffer` and `node:*` imports working regardless of how a package
+    // manager chooses to arrange things.
+    "types": ["node"],
     "strict": true,
     "declaration": true,
     "declarationMap": true,

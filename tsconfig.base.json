@@ -10,6 +10,18 @@
     // describes the runtime rather than reaching ahead of it, and keeps every
     // other ESNext library proposal out of scope.
     "lib": ["ES2022", "ESNext.Disposable"],
+    // TypeScript 6 changed the default of `types` from "every @types package
+    // pnpm happens to have hoisted" to `[]`, so nothing is loaded unless it is
+    // named. Without this, `process`, `Buffer` and `node:*` imports fail with
+    // TS2591 ("add 'node' to the types field"), and `setInterval`/`console`
+    // fail with TS2304/TS2584 — the timer and console globals come from either
+    // the `dom` lib or `@types/node`, and `lib` above deliberately excludes
+    // `dom` because none of this runs in a browser.
+    //
+    // Naming it is the better default anyway: the old behaviour made the type
+    // environment depend on the shape of `node_modules`, so an unrelated
+    // transitive `@types/*` could silently widen what compiled.
+    "types": ["node"],
     "strict": true,
     "declaration": true,
     "declarationMap": true,
