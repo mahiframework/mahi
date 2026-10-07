@@ -82,6 +82,29 @@ export class HttpResponse {
     return new JsonResponse(body, status, headers);
   }
 
+  /**
+   * HTML response, with the `Content-Type` a browser needs.
+   *
+   * `make()` sets no `Content-Type` at all, and
+   * `X-Content-Type-Options: nosniff` is applied to every response by
+   * default — so a hand-built HTML response without this header is not
+   * rendered as a document, it is offered as a download or shown as
+   * source. That is a footgun rather than a convenience gap, and it bites
+   * any package that emits HTML.
+   *
+   * `charset=utf-8` is explicit because the default for `text/html` is
+   * historically `ISO-8859-1`, which mangles any non-ASCII content.
+   *
+   * The header is overridable through `headers`, for a caller sending a
+   * fragment under some other HTML-ish type.
+   */
+  static html(body: string, status = 200, headers: Record<string, string> = {}): HttpResponse {
+    return new HttpResponse(body, status, {
+      "Content-Type": "text/html; charset=utf-8",
+      ...headers,
+    });
+  }
+
   /** File/stream response. Accepts a filesystem path, `File`/`Blob`, or `Buffer`/`Uint8Array`. */
   static file(
     fileOrStream: FileSource,

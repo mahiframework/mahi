@@ -71,6 +71,41 @@ describe("Response.json / JsonResponse", () => {
   });
 });
 
+describe("Response.html", () => {
+  it("sets a utf-8 html content type", async () => {
+    const web = await HttpResponse.html("<p>hi</p>").toWeb();
+
+    expect(web.status).toBe(200);
+    // Explicit charset: the historical default for `text/html` is
+    // ISO-8859-1, which mangles anything non-ASCII.
+    expect(web.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
+    expect(await web.text()).toBe("<p>hi</p>");
+  });
+
+  it("takes a status and extra headers", async () => {
+    const web = await HttpResponse.html("<p>nope</p>", 404, { "X-Custom": "yes" }).toWeb();
+
+    expect(web.status).toBe(404);
+    expect(web.headers.get("X-Custom")).toBe("yes");
+  });
+
+  it("lets a caller override the content type", async () => {
+    const web = await HttpResponse.html("<p>hi</p>", 200, {
+      "Content-Type": "application/xhtml+xml",
+    }).toWeb();
+
+    expect(web.headers.get("Content-Type")).toBe("application/xhtml+xml");
+  });
+
+  it("does not escape — escaping is the caller's job", async () => {
+    // Deliberate: this is a transport helper, not a template engine.
+    // Every interpolation at the call site goes through `Str.escapeHtml`.
+    const web = await HttpResponse.html("<p>a & b</p>").toWeb();
+
+    expect(await web.text()).toBe("<p>a & b</p>");
+  });
+});
+
 describe("Response.redirect / RedirectResponse", () => {
   it("defaults to 302 with a Location header and round-trips the url", () => {
     const res = HttpResponse.redirect("/login");
