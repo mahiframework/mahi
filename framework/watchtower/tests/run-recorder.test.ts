@@ -91,6 +91,46 @@ describe("RunRecorder", () => {
     expect(runs.all()[0]?.duration_ms).toBe(842);
   });
 
+  /**
+   * An observation that carries no duration of its own still produces
+   * one, derived from the `started_at` the earlier observation already
+   * persisted. This is the common case rather than an edge: the listener
+   * can only measure a duration itself when one instance saw both ends of
+   * the attempt, which the per-event construction of listener classes
+   * means it usually did not.
+   */
+  it("derives the duration from the row's timestamps when the observation has none", async () => {
+    harness = await createHarness();
+    const recorder = new RunRecorder(harness.app);
+
+    await recorder.record(observation({ status: "running" }));
+    await recorder.record(
+      observation({
+        status: "completed",
+        finishedAt: "2026-10-07T12:00:02Z",
+        durationMs: null,
+      }),
+    );
+
+    const runs = (await WatchtowerJobRun.query().get()).all();
+
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.duration_ms).toBe(2000);
+  });
+
+  /** Nothing to derive from: a `running` row alone has no end yet. */
+  it("leaves the duration null while the attempt is still running", async () => {
+    harness = await createHarness();
+    const recorder = new RunRecorder(harness.app);
+
+    await recorder.record(observation({ status: "running" }));
+    await recorder.record(observation({ status: "running", process: "default" }));
+
+    const runs = (await WatchtowerJobRun.query().get()).all();
+
+    expect(runs[0]?.duration_ms).toBeNull();
+  });
+
   it("converges when completed arrives BEFORE running", async () => {
     harness = await createHarness();
     const recorder = new RunRecorder(harness.app);
@@ -258,6 +298,52 @@ describe("RecordJobRunListener", () => {
     expect(runs[0]?.status).toBe("completed");
     // Measured by the listener, because nothing in the payload carries a
     // start time.
+    expect(runs[0]?.duration_ms).not.toBeNull();
+  });
+
+  /**
+   * The dispatcher constructs a listener class FRESH for every matching
+   * event, so the instance that sees `JobProcessing` is never the one
+   * that sees `JobProcessed`. The listener's in-memory start time is
+   * therefore gone by the time it needs it, and the duration has to come
+   * from the `started_at` already persisted on the row — otherwise every
+   * run records a null duration and the dashboard shows no p50/p95 for
+   * any job type.
+   */
+  it("still records a duration when each event gets its own listener instance", async () => {
+    await bootWith();
+    const job = queued();
+
+    await new RecordJobRunListener(harness.app).handle(
+      new JobProcessing("watchtower", fakeJob, job),
+    );
+    await new RecordJobRunListener(harness.app).handle(
+      new JobProcessed("watchtower", fakeJob, job),
+    );
+
+    const runs = (await WatchtowerJobRun.query().get()).all();
+
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.status).toBe("completed");
+    expect(runs[0]?.duration_ms).not.toBeNull();
+  });
+
+  /** Same requirement for a failed attempt, which takes the other path. */
+  it("records a duration for a failed attempt across listener instances", async () => {
+    await bootWith();
+    const job = queued();
+
+    await new RecordJobRunListener(harness.app).handle(
+      new JobProcessing("watchtower", fakeJob, job),
+    );
+    await new RecordJobRunListener(harness.app).handle(
+      new JobFailed("watchtower", fakeJob, job, new Error("boom")),
+    );
+
+    const runs = (await WatchtowerJobRun.query().get()).all();
+
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.status).toBe("failed");
     expect(runs[0]?.duration_ms).not.toBeNull();
   });
 

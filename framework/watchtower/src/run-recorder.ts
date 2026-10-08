@@ -147,6 +147,9 @@ export class RunRecorder {
    */
   private async update(existing: WatchtowerJobRun, observation: JobRunObservation): Promise<void> {
     const keepStatus = isTerminal(existing.status) && !isTerminal(observation.status);
+    const startedAt = toDateTime(observation.startedAt) ?? existing.started_at;
+    const finishedAt = toDateTime(observation.finishedAt) ?? existing.finished_at;
+    const durationMs = observation.durationMs ?? durationBetween(startedAt, finishedAt);
 
     await WatchtowerJobRun.query()
       .where("id", existing.id)
@@ -162,7 +165,7 @@ export class RunRecorder {
         ...(observation.finishedAt !== null
           ? { finished_at: toDateTime(observation.finishedAt) }
           : {}),
-        ...(observation.durationMs !== null ? { duration_ms: observation.durationMs } : {}),
+        ...(durationMs !== null ? { duration_ms: durationMs } : {}),
         ...(observation.error !== null ? { error: observation.error } : {}),
       });
   }
@@ -208,4 +211,31 @@ export function isTerminal(status: JobRunStatus): boolean {
 
 function toDateTime(value: string | null): DateTime | null {
   return value === null ? null : DateTime.parse(value);
+}
+
+/**
+ * Elapsed milliseconds between the two timestamps on the row, or `null`
+ * when either is missing.
+ *
+ * The observation's own `durationMs` is preferred and this is the
+ * fallback, because the listener can only measure a duration when the
+ * SAME listener instance saw both the start and the end of the attempt.
+ * It is constructed fresh per dispatched event, so its in-memory start
+ * time is routinely gone by the time the terminal event arrives, and
+ * every run would otherwise store a null duration and show no p50/p95 on
+ * the dashboard.
+ *
+ * Deriving it from the persisted `started_at`/`finished_at` needs no
+ * cross-event state at all: whichever observation arrives second finds
+ * the other's timestamp already on the row. Clamped at zero because the
+ * columns hold seconds-precision ISO strings, so a sub-second attempt
+ * whose halves round in opposite directions can otherwise come out
+ * slightly negative.
+ */
+function durationBetween(startedAt: DateTime | null, finishedAt: DateTime | null): number | null {
+  if (startedAt === null || finishedAt === null) {
+    return null;
+  }
+
+  return Math.max(0, finishedAt.toTimestamp() - startedAt.toTimestamp());
 }
