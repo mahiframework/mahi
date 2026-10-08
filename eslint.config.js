@@ -39,6 +39,15 @@ export default [
     // former is plain `.mjs`, and the latter is a scaffold whose files
     // belong to no project in this repo and would parse-error.
     //
+    // MEMORY: `project` is a glob, so every package's `lint` loads a
+    // program for ALL of them, around 2GB resident per process rather than
+    // the ~0.5GB its own project costs. Turborepo runs one process per
+    // package, so the root `lint` script caps `--concurrency` to keep the
+    // total under a CI runner's memory; without the cap the runner
+    // OOM-kills the run. Narrowing this to the package being linted is the
+    // real fix, but `projectService` does not pick up `tsconfig.test.json`
+    // and each package's config would have to be generated.
+    //
     // no-floating-promises is the rule this exists for. An unawaited
     // promise is invisible to `tsc` and to a passing test suite, and the
     // two failure modes it catches are both silent:

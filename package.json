@@ -8,7 +8,7 @@
   "scripts": {
     "build": "turbo run build",
     "test": "turbo run test --concurrency=4",
-    "lint": "turbo run lint",
+    "lint": "turbo run lint --concurrency=4",
     "typecheck": "turbo run typecheck",
     "format": "eslint . --fix && prettier --write .",
     "format:check": "prettier --check .",
