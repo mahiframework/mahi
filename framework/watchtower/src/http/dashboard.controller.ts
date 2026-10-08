@@ -1,7 +1,7 @@
 import { QUEUE_TOKEN, type Application } from "@mahiframework/core";
 import { HttpError, HttpResponse } from "@mahiframework/http";
 import type { Request } from "@mahiframework/http";
-import { supportsFailedJobs, type QueueManager } from "@mahiframework/queue";
+import type { QueueManager } from "@mahiframework/queue";
 import {
   buildFailed,
   buildJobType,
@@ -10,6 +10,7 @@ import {
 } from "../dashboard/build-page.js";
 import { DefaultDashboardTheme } from "../dashboard/default-dashboard-theme.js";
 import type { DashboardTheme } from "../dashboard/dashboard-theme.js";
+import { WatchtowerJobRun } from "../models/watchtower-job-run.model.js";
 import { WATCHTOWER_CONNECTION, WATCHTOWER_TOKEN } from "../tokens.js";
 import type { WatchtowerManager } from "../watchtower-manager.js";
 
@@ -77,14 +78,26 @@ export class DashboardController {
 
     const driver = this.app.make<QueueManager>(QUEUE_TOKEN).connection(WATCHTOWER_CONNECTION);
 
-    if (!supportsFailedJobs(driver)) {
+    // `retryDispatch` rather than `supportsFailedJobs`: retrying from a
+    // run id needs the `dispatch_id` lookup, which only this package's
+    // driver has. A `database`/`redis` connection under the
+    // `watchtower` name can list failures but cannot serve this.
+    if (!supportsDispatchRetry(driver)) {
       throw HttpError.notFound();
     }
 
     // The dashboard shows a RUN id (history) while the driver retries by
-    // FAILED JOB id (queue). They are different tables with different
-    // keys, so the run is read first to recover the queue-side id.
-    const retried = await driver.retry(runId);
+    // FAILED JOB id (queue). They are different tables with unrelated
+    // keys, so the run is read first to recover the `dispatch_id` both
+    // sides share. Passing the run id straight to `retry()` matches
+    // nothing and 404s every time.
+    const run = await WatchtowerJobRun.query().where("id", runId).first();
+
+    if (!run) {
+      throw HttpError.notFound();
+    }
+
+    const retried = await driver.retryDispatch(run.dispatch_id);
 
     return HttpResponse.json({ retried }, retried ? 200 : 404);
   }
@@ -150,4 +163,15 @@ export class DashboardController {
       new DefaultDashboardTheme()
     );
   }
+}
+
+/** A queue driver that can retry a failed job by its `dispatch_id`. */
+function supportsDispatchRetry(
+  driver: unknown,
+): driver is { retryDispatch(dispatchId: string): Promise<boolean> } {
+  return (
+    typeof driver === "object" &&
+    driver !== null &&
+    typeof (driver as { retryDispatch?: unknown }).retryDispatch === "function"
+  );
 }

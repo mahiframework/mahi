@@ -566,11 +566,32 @@ export class WatchtowerQueueDriver
    * the retry among jobs dispatched before it.
    */
   async retry(id: string): Promise<boolean> {
+    return this.requeue("id", failedJobKey(id));
+  }
+
+  /**
+   * Retry the failed job belonging to a dispatch, rather than by the
+   * failed row's own key.
+   *
+   * This is what the dashboard needs. It lists run HISTORY, whose ids
+   * belong to `watchtower_job_runs`, while `retry()` keys off
+   * `watchtower_failed_jobs` — two tables with unrelated ids, so handing
+   * a run id to `retry()` matches nothing and every retry 404s.
+   * `dispatch_id` is the column both tables share, and it survives a
+   * retry, which makes it the stable way to name "the work that failed"
+   * from outside the queue.
+   */
+  async retryDispatch(dispatchId: string): Promise<boolean> {
+    return this.requeue("dispatch_id", dispatchId);
+  }
+
+  /** Shared body of `retry()`/`retryDispatch()`: locate, requeue, delete. */
+  private async requeue(column: "id" | "dispatch_id", value: string | bigint): Promise<boolean> {
     return transaction(this.db, async (trx) => {
       const row = (await trx
         .selectFrom("watchtower_failed_jobs")
         .selectAll()
-        .where("id", "=", failedJobKey(id))
+        .where(column, "=", value)
         .executeTakeFirst()) as FailedJobRow | undefined;
 
       if (!row) {
@@ -596,7 +617,9 @@ export class WatchtowerQueueDriver
         })
         .execute();
 
-      await trx.deleteFrom("watchtower_failed_jobs").where("id", "=", failedJobKey(id)).execute();
+      // By the row's own key, never the column matched above: a
+      // `dispatch_id` retry must still delete exactly the row it requeued.
+      await trx.deleteFrom("watchtower_failed_jobs").where("id", "=", row.id).execute();
 
       return true;
     });

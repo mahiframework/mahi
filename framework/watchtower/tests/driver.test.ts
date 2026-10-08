@@ -606,6 +606,58 @@ describe("WatchtowerQueueDriver", () => {
       expect(await makeDriver().retry("999")).toBe(false);
     });
 
+    /**
+     * The dashboard can only name a failure by its RUN id, and run
+     * history keys off `dispatch_id` rather than the failed row's own
+     * key. Retrying by dispatch is what lets it act on what it displays.
+     */
+    it("retries by dispatch id, which is what the dashboard has", async () => {
+      harness = await createHarness();
+      const driver = makeDriver();
+
+      await driver.push("app.jobs.sync", { invoiceId: 9 }, { queue: "alpha" });
+      const job = (await driver.pop("alpha")) as WatchtowerQueuedJob;
+
+      await driver.fail(job, new Error("boom"));
+      expect(await driver.retryDispatch(job.dispatchId)).toBe(true);
+
+      const retried = (await driver.pop("alpha")) as WatchtowerQueuedJob;
+      expect(retried.jobClass).toBe("app.jobs.sync");
+      expect(retried.attempts).toBe(0);
+      expect(retried.dispatchId).toBe(job.dispatchId);
+      expect(await driver.listFailed()).toHaveLength(0);
+    });
+
+    it("reports a dispatch retry of an unknown dispatch id rather than throwing", async () => {
+      harness = await createHarness();
+
+      expect(await makeDriver().retryDispatch("018f0000-0000-7000-8000-00000000dead")).toBe(false);
+    });
+
+    /**
+     * Only the row that was requeued is removed. Deleting by the matched
+     * column instead would be fine for `id` and wrong for anything
+     * non-unique.
+     */
+    it("leaves other failed rows alone when retrying by dispatch", async () => {
+      harness = await createHarness();
+      const driver = makeDriver();
+
+      await driver.push("app.jobs.first", {});
+      const first = (await driver.pop()) as WatchtowerQueuedJob;
+      await driver.fail(first, new Error("boom"));
+
+      await driver.push("app.jobs.second", {});
+      const second = (await driver.pop()) as WatchtowerQueuedJob;
+      await driver.fail(second, new Error("boom"));
+
+      expect(await driver.retryDispatch(first.dispatchId)).toBe(true);
+
+      const remaining = await driver.listFailed();
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0]?.jobClass).toBe("app.jobs.second");
+    });
+
     it("passes a non-numeric id through rather than hitting the database with it", async () => {
       harness = await createHarness();
       const driver = makeDriver();
