@@ -68,7 +68,22 @@ interface Connection {
   readonly socketId: string;
   readonly user: unknown | null;
   readonly channels: Set<string>;
+  /**
+   * Presence channels this socket is still mid-handshake on, each mapped
+   * to the frames that arrived before its `presence:here` went out. See
+   * `handleSubscribe()`.
+   */
+  readonly presenceHandshake: Map<string, string[]>;
 }
+
+/**
+ * Max frames held per socket per channel while a presence `here` snapshot
+ * is assembled. The window is normally a round trip or two, so this is only
+ * ever reached if the roster store stalls under a flood; past it, frames are
+ * dropped rather than letting one slow handshake buy unbounded server
+ * memory (the same trade as `DEFAULT_MAX_BUFFERED_BYTES`).
+ */
+const MAX_PRESENCE_HANDSHAKE_FRAMES = 1000;
 
 let socketCounter = 0;
 function nextSocketId(): string {
@@ -321,7 +336,22 @@ export class LocalBroadcastDriver implements BroadcastDriver {
     }
 
     for (const ws of sockets) {
-      if (excludeSocketId !== undefined && this.connections.get(ws)?.socketId === excludeSocketId) {
+      const connection = this.connections.get(ws);
+
+      if (excludeSocketId !== undefined && connection?.socketId === excludeSocketId) {
+        continue;
+      }
+
+      // Mid-handshake on this channel: hold the frame until `presence:here`
+      // has gone out, so the client never sees a roster delta before the
+      // roster. `handleSubscribe()` flushes in arrival order.
+      const queued = connection?.presenceHandshake.get(channel);
+
+      if (queued) {
+        if (queued.length < MAX_PRESENCE_HANDSHAKE_FRAMES) {
+          queued.push(frame);
+        }
+
         continue;
       }
 
@@ -341,7 +371,12 @@ export class LocalBroadcastDriver implements BroadcastDriver {
 
   /** Set up per-connection state the moment the handshake completes. */
   private register(ws: WSContext, user: unknown | null): void {
-    this.connections.set(ws, { socketId: nextSocketId(), user, channels: new Set() });
+    this.connections.set(ws, {
+      socketId: nextSocketId(),
+      user,
+      channels: new Set(),
+      presenceHandshake: new Map(),
+    });
   }
 
   private connectionFor(ws: WSContext): Connection {
@@ -349,7 +384,12 @@ export class LocalBroadcastDriver implements BroadcastDriver {
 
     if (!connection) {
       // A message before onOpen shouldn't happen, but never let it throw.
-      connection = { socketId: nextSocketId(), user: null, channels: new Set() };
+      connection = {
+        socketId: nextSocketId(),
+        user: null,
+        channels: new Set(),
+        presenceHandshake: new Map(),
+      };
       this.connections.set(ws, connection);
     }
 
@@ -484,11 +524,47 @@ export class LocalBroadcastDriver implements BroadcastDriver {
       return;
     }
 
+    // Subscribing before the presence handshake completes is deliberate:
+    // the socket must not miss a frame published while its roster is being
+    // assembled. But it must not *see* one out of order either, a
+    // `joining`/`leaving` ahead of `presence:here` describes a roster the
+    // client hasn't got yet, so it has nothing to apply the delta to.
+    // Opening the handshake window first makes `deliver()` queue frames for
+    // this socket on this channel until `joinPresence()` has sent `here`,
+    // which then flushes them in arrival order. For a presence channel the
+    // ordering guarantee is therefore: `subscribed`, `presence:here`, then
+    // every subsequent frame, exactly once.
+    const presence = isPresenceChannel(frame.channel);
+
+    if (presence) {
+      connection.presenceHandshake.set(frame.channel, []);
+    }
+
     this.subscribe(frame.channel, ws);
     ws.send(JSON.stringify({ type: "subscribed", channel: frame.channel }));
 
-    if (isPresenceChannel(frame.channel)) {
-      await this.joinPresence(frame.channel, ws, authorization.presenceData ?? {});
+    if (presence) {
+      try {
+        await this.joinPresence(frame.channel, ws, authorization.presenceData ?? {});
+      } finally {
+        // Even a failed join must reopen delivery, holding frames for a
+        // socket that will never get a `here` would silence it for good.
+        this.flushPresenceHandshake(frame.channel, ws);
+      }
+    }
+  }
+
+  /**
+   * Release the frames held while `channel`'s `presence:here` was in
+   * flight, in the order they arrived, and close the window so later
+   * frames go straight out.
+   */
+  private flushPresenceHandshake(channel: string, ws: WSContext): void {
+    const queued = this.connections.get(ws)?.presenceHandshake.get(channel);
+    this.connections.get(ws)?.presenceHandshake.delete(channel);
+
+    for (const frame of queued ?? []) {
+      this.deliver(ws, frame);
     }
   }
 
@@ -584,7 +660,12 @@ export class LocalBroadcastDriver implements BroadcastDriver {
     }
 
     const sockets = this.subscriptions.get(channel);
-    this.connections.get(ws)?.channels.delete(channel);
+    const connection = this.connections.get(ws);
+    connection?.channels.delete(channel);
+    // Unsubscribed before its `here` landed: the queued frames are for a
+    // channel this socket no longer has, so drop them rather than flushing
+    // a roster delta after the client walked away.
+    connection?.presenceHandshake.delete(channel);
 
     if (!sockets) {
       return;

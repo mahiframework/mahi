@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { Context } from "hono";
+import type { WSContext } from "hono/ws";
 import { LocalBroadcastDriver } from "../src/drivers/local-broadcast-driver.js";
 import type { BroadcastAuthorizer, SubscribeAuthorization } from "../src/broadcast-authorizer.js";
 import {
@@ -150,6 +151,138 @@ describe("LocalBroadcastDriver presence channels", () => {
       channel: "presence-chat.general",
       member: { id: "bob" },
     });
+  });
+});
+
+/**
+ * `presence:here` must reach a joining socket before any roster delta for
+ * that channel. A `joining`/`leaving` ahead of it describes a change to a
+ * roster the client hasn't received, so it has nothing to apply the delta
+ * to and ends up with a member list missing (or double-counting) whoever
+ * moved during the handshake.
+ *
+ * The window is the `await` in `joinPresence()`: a shared roster store
+ * (Redis) takes a round trip or two to read the roster and add the member,
+ * and the socket is already subscribed for fan-out by then. Stalling the
+ * roster write holds that window open deliberately, so a race that is
+ * otherwise rare and load-dependent reproduces every run.
+ */
+describe("LocalBroadcastDriver presence handshake ordering", () => {
+  let server: TestServer | undefined;
+  const sockets: TestSocket[] = [];
+
+  /**
+   * Holds one member's roster write open until the test releases it.
+   * Stalling by member id rather than globally matters: every join reads
+   * the roster, so a blanket gate would also block the very joins whose
+   * deltas are supposed to arrive during the window.
+   */
+  class StallingRosterDriver extends LocalBroadcastDriver {
+    private stalledMember?: string;
+    private release?: () => void;
+    private gate?: Promise<void>;
+
+    stall(memberId: string): void {
+      this.stalledMember = memberId;
+      this.gate = new Promise<void>((resolve) => {
+        this.release = resolve;
+      });
+    }
+
+    resume(): void {
+      this.stalledMember = undefined;
+      this.release?.();
+    }
+
+    protected override async presenceAdd(
+      channel: string,
+      ws: WSContext,
+      socketId: string,
+      member: object,
+    ): Promise<void> {
+      await super.presenceAdd(channel, ws, socketId, member);
+
+      if ((member as { id?: string }).id === this.stalledMember) {
+        await this.gate;
+      }
+    }
+  }
+
+  afterEach(async () => {
+    await Promise.all(sockets.splice(0).map((s) => s.close()));
+    await server?.close();
+    server = undefined;
+  });
+
+  it("delivers presence:here before a roster delta that lands mid-handshake", async () => {
+    const driver = new StallingRosterDriver({ authorizer: new PresenceAuthorizer() });
+    server = await startTestServer(driver);
+
+    const alice = await TestSocket.connect(server.port, "/broadcasting/socket?user=alice");
+    sockets.push(alice);
+    alice.send({ type: "subscribe", channel: "presence-chat.general" });
+    await alice.nextMessage(); // subscribed
+    await alice.nextMessage(); // here
+
+    // Bob's roster read is now stuck, so his socket is subscribed for
+    // fan-out while his `here` is still pending: exactly the window.
+    driver.stall("bob");
+    const bob = await TestSocket.connect(server.port, "/broadcasting/socket?user=bob");
+    sockets.push(bob);
+    bob.send({ type: "subscribe", channel: "presence-chat.general" });
+    expect(await bob.nextMessage()).toMatchObject({ type: "subscribed" });
+
+    // A third member joins inside bob's window, so its delta is published
+    // while he is still waiting for `here`.
+    const carol = await TestSocket.connect(server.port, "/broadcasting/socket?user=carol");
+    sockets.push(carol);
+    carol.send({ type: "subscribe", channel: "presence-chat.general" });
+    await waitUntil(() => driver.subscriberCount("presence-chat.general") === 3);
+    await alice.nextMessage(); // joining carol, proving the delta is out
+
+    driver.resume();
+
+    // `here` first, then the buffered deltas in the order they happened.
+    const here = await bob.nextMessage();
+    expect(here).toMatchObject({ type: "presence:here" });
+    expect(here.members).toEqual(expect.arrayContaining([{ id: "alice" }, { id: "bob" }]));
+    expect(await bob.nextMessage()).toMatchObject({
+      type: "presence:joining",
+      member: { id: "carol" },
+    });
+  });
+
+  it("drops the buffered deltas when the socket unsubscribes before its here lands", async () => {
+    const driver = new StallingRosterDriver({ authorizer: new PresenceAuthorizer() });
+    server = await startTestServer(driver);
+
+    const alice = await TestSocket.connect(server.port, "/broadcasting/socket?user=alice");
+    sockets.push(alice);
+    alice.send({ type: "subscribe", channel: "presence-chat.general" });
+    await alice.nextMessage();
+    await alice.nextMessage();
+
+    driver.stall("bob");
+    const bob = await TestSocket.connect(server.port, "/broadcasting/socket?user=bob");
+    sockets.push(bob);
+    bob.send({ type: "subscribe", channel: "presence-chat.general" });
+    expect(await bob.nextMessage()).toMatchObject({ type: "subscribed" });
+
+    // Carol's join queues a delta behind bob's pending `here`...
+    const carol = await TestSocket.connect(server.port, "/broadcasting/socket?user=carol");
+    sockets.push(carol);
+    carol.send({ type: "subscribe", channel: "presence-chat.general" });
+    await waitUntil(() => driver.subscriberCount("presence-chat.general") === 3);
+
+    // ...and then bob leaves, so that delta is for a channel he no longer
+    // has and must be dropped rather than flushed after the fact.
+    bob.send({ type: "unsubscribe", channel: "presence-chat.general" });
+    expect(await bob.nextMessage()).toMatchObject({ type: "unsubscribed" });
+
+    driver.resume();
+
+    expect(await bob.nextMessage()).toMatchObject({ type: "presence:here" });
+    await bob.expectNoMessage();
   });
 });
 

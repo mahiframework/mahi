@@ -378,6 +378,36 @@ literals, or has a missing/empty/non-string `channel`.
 Exactly the `BroadcastMessage` fields, `JSON.stringify`d once per
 broadcast and sent to every subscribed socket.
 
+### Presence frames
+
+A `presence-` channel adds three membership frames, carrying whatever the
+channel's authorization callback returned as the member payload:
+
+```json
+{"type":"presence:here","channel":"presence-chat.general","members":[{"id":1},{"id":2}]}
+{"type":"presence:joining","channel":"presence-chat.general","member":{"id":3}}
+{"type":"presence:leaving","channel":"presence-chat.general","member":{"id":2}}
+```
+
+`here` goes only to the socket that just subscribed and lists the full
+roster including itself; `joining`/`leaving` go to everyone else on the
+channel and never echo to the member they describe.
+
+**Ordering is guaranteed:** a subscriber receives `subscribed`, then
+`presence:here`, then every later frame on that channel, in order and
+exactly once. A client can therefore treat `here` as its initial state and
+apply each subsequent `joining`/`leaving` as a delta, with no need to
+handle a delta for a roster it hasn't seen yet.
+
+That guarantee is not free, and the reason is worth knowing if you write a
+driver. A socket is registered for fan-out *before* its `here` is sent, so
+that nothing published mid-handshake is lost. With a shared roster store
+the handshake spans a network round trip, which is a wide enough window for
+another member's `joining` to be published inside it. Frames that land in
+that window are held per socket and flushed once `here` has gone out, so
+"nothing is lost" doesn't cost "nothing arrives early". A socket that
+unsubscribes mid-handshake has its held frames dropped instead.
+
 ### A minimal client
 
 ```ts
