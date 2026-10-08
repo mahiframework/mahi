@@ -232,6 +232,47 @@ describe("Watchtower.stats", () => {
     expect(detail?.attemptChains[0]?.attempts.map((run) => run.attempt)).toEqual([1, 2, 3]);
   });
 
+  /**
+   * The run list the detail view shows is capped and ordered
+   * newest-first. Chains must NOT be grouped from it: the rows that fall
+   * off the end are each chain's EARLIEST attempts, which are the ones
+   * that explain how a job got into trouble. Reading a job's history and
+   * finding it starts at attempt 4, with the count reported as if that
+   * were the whole story, is worse than no history.
+   *
+   * Enough dispatches here to push the total past the cap, which is what
+   * a FIFO queue of repeatedly-releasing jobs produces routinely.
+   */
+  it("keeps attempt chains complete when the run list is capped", async () => {
+    await boot();
+    const recorder = new RunRecorder(harness.app);
+
+    // 15 dispatches x 6 attempts = 90 rows, comfortably over the 50-row
+    // run cap.
+    for (let dispatch = 0; dispatch < 15; dispatch += 1) {
+      const dispatchId = `018f0000-0000-7000-8000-0000000${String(dispatch).padStart(5, "0")}`;
+
+      for (let attempt = 1; attempt <= 6; attempt += 1) {
+        await recorder.record(
+          observation({
+            dispatchId,
+            attempt,
+            status: attempt === 6 ? "failed" : "released",
+          }),
+        );
+      }
+    }
+
+    const detail = await Watchtower.jobType("app.jobs.sync-invoice");
+
+    expect(detail?.attemptChains.length).toBeGreaterThan(0);
+
+    // Every chain on show starts at its real first attempt.
+    for (const chain of detail?.attemptChains ?? []) {
+      expect(chain.attempts.map((run) => run.attempt)).toEqual([1, 2, 3, 4, 5, 6]);
+    }
+  });
+
   it("returns undefined for a job type nothing has seen", async () => {
     await boot();
 

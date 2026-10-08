@@ -28,6 +28,16 @@ const DEFAULT_WINDOW_HOURS = 24;
 /** How many failures the overview carries. */
 const RECENT_FAILURE_LIMIT = 10;
 
+/** How many individual runs the job-detail view lists, newest first. */
+const RECENT_RUN_LIMIT = 50;
+
+/**
+ * How many dispatches the job-detail view reconstructs full attempt
+ * chains for. Each costs up to `maxAttempts` rows, so this bounds the
+ * extra read rather than the run list it is derived from.
+ */
+const ATTEMPT_CHAIN_LIMIT = 20;
+
 /**
  * Builds the read model from the tables, the cache and the queue driver.
  *
@@ -196,11 +206,56 @@ export class StatsReader {
 
     const since = DateTime.now().subHours(windowHours);
     const summary = await this.summarise(type, since);
-    const runs = (await WatchtowerJobRun.forTypeSince(type.id, since).limit(50).get()).all();
+    const runs = (
+      await WatchtowerJobRun.forTypeSince(type.id, since).limit(RECENT_RUN_LIMIT).get()
+    ).all();
 
     const recentRuns = runs.map(toRunSummary(type));
 
-    return { ...summary, recentRuns, attemptChains: chainsOf(recentRuns) };
+    return {
+      ...summary,
+      recentRuns,
+      // Chains are built from a SEPARATE read, not from `recentRuns`.
+      // That list is ordered newest-first and capped, so grouping it
+      // would cut each chain's EARLIEST attempts — the ones that explain
+      // how the job got into trouble — and then report the truncated
+      // count as if it were the whole history. A job that released five
+      // times before failing showed up as starting at attempt 2.
+      attemptChains: chainsOf(await this.chainRuns(type, recentRuns)),
+    };
+  }
+
+  /**
+   * Every attempt belonging to the dispatches on show, so each chain is
+   * complete even when its first attempt fell outside the capped
+   * `recentRuns` read.
+   *
+   * Bounded by the dispatches already selected rather than by a row
+   * count, which is what makes "complete" affordable: a chain is at most
+   * `maxAttempts` long, so this reads a few rows per dispatch and never
+   * the whole table.
+   */
+  private async chainRuns(
+    type: WatchtowerJobType,
+    recentRuns: JobRunSummary[],
+  ): Promise<JobRunSummary[]> {
+    const dispatchIds = [...new Set(recentRuns.map((run) => run.dispatchId))].slice(
+      0,
+      ATTEMPT_CHAIN_LIMIT,
+    );
+
+    if (dispatchIds.length === 0) {
+      return [];
+    }
+
+    const runs = (
+      await WatchtowerJobRun.query()
+        .where("watchtower_job_type_id", type.id)
+        .whereIn("dispatch_id", dispatchIds)
+        .get()
+    ).all();
+
+    return runs.map(toRunSummary(type));
   }
 
   /** Failures across every job type, newest first. */
