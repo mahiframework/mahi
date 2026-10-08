@@ -19,6 +19,12 @@ cd my-app
 
 ## About
 
+### What is Mahi?
+
+_Mahi_ in te reo Māori <img src="docs/assets/flag.png" height="12"> means: work, to work, perform, do, accomplish.
+
+It also describes what this framework does.
+
 Inspired by Laravel, whose best features are simplicity, elegance and structure.
 
 Laravel's built using service providers, a container, managers resolving drivers,
