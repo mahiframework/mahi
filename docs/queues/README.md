@@ -1066,7 +1066,10 @@ and *before* the chain advances.
 ```ts
 if (error instanceof ReleaseJobError) {
   if (queued.attempts + 1 >= maxAttempts) await this.failJob(driver, queued, job, error);
-  else await driver.release(queued, error.delaySeconds);
+  else {
+    await driver.release(queued, error.delaySeconds);
+    await this.fireJobEvent(new JobReleased(this.connection, job, queued, error.delaySeconds));
+  }
   return;
 }
 ```
@@ -1075,6 +1078,12 @@ A release isn't a failure. The work isn't wrong, it just shouldn't run
 *now*. But `release()` bumps `attempts`, and a lock that is never free
 would otherwise release the job forever. Bounding it by the same attempt
 budget turns "spins indefinitely" into "fails, visibly, after N tries".
+
+`JobReleased` is what makes the attempt's end observable. Every started
+attempt reaches exactly one of `JobProcessed`, `JobFailed` or
+`JobReleased`, so anything pairing the start with its end, run history,
+an in-flight gauge, a duration metric, can rely on that rather than
+leaving a released attempt open forever.
 
 **8. Attempts exhausted OR `retryUntil()` passed → fail.**
 
@@ -1101,7 +1110,13 @@ matching Laravel's precedence.
 const attempt = queued.attempts + 1;
 const delay = job.backoff?.(attempt) ?? this.backoffSeconds ?? defaultBackoffSeconds(attempt);
 await driver.release(queued, delay);
+await this.fireJobEvent(new JobReleased(this.connection, job, queued, delay));
 ```
+
+A retryable failure also ends the attempt by releasing it, so it fires
+`JobReleased` too. `JobFailed` is reserved for the attempt that exhausts
+the budget; the error itself is still reported through the worker's own
+logging.
 
 ### Backoff
 
@@ -1154,10 +1169,19 @@ export class JobProcessing extends AbstractEvent {
 }
 ```
 
-`JobProcessing`, `JobProcessed`, and `JobFailed` (which also carries
-`error`) are dispatched through [Events](../events/), but only when
-`EVENTS_TOKEN` is bound. The queue package works standalone; events are a
-soft dependency.
+`JobProcessing`, `JobProcessed`, `JobFailed` (which also carries
+`error`) and `JobReleased` (which carries `delaySeconds`) are dispatched
+through [Events](../events/), but only when `EVENTS_TOKEN` is bound. The
+queue package works standalone; events are a soft dependency.
+
+One `JobProcessing` is followed by exactly one of the other three. A
+consumer that pairs them, to time an attempt or count what is in flight,
+can treat that as a guarantee: an attempt put back on the queue ends in
+`JobReleased` rather than going quiet.
+
+Note that a released attempt is terminal for the ATTEMPT, not the job.
+The retry arrives later as a fresh `JobProcessing` with a higher
+`attempts`, exactly as a retried failure does.
 
 They are dispatched **defensively**:
 

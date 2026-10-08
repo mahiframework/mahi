@@ -14,7 +14,7 @@ import { SkipJobMissingModelError } from "../model-serialization.js";
 import { ReleaseJobError } from "../middleware/release-job-error.js";
 import { EventDispatcher, EVENTS_TOKEN } from "@mahiframework/events";
 import type { AbstractEvent } from "@mahiframework/events";
-import { JobProcessing, JobProcessed, JobFailed } from "../job-events.js";
+import { JobProcessing, JobProcessed, JobFailed, JobReleased } from "../job-events.js";
 import { restartSignalledAt } from "../restart-signal.js";
 
 /** Global-timer sleep, so vi.useFakeTimers() can drive the loop in tests. */
@@ -439,6 +439,12 @@ export class QueueWorkCommand extends Command {
           await this.failJob(driver, queued, job, error);
         } else {
           await driver.release(queued, error.delaySeconds);
+          // Closes the attempt that `JobProcessing` opened. Without it a
+          // released attempt is announced as started and never resolved,
+          // so anything pairing the events counts it as running forever.
+          await this.fireJobEvent(
+            new JobReleased(this.connection, job, queued, error.delaySeconds),
+          );
         }
 
         return;
@@ -455,6 +461,11 @@ export class QueueWorkCommand extends Command {
         const delay =
           job.backoff?.(attempt) ?? this.backoffSeconds ?? defaultBackoffSeconds(attempt);
         await driver.release(queued, delay);
+        // A retryable failure also ends this attempt by releasing it, so
+        // it closes the same way. The error is not lost: it is reported
+        // through the worker's own logging, and the attempt that finally
+        // exhausts the budget fires `JobFailed` with it.
+        await this.fireJobEvent(new JobReleased(this.connection, job, queued, delay));
       }
     }
   }

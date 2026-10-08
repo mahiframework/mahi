@@ -12,7 +12,7 @@ import type { JobMiddleware } from "../../src/middleware/job-middleware.js";
 import { QUEUE_TOKEN, JOB_REGISTRY_TOKEN } from "../../src/tokens.js";
 import type { PushOptions, QueueDriver, QueuedJob } from "../../src/queue-driver.js";
 import { EventDispatcher, EVENTS_TOKEN } from "@mahiframework/events";
-import { JobProcessing, JobProcessed, JobFailed } from "../../src/job-events.js";
+import { JobProcessing, JobProcessed, JobFailed, JobReleased } from "../../src/job-events.js";
 
 class HandledJob extends Job {
   static calls: unknown[] = [];
@@ -428,6 +428,133 @@ describe("QueueWorkCommand", () => {
 
     expect(failedEvent?.queued.id).toBe("9");
     expect(failedEvent?.error.message).toBe("kaboom");
+  });
+
+  /**
+   * Every started attempt must reach exactly one terminal event.
+   * A release ends the attempt as surely as success or failure does, and
+   * without an event for it a consumer that pairs
+   * `JobProcessing`/terminal, run history, an in-flight gauge, counts
+   * the attempt as running forever.
+   */
+  it("dispatches JobReleased when a middleware releases the job", async () => {
+    class RateLimitMiddleware implements JobMiddleware {
+      async handle(): Promise<void> {
+        throw new ReleaseJobError(30);
+      }
+    }
+    class GatedJob extends Job {
+      maxAttempts = 3;
+      middleware(): JobMiddleware[] {
+        return [new RateLimitMiddleware()];
+      }
+      handle(): void {}
+    }
+    const registry = new JobRegistry();
+    registry.register("gated", GatedJob);
+
+    const job: QueuedJob = { id: "4", jobClass: "gated", state: { maxAttempts: 3 }, attempts: 0 };
+    const driver = new FakeDriver([job]);
+    const app = buildApp(driver, registry);
+
+    const dispatcher = new EventDispatcher(app);
+    const seen: string[] = [];
+    let released: JobReleased | undefined;
+    dispatcher.listen("JobProcessing", () => void seen.push("processing"));
+    dispatcher.listen("JobReleased", (e) => {
+      released = e as JobReleased;
+      seen.push("released");
+    });
+    app.instance(EVENTS_TOKEN, dispatcher);
+
+    await new QueueWorkCommand(app).handle({ connection: "fake", sleep: "0", once: true });
+
+    expect(seen).toEqual(["processing", "released"]);
+    expect(released?.queued.id).toBe("4");
+    // The delay the driver was asked for, which on a FIFO process is also
+    // how long the whole process pauses.
+    expect(released?.delaySeconds).toBe(30);
+  });
+
+  /**
+   * The other release path: an ordinary thrown error with attempts still
+   * remaining is retried by releasing, so it closes the attempt the same
+   * way. `JobFailed` is reserved for the attempt that exhausts the budget.
+   */
+  it("dispatches JobReleased when a retryable failure is rescheduled", async () => {
+    class FlakyJob extends Job {
+      maxAttempts = 3;
+      handle(): void {
+        throw new Error("transient");
+      }
+      backoff(): number {
+        return 12;
+      }
+    }
+    const registry = new JobRegistry();
+    registry.register("flaky", FlakyJob);
+
+    const job: QueuedJob = { id: "5", jobClass: "flaky", state: { maxAttempts: 3 }, attempts: 0 };
+    const driver = new FakeDriver([job]);
+    const app = buildApp(driver, registry);
+
+    const dispatcher = new EventDispatcher(app);
+    let released: JobReleased | undefined;
+    let failed: JobFailed | undefined;
+    dispatcher.listen("JobReleased", (e) => {
+      released = e as JobReleased;
+    });
+    dispatcher.listen("JobFailed", (e) => {
+      failed = e as JobFailed;
+    });
+    app.instance(EVENTS_TOKEN, dispatcher);
+
+    await new QueueWorkCommand(app).handle({ connection: "fake", sleep: "0", once: true });
+
+    expect(released?.queued.id).toBe("5");
+    expect(released?.delaySeconds).toBe(12);
+    // Attempts remain, so this is not a failure yet.
+    expect(failed).toBeUndefined();
+  });
+
+  /** The attempt that exhausts the budget fails; it is not released. */
+  it("dispatches JobFailed, not JobReleased, once a released job runs out of attempts", async () => {
+    class GatedJob extends Job {
+      maxAttempts = 3;
+      middleware(): JobMiddleware[] {
+        return [
+          {
+            async handle(): Promise<void> {
+              throw new ReleaseJobError(5);
+            },
+          },
+        ];
+      }
+      handle(): void {}
+    }
+    const registry = new JobRegistry();
+    registry.register("gated-once", GatedJob);
+
+    // Already on the last attempt, so releasing again would mean never
+    // running: the release has to become a visible failure instead.
+    const job: QueuedJob = {
+      id: "6",
+      jobClass: "gated-once",
+      state: { maxAttempts: 3 },
+      attempts: 2,
+    };
+    const driver = new FakeDriver([job]);
+    const app = buildApp(driver, registry);
+
+    const dispatcher = new EventDispatcher(app);
+    const seen: string[] = [];
+    dispatcher.listen("JobReleased", () => void seen.push("released"));
+    dispatcher.listen("JobFailed", () => void seen.push("failed"));
+    app.instance(EVENTS_TOKEN, dispatcher);
+
+    await new QueueWorkCommand(app).handle({ connection: "fake", sleep: "0", once: true });
+
+    expect(seen).toEqual(["failed"]);
   });
 
   it("a throwing lifecycle listener does not derail the worker (job still completes)", async () => {

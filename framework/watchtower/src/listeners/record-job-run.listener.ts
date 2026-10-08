@@ -5,6 +5,7 @@ import {
   JobFailed,
   JobProcessed,
   JobProcessing,
+  JobReleased,
   QUEUED_LISTENER_JOB,
   QUEUED_MAIL_JOB,
   type QueueManager,
@@ -17,8 +18,8 @@ import type { JobRunStatus } from "../models/watchtower-job-run.model.js";
 import { WATCHTOWER_TOKEN } from "../tokens.js";
 import type { WatchtowerManager } from "../watchtower-manager.js";
 
-/** Any of the three queue lifecycle events. */
-type LifecycleEvent = JobProcessing | JobProcessed | JobFailed;
+/** Any of the queue lifecycle events. */
+type LifecycleEvent = JobProcessing | JobProcessed | JobFailed | JobReleased;
 
 /**
  * Job names that are never recorded, regardless of configuration.
@@ -145,6 +146,9 @@ export class RecordJobRunListener implements Listener<LifecycleEvent> {
       this.startedAt.delete(key);
     }
 
+    // Anything but `JobProcessing` ends the attempt, a release included:
+    // the retry is a separate attempt with its own row, so this one is
+    // over and needs a `finished_at` or it reads as still running.
     const finished = event instanceof JobProcessing ? null : now;
 
     return {
@@ -172,6 +176,10 @@ function statusFor(event: LifecycleEvent): JobRunStatus {
 
   if (event instanceof JobFailed) {
     return "failed";
+  }
+
+  if (event instanceof JobReleased) {
+    return "released";
   }
 
   return "running";

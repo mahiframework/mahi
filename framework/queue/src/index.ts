@@ -58,7 +58,7 @@ export { QUEUE_RESTART_KEY, restartSignalledAt, signalRestart } from "./restart-
 export { supportsFailedJobs } from "./failed-job-repository.js";
 export type { FailedJobRepository, FailedJobRecord } from "./failed-job-repository.js";
 
-export { JobProcessing, JobProcessed, JobFailed } from "./job-events.js";
+export { JobProcessing, JobProcessed, JobFailed, JobReleased } from "./job-events.js";
 
 export { Bus } from "./bus-facade.js";
 

@@ -11,6 +11,7 @@ import {
   JobFailed,
   JobProcessed,
   JobProcessing,
+  JobReleased,
   type JobClass,
   type QueueManager,
 } from "@mahiframework/queue";
@@ -176,6 +177,12 @@ export class WatchtowerServiceProvider extends ServiceProvider {
       [JobProcessing, RecordJobRunListener],
       [JobProcessed, RecordJobRunListener],
       [JobFailed, RecordJobRunListener],
+      // A released attempt is terminal for its row. Without this the
+      // `running` row it opened is never closed, so a job that releases
+      // (every FIFO deferral, every retryable failure) leaves a row
+      // in progress forever and the dashboard's in-flight count only
+      // ever climbs.
+      [JobReleased, RecordJobRunListener],
     ] as const;
   }
 

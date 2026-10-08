@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { JobFailed, JobProcessed, JobProcessing, type QueuedJob } from "@mahiframework/queue";
+import {
+  JobFailed,
+  JobProcessed,
+  JobProcessing,
+  JobReleased,
+  type QueuedJob,
+} from "@mahiframework/queue";
 import { WatchtowerJobRun } from "../src/models/watchtower-job-run.model.js";
 import { WatchtowerJobType } from "../src/models/watchtower-job-type.model.js";
 import { RunRecorder, isTerminal, type JobRunObservation } from "../src/run-recorder.js";
@@ -325,6 +331,40 @@ describe("RecordJobRunListener", () => {
 
     expect(runs).toHaveLength(1);
     expect(runs[0]?.status).toBe("completed");
+    expect(runs[0]?.duration_ms).not.toBeNull();
+  });
+
+  /**
+   * A released attempt is over: the retry is a separate attempt with its
+   * own row. Recording it closes the `running` row the start opened —
+   * without that, every FIFO deferral and every retryable failure leaves
+   * a row in progress forever and the dashboard's in-flight count only
+   * ever climbs.
+   *
+   * Dispatched through the event dispatcher rather than by calling
+   * `handle()`, so the provider's `listeners()` registration is part of
+   * what is under test: the listener handling the event is worth nothing
+   * if nothing routes the event to it. The harness has no
+   * `EventsServiceProvider`, so the hook is wired here the same way that
+   * provider's `boot()` does it.
+   */
+  it("closes the attempt's row when it is released rather than finished", async () => {
+    await bootWith();
+
+    for (const [event, listener] of new WatchtowerServiceProvider(harness.app).listeners()) {
+      (harness.events.listen as (a: unknown, b: unknown) => void)(event, listener);
+    }
+
+    const job = queued();
+
+    await harness.events.dispatch(new JobProcessing("watchtower", fakeJob, job));
+    await harness.events.dispatch(new JobReleased("watchtower", fakeJob, job, 20));
+
+    const runs = (await WatchtowerJobRun.query().get()).all();
+
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.status).toBe("released");
+    expect(runs[0]?.finished_at).not.toBeNull();
     expect(runs[0]?.duration_ms).not.toBeNull();
   });
 
