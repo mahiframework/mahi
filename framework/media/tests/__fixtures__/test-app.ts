@@ -23,6 +23,7 @@ import { belongsToMedia } from "../../src/builders/belongs-to-media.js";
 import { hasManyMedia } from "../../src/builders/has-many-media.js";
 import { hasOneMedia } from "../../src/builders/has-one-media.js";
 import { MediaServiceProvider } from "../../src/media-service-provider.js";
+import { resetMediaReferences } from "../../src/references.js";
 import { MediaManager } from "../../src/media-manager.js";
 import { FakeImageDriver } from "../../src/image/fake-image-driver.js";
 import { ImageManager } from "../../src/image/image-manager.js";
@@ -86,6 +87,7 @@ export class User extends Model<UserAttributes>()({
 export interface TenantAttributes {
   id: string;
   name: string;
+  banner_id: bigint | null;
 }
 
 export class Tenant extends Model<TenantAttributes>()({
@@ -96,6 +98,16 @@ export class Tenant extends Model<TenantAttributes>()({
 }) {
   logo() {
     return hasOneMedia(this).collection("logo");
+  }
+
+  /**
+   * A second table holding a `media.id`, so "one row referenced from two
+   * registered columns" is exercised rather than assumed — that is the
+   * shape a content-addressed cache takes, and the prune sweep has to
+   * keep the row for either referent.
+   */
+  banner() {
+    return belongsToMedia(this, "banner_id");
   }
 
   /** A string-keyed owner holding many files, for the text model_id. */
@@ -199,6 +211,7 @@ export async function createHarness(config: MediaConfig = {}): Promise<Harness> 
   await Schema.create("tenants", (table) => {
     table.string("id").primary();
     table.string("name");
+    table.bigInteger("banner_id").nullable();
   });
 
   return {
@@ -212,9 +225,10 @@ export async function createHarness(config: MediaConfig = {}): Promise<Harness> 
     disk,
     publicDisk,
     cleanup: async () => {
-      // The morph map is process-global, not container-bound, so a test
-      // that registered one would leak into the next file.
+      // Both registries are process-global rather than container-bound,
+      // so a test that registered either would leak into the next file.
       Relation.resetMorphMap();
+      resetMediaReferences();
       clearCurrentApp();
       await rm(root, { recursive: true, force: true });
     },
@@ -234,7 +248,7 @@ export async function makeUser(email = `user${nextKey}@example.com`): Promise<Us
 export async function makeTenant(name = `tenant${nextKey}`): Promise<Tenant> {
   const id = `11111111-1111-4111-8111-${String(nextKey++).padStart(12, "0")}`;
 
-  return (await Tenant.create({ id, name })) as Tenant;
+  return (await Tenant.create({ id, name, banner_id: null })) as Tenant;
 }
 
 /**

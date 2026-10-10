@@ -11,21 +11,24 @@ import { Schema, type Migration, type Blueprint } from "@mahiframework/database"
  * the OWNER's table (`users.avatar_id`), so the media row records no
  * owner at all — the reference points the other way. A `hasManyMedia`
  * row fills both. The consequence worth knowing: a row reached only
- * through such a foreign key cannot be found by owner, and `media:prune`
- * sweeps it from the file side instead.
+ * through such a foreign key cannot be found by owner, so `media:prune`
+ * can only reclaim it once the app has declared the column with
+ * `registerMediaReference()`. Undeclared, the row and its bytes outlive
+ * the owner permanently — the file sweep cannot help, since the row
+ * still exists and its path is therefore still known.
  *
- * `model_id` is TEXT, not `bigInteger`, and this is the one place the
- * schema diverges from `permissions`. That table's `model_id` is the
+ * `model_id` is TEXT, not a typed key column, and this is the one place
+ * the schema diverges from `permissions`. That table's `model_id` is the
  * local side of a `morphToMany` pivot, and `buildPivotQuery()` binds the
  * local key value RAW — a `bigint` against a `varchar` makes Postgres
- * raise `operator does not exist` — so it has no choice but
- * `bigInteger`, and it documents integer-keyed assignees as a hard
- * limit. Nothing here does that. This column is only ever read back by
- * equality through `morphMany` eager loading, which stringifies both
- * sides, so text holds every key type losslessly and ANY model can own
- * media regardless of how it keys. A multipurpose media package has no
- * business restricting that. Same column and same reasoning as
- * `notifications.notifiable_id`.
+ * raise `operator does not exist` — so it has no choice but to match the
+ * key's type exactly, which costs it one key type per application.
+ * Nothing here does that. This column is only ever read back by equality
+ * through `morphMany` eager loading, which stringifies both sides, so
+ * text holds every key type losslessly and ANY model can own media
+ * regardless of how it keys — including two models in one app that key
+ * differently. A multipurpose media package has no business restricting
+ * that. Same column and same reasoning as `notifications.notifiable_id`.
  *
  * NO FOREIGN KEYS. A polymorphic `model_type`/`model_id` pair cannot
  * have one, and the app-owned table on the other side of a

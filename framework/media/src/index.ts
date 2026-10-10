@@ -8,6 +8,12 @@ export type { MediaFileAttributes } from "./models/media-file.model.js";
 export { mediaModels, useMediaModels } from "./models/registry.js";
 export type { MediaModels } from "./models/registry.js";
 
+// App-declared foreign keys pointing at `media.id`. The only way
+// `media:prune` can reach a `belongsToMedia` row, since the tables
+// holding those keys belong to the app.
+export { mediaReferences, registerMediaReference, resetMediaReferences } from "./references.js";
+export type { MediaReference } from "./references.js";
+
 // The write side: fluent per-relation builders, declared as METHODS on
 // the owning model. See `has-many-media.ts` for why methods and not
 // fields or `static relationships`.

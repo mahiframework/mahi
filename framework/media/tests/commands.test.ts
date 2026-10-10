@@ -3,8 +3,16 @@ import { Relation } from "@mahiframework/database";
 import { MediaCheckCommand } from "../src/commands/media-check.js";
 import { MediaPruneCommand } from "../src/commands/media-prune.js";
 import { MediaFile } from "../src/models/media-file.model.js";
+import { registerMediaReference } from "../src/references.js";
 import * as bytes from "./__fixtures__/bytes.js";
-import { createHarness, makeUser, Tenant, User, type Harness } from "./__fixtures__/test-app.js";
+import {
+  createHarness,
+  makeTenant,
+  makeUser,
+  Tenant,
+  User,
+  type Harness,
+} from "./__fixtures__/test-app.js";
 
 let harness: Harness;
 
@@ -89,6 +97,120 @@ describe("media:prune", () => {
     }
 
     expect(await MediaFile.find(avatar.id)).toBeDefined();
+  });
+
+  it("deletes a belongsToMedia row once nothing references it", async () => {
+    // Neither of the other sweeps can reach this row: it records no
+    // owner, and its file is not an orphan because the row still exists.
+    // The registered column is what makes "referenced by nothing"
+    // answerable at all.
+    registerMediaReference({ table: "users", column: "avatar_id" });
+
+    const user = await makeUser();
+    const avatar = await user.avatar().set(bytes.PNG);
+
+    await User.delete(user.id);
+
+    const logs = captureLogs();
+
+    try {
+      await new MediaPruneCommand(harness.app).handle();
+    } finally {
+      logs.restore();
+    }
+
+    expect(await MediaFile.find(avatar.id)).toBeUndefined();
+    await harness.disk.assertMissing(avatar.path);
+  });
+
+  it("keeps a belongsToMedia row its owner still references", async () => {
+    registerMediaReference({ table: "users", column: "avatar_id" });
+
+    const user = await makeUser();
+    const avatar = await user.avatar().set(bytes.PNG);
+
+    const logs = captureLogs();
+
+    try {
+      await new MediaPruneCommand(harness.app).handle();
+    } finally {
+      logs.restore();
+    }
+
+    expect(await MediaFile.find(avatar.id)).toBeDefined();
+    await harness.disk.assertExists(avatar.path);
+  });
+
+  it("keeps a row two registered columns reference, when one lets go", async () => {
+    // One stored file shared by many records is a legitimate shape, and
+    // the sweep has to keep the row for whichever referent remains.
+    registerMediaReference({ table: "users", column: "avatar_id" });
+    registerMediaReference({ table: "tenants", column: "banner_id" });
+
+    const user = await makeUser();
+    const tenant = await makeTenant();
+    const shared = await user.avatar().set(bytes.PNG);
+
+    tenant.banner_id = shared.id;
+    await tenant.save();
+
+    await User.delete(user.id);
+
+    const logs = captureLogs();
+
+    try {
+      await new MediaPruneCommand(harness.app).handle();
+    } finally {
+      logs.restore();
+    }
+
+    expect(await MediaFile.find(shared.id)).toBeDefined();
+    await harness.disk.assertExists(shared.path);
+  });
+
+  it("skips the reference sweep entirely when nothing is registered", async () => {
+    // The degenerate query — "referenced by none of zero tables" —
+    // selects every avatar in the application, so the no-op has to be
+    // the behaviour rather than a comment.
+    const user = await makeUser();
+    const avatar = await user.avatar().set(bytes.PNG);
+
+    await User.delete(user.id);
+
+    const logs = captureLogs();
+
+    try {
+      await new MediaPruneCommand(harness.app).handle();
+
+      expect(logs.info()).toContain("skipped its reference sweep");
+    } finally {
+      logs.restore();
+    }
+
+    expect(await MediaFile.find(avatar.id)).toBeDefined();
+    await harness.disk.assertExists(avatar.path);
+  });
+
+  it("reports unreferenced rows without deleting under --dry-run", async () => {
+    registerMediaReference({ table: "users", column: "avatar_id" });
+
+    const user = await makeUser();
+    const avatar = await user.avatar().set(bytes.PNG);
+
+    await User.delete(user.id);
+
+    const logs = captureLogs();
+
+    try {
+      await new MediaPruneCommand(harness.app).handle({ dryRun: true });
+
+      expect(logs.info()).toContain("would delete 1 unreferenced row");
+    } finally {
+      logs.restore();
+    }
+
+    expect(await MediaFile.find(avatar.id)).toBeDefined();
+    await harness.disk.assertExists(avatar.path);
   });
 
   it("reports without deleting under --dry-run", async () => {

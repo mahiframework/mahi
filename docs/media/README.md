@@ -85,8 +85,31 @@ migration to write:
 table.bigInteger("avatar_id").nullable();
 ```
 
+and a declaration, which is your provider to write:
+
+```ts
+import { registerMediaReference } from "@mahiframework/media";
+
+registerMediaReference({ table: "users", column: "avatar_id" });
+```
+
+**Declare it.** A `belongsToMedia` row records no owner — the reference
+points the other way — so `media:prune` has no way to tell "still
+somebody's avatar" from "the user was deleted and this is garbage"
+unless it knows which columns to ask. Undeclared, it keeps both forever,
+bytes included. See [`media:prune`](#commands).
+
 Choose it when you want a real foreign key. Choose `hasOneMedia` when
 you would rather not add a column.
+
+### Sharing one row
+
+Two owners may point at one media row — assign the same id to both
+columns — and `media:prune` keeps it for as long as either column does.
+What is **not** safe is `belongsToMedia().delete()`: it deletes the
+referenced row outright, taking the file with it, and the second owner
+is left pointing at nothing. Null the owner's column directly instead,
+and let the prune sweep decide when the row is genuinely unreferenced.
 
 ### Configuration
 
@@ -512,13 +535,33 @@ on the model, so a relation write, a cascade and a direct
 ./artisan media:check --verify
 ```
 
-`media:prune` deletes rows whose owner no longer exists, and under
-`--files` sweeps bytes with no row. Nothing cascades into this table —
-`media.model_id` carries no foreign key, because it holds the key of
-*any* model and the app owns those tables — so this command is the other
-half of that trade. It is **not** scheduled automatically: deleting a
-user's uploads is not a decision a package should make on a timer, and
-the file sweep lists an entire disk.
+`media:prune` runs three sweeps, because there are three ways to make an
+orphan:
+
+| Row state | Reached by |
+|---|---|
+| morph columns set, owner gone | the owner sweep |
+| morph columns null, no registered column points at it | the reference sweep |
+| bytes on a disk with no row at all | the file sweep, under `--files` |
+
+Nothing cascades into this table — `media.model_id` carries no foreign
+key, because it holds the key of *any* model and the app owns those
+tables — so this command is the other half of that trade. It is **not**
+scheduled automatically: deleting a user's uploads is not a decision a
+package should make on a timer, and the file sweep lists an entire disk.
+
+The reference sweep covers `belongsToMedia`, and it **does nothing until
+you register a column**:
+
+```ts
+registerMediaReference({ table: "users", column: "avatar_id" });
+```
+
+With nothing registered the question it asks — "which rows does no
+registered column point at" — answers *every* null-owner row in the
+table, which is every avatar in the application. So it refuses: no
+deletes, and a log line naming the fix. An app that has not declared its
+columns keeps its avatars and leaks the dead ones.
 
 `media:check` verifies that every row's file is present, that every
 `model_type` resolves to a registered model, and under `--verify` that
@@ -546,14 +589,15 @@ on it.
 **`model_id` is text.** It holds the key of *any* model, and two models
 in one application can key differently — an auto-increment `User`, a
 UUID `Tenant`. Only text holds both.
-(`@mahiframework/permissions` makes the same column a `bigint` and
-restricts role-holders to integer-keyed models; it has no choice,
-because its column is a pivot key bound raw into SQL. Nothing here does
-that.)
+(`@mahiframework/permissions` types the same column instead, choosing
+`bigInteger` or `uuid` from config, because its column is a pivot key
+bound raw into SQL and so must match the key exactly. The cost there is
+one key type per application; nothing here needs that.)
 
 **Both morph columns are nullable.** A file referenced by a foreign key
 on the owner's own table records no owner, because the reference points
-the other way.
+the other way. Such a row is only reclaimable by `media:prune` once the
+referencing column has been declared with `registerMediaReference()`.
 
 ## Configuration
 
@@ -642,6 +686,14 @@ Call it from a provider's `register()`. See
 - **A builder is per-call.** `user.photos()` rebuilds its configuration
   each time; it is not a cached relation, and `with()` does not populate
   it. Use `mediaRelation()` for eager loading.
+- **`belongsToMedia` cleanup is opt-in.** A row referenced only by a key
+  on the owner's table is invisible to `media:prune` until the column is
+  declared with `registerMediaReference()`. Nothing warns at boot; the
+  prune command reports it when it finds such rows.
+- **No reference counting.** `belongsToMedia().delete()` deletes the
+  referenced row whether or not something else points at it. Sharing a
+  row works, but unpointing a shared one means writing the owner's
+  column yourself.
 
 ## Related
 

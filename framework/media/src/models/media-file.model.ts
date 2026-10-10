@@ -24,7 +24,9 @@ import type { MediaManager } from "../media-manager.js";
  * owner's own table (`users.avatar_id`, set by `belongsToMedia`). In the
  * second case BOTH morph columns stay null, because the owner is the one
  * holding the reference. That is why they are nullable, and why a row
- * reached only through such a key cannot be found by owner.
+ * reached only through such a key cannot be found by owner — the app
+ * declares the column with `registerMediaReference()` so `media:prune`
+ * can reach it.
  */
 export interface MediaFileAttributes {
   /** An auto-increment key, hence `bigint`: 64-bit on every engine. */
@@ -33,17 +35,22 @@ export interface MediaFileAttributes {
   /**
    * The owning model's `morphAlias()`, or null for a `belongsToMedia`
    * row whose owner holds the foreign key instead.
+   *
+   * Null here means `media:prune` cannot find the row by owner, so
+   * reclaiming it depends on the app having declared the referencing
+   * column with `registerMediaReference()`.
    */
   model_type: string | null;
 
   /**
    * The owning model's key, stringified.
    *
-   * TEXT, not `bigInteger`, which is the one place this schema diverges
-   * from `permissions`. There `model_id` is the local side of a
-   * `morphToMany` pivot whose key is bound raw, so a `bigint` against a
-   * `varchar` makes Postgres raise `operator does not exist` — it has no
-   * choice. Nothing here does that: the column is only read back by
+   * TEXT, not a typed key column, which is the one place this schema
+   * diverges from `permissions`. There `model_id` is the local side of a
+   * `morphToMany` pivot whose key is bound raw, so it has to match the
+   * key's type exactly — a `bigint` against a `varchar` makes Postgres
+   * raise `operator does not exist` — and the cost is one key type per
+   * application. Nothing here does that: the column is only read back by
    * equality through `morphMany` eager loading, which stringifies both
    * sides. Text therefore holds every key type losslessly and ANY model
    * can own media, which is what a multipurpose package owes its

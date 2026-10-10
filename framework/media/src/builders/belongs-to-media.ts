@@ -18,14 +18,30 @@ import { MediaCollection, type AddableMedia } from "./media-collection.js";
  *
  * The owner holds the reference, so the media row records NO owner —
  * both `model_type` and `model_id` stay null, which is why the migration
- * makes them nullable. The consequence worth knowing: a row reached only
- * this way cannot be found by owner, so `media:prune` sweeps it from the
- * file side rather than the orphan-row side.
+ * makes them nullable.
  *
  * Needs a column on the owner's table, which is the app's migration to
  * write:
  *
  *   table.bigInteger("avatar_id").nullable();
+ *
+ * AND A DECLARATION, which is the app's provider to write:
+ *
+ *   registerMediaReference({ table: "users", column: "avatar_id" });
+ *
+ * That is not optional housekeeping. A row reached only through such a
+ * key cannot be found by owner, so without the declaration `media:prune`
+ * has no way to tell "still somebody's avatar" from "the user was
+ * deleted and this is garbage" — and it keeps both, forever, bytes
+ * included. The file sweep does not cover it: the row exists, so its
+ * path is known, so its file is not an orphan.
+ *
+ * SHARING ONE ROW BETWEEN TWO OWNERS is expressible — assign the same id
+ * to both columns — and the prune sweep handles it, since a row
+ * referenced from either registered column is kept. `delete()` below
+ * does NOT: it deletes the referenced row outright, taking the file with
+ * it. A shared row must be unpointed by writing the owner's column
+ * directly rather than through the builder.
  */
 export class BelongsToMedia extends MediaCollection<BelongsToMedia> {
   constructor(
@@ -87,6 +103,11 @@ export class BelongsToMedia extends MediaCollection<BelongsToMedia> {
    * The key is cleared BEFORE the row goes, so a foreign key constraint
    * on the owner's column — which an app may well have added — is never
    * briefly violated.
+   *
+   * ASSUMES THE REFERENCE IS EXCLUSIVE. The row is deleted outright, so
+   * a second owner pointing at the same id loses its file. An app that
+   * shares rows nulls the column itself and lets `media:prune`'s
+   * reference sweep decide when the row is genuinely unreferenced.
    */
   async delete(): Promise<void> {
     const existing = await this.get();

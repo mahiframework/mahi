@@ -1,25 +1,35 @@
 import type { Command as CommanderCommand } from "commander";
 import { Command } from "@mahiframework/cli";
-import { Relation } from "@mahiframework/database";
+import { DB, Relation } from "@mahiframework/database";
 import type { MediaManager } from "../media-manager.js";
 import { mediaModels } from "../models/registry.js";
+import { mediaReferences } from "../references.js";
 import { MEDIA_TOKEN } from "../tokens.js";
 
 /** How many rows or files one invocation will remove before stopping. */
 const DEFAULT_LIMIT = 10_000;
 
 /**
- * Delete media whose owner is gone, and files with no row.
+ * Delete media nothing refers to any more, and files with no row.
  *
- * TWO KINDS OF ORPHAN, because there are two ways to make one.
+ * THREE KINDS OF ORPHAN, because there are three ways to make one.
  *
- * An orphaned ROW is one whose `model_type`/`model_id` names a record
- * that no longer exists. Nothing in the framework cascades deletes into
- * this table — `media.model_id` carries no foreign key, because it holds
- * the key of any model and the app owns those tables — so deleting a
- * `Post` leaves its media behind. That is the right trade (a foreign key
- * here would mean this package naming the app's tables) and this command
- * is the other half of it.
+ * An orphaned OWNED ROW is one whose `model_type`/`model_id` names a
+ * record that no longer exists. Nothing in the framework cascades
+ * deletes into this table — `media.model_id` carries no foreign key,
+ * because it holds the key of any model and the app owns those tables —
+ * so deleting a `Post` leaves its media behind. That is the right trade
+ * (a foreign key here would mean this package naming the app's tables)
+ * and this command is the other half of it.
+ *
+ * An orphaned REFERENCED ROW is a `belongsToMedia` row — both morph
+ * columns null, the foreign key on the owner's own table — that no
+ * registered reference column points at any more. Neither of the other
+ * two sweeps can see it: it survives the owned sweep for recording no
+ * owner, and its file survives the file sweep because the row still
+ * exists and so its path is still known. Answering "is this row
+ * referenced" means querying tables this package does not own, which is
+ * what `registerMediaReference()` supplies.
  *
  * An orphaned FILE is bytes on a disk with no row pointing at them. The
  * upload path writes the file before inserting the row, deliberately: a
@@ -33,7 +43,7 @@ const DEFAULT_LIMIT = 10_000;
  */
 export class MediaPruneCommand extends Command {
   signature = "media:prune";
-  description = "Delete media rows whose owner is gone, and files with no row.";
+  description = "Delete media rows nothing refers to, and files with no row.";
 
   configure(program: CommanderCommand): void {
     program.option("--files", "Also sweep files on the disk with no media row", false);
@@ -57,6 +67,7 @@ export class MediaPruneCommand extends Command {
     const dryRun = options.dryRun === true;
 
     await this.pruneRows(limit, dryRun);
+    await this.pruneUnreferencedRows(limit, dryRun);
 
     if (options.files === true) {
       await this.pruneFiles(options.disk, limit, dryRun);
@@ -139,16 +150,108 @@ export class MediaPruneCommand extends Command {
       return;
     }
 
-    // One at a time, through the model, so each row's `deleting` hook
-    // runs and deletes its file. A bulk `whereIn().delete()` would be
-    // one statement and would leave every file behind.
-    for (const id of doomed) {
+    await this.deleteRows(doomed);
+
+    this.app.logger.info(`media:prune deleted ${doomed.length} orphaned row(s) and their files.`);
+  }
+
+  /**
+   * Delete `belongsToMedia` rows that no registered reference points at.
+   *
+   * The morph columns are null for these rows by design — the owner
+   * holds the key — so `pruneRows()` filters them out before it looks
+   * for an owner, and must: treating "no owner recorded" as "owner gone"
+   * would delete every avatar in the application. The file sweep cannot
+   * reach them either, because the row exists and so its path is known.
+   * This is the only sweep that can.
+   *
+   * 🚨 WITH NO REFERENCES REGISTERED, THIS DOES NOTHING. The degenerate
+   * query — "referenced by none of zero tables" — selects every
+   * null-morph row in the table, which is every avatar in the
+   * application. An app that has not called `registerMediaReference()`,
+   * or a command that loaded fewer providers than the app does, gets a
+   * no-op and a log line saying why. Same stance as `pruneRows()` on an
+   * unresolvable `model_type`, and for the same reason.
+   *
+   * A row referenced from two registered columns is kept by either, so a
+   * deliberately shared row — one stored file, many records — survives.
+   */
+  private async pruneUnreferencedRows(limit: number, dryRun: boolean): Promise<void> {
+    const candidates = (
+      await mediaModels.media.query().whereNull("model_type").whereNull("model_id").get()
+    ).all();
+
+    if (candidates.length === 0) {
+      return;
+    }
+
+    const references = mediaReferences();
+
+    if (references.length === 0) {
+      this.app.logger.info(
+        `media:prune skipped its reference sweep: ${candidates.length} row(s) record no owner ` +
+          `(the belongsToMedia case), and no reference columns are registered, so whether ` +
+          `anything still points at them cannot be known. Call registerMediaReference({ ` +
+          `table: "users", column: "avatar_id" }) from the owning model's provider.`,
+      );
+
+      return;
+    }
+
+    const referenced = new Set<string>();
+
+    for (const reference of references) {
+      const rows = await DB.table<Record<string, unknown>>(reference.table, reference.connection)
+        .select(reference.column)
+        .whereNotNull(reference.column)
+        .get();
+
+      for (const row of rows) {
+        const key = row[reference.column];
+
+        if (key !== null && key !== undefined && key !== "") {
+          referenced.add(String(key));
+        }
+      }
+    }
+
+    const doomed = candidates
+      .filter((row) => !referenced.has(String(row.id)))
+      .slice(0, limit)
+      .map((row) => row.id);
+
+    if (doomed.length === 0) {
+      this.app.logger.info("media:prune found no unreferenced rows.");
+
+      return;
+    }
+
+    if (dryRun) {
+      this.app.logger.info(`media:prune would delete ${doomed.length} unreferenced row(s).`);
+
+      return;
+    }
+
+    await this.deleteRows(doomed);
+
+    this.app.logger.info(
+      `media:prune deleted ${doomed.length} unreferenced row(s) and their files.`,
+    );
+  }
+
+  /**
+   * Delete media rows by id, one at a time through the model.
+   *
+   * Per row, not a bulk `whereIn().delete()`, so each row's `deleting`
+   * hook runs and deletes its file. The bulk form would be one statement
+   * and would leave every file behind.
+   */
+  private async deleteRows(ids: readonly bigint[]): Promise<void> {
+    for (const id of ids) {
       const row = await mediaModels.media.find(id);
 
       await row?.deleteInstance();
     }
-
-    this.app.logger.info(`media:prune deleted ${doomed.length} orphaned row(s) and their files.`);
   }
 
   /**
