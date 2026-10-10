@@ -1,6 +1,5 @@
 import { morphToMany } from "@mahiframework/database";
-import { Permission } from "./models/permission.model.js";
-import { Role } from "./models/role.model.js";
+import { permissionModels } from "./models/registry.js";
 
 /**
  * The `roles` relation, for an app model that wants to eager-load them.
@@ -33,9 +32,15 @@ import { Role } from "./models/role.model.js";
  * of what `morphedByMany` would. Note that `morphAlias()` falls back to
  * the table name, so an app without a `Relation.morphMap()` entry has
  * made its assignment rows depend on its table name.
+ *
+ * Resolves `permissionModels.role` inside the thunk rather than closing
+ * over the class, so an app that calls `usePermissionModels()` from a
+ * provider's `register()` gets its subclass here too — the relation is
+ * declared as a `static relationships` field and so is built at class
+ * definition time, which is before any provider has run.
  */
 export function rolesRelation() {
-  return morphToMany(() => Role, {
+  return morphToMany(() => permissionModels.role, {
     pivotTable: "model_has_roles",
     morphType: "model_type",
     morphId: "model_id",
@@ -54,7 +59,7 @@ export function rolesRelation() {
  * from the cached map rather than a join.
  */
 export function permissionsRelation() {
-  return morphToMany(() => Permission, {
+  return morphToMany(() => permissionModels.permission, {
     pivotTable: "model_has_permissions",
     morphType: "model_type",
     morphId: "model_id",

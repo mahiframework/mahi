@@ -6,6 +6,7 @@ import {
   assigneeCacheKey,
   resolveAssignee,
   type Assignee,
+  type AssigneeKey,
   type ResolvedAssignee,
 } from "./assignee.js";
 import {
@@ -25,13 +26,14 @@ import {
   type SerializedPermissionMap,
 } from "./permission-map.js";
 import { Permission } from "./models/permission.model.js";
+import { permissionModels } from "./models/registry.js";
 import { Role } from "./models/role.model.js";
 import {
   assignmentMemo,
   forgetMemoisedAssignments,
   type AssignmentRecord,
 } from "./request-cache.js";
-import type { ResolvedPermissionsConfig } from "./permissions-config.js";
+import type { AssigneeKeyType, ResolvedPermissionsConfig } from "./permissions-config.js";
 
 /** Options every name-addressed call accepts. */
 export interface GuardOption {
@@ -73,13 +75,14 @@ interface RolePermissionRow {
 interface ModelRoleRow {
   role_id: bigint;
   model_type: string;
-  model_id: bigint;
+  /** A `bigint` or a `string`, per `permissions.assigneeKey`. */
+  model_id: AssigneeKey;
 }
 
 interface ModelPermissionRow {
   permission_id: bigint;
   model_type: string;
-  model_id: bigint;
+  model_id: AssigneeKey;
 }
 
 /**
@@ -124,6 +127,17 @@ export class PermissionRegistrar {
     }
 
     return named;
+  }
+
+  /**
+   * The key type this install's assignment pivots are built for.
+   *
+   * Exposed because `permissions:check` validates stored `model_id`
+   * values against it, and because an app writing a data migration for
+   * a change of `assigneeKey` needs to know which direction it is going.
+   */
+  assigneeKeyType(): AssigneeKeyType {
+    return this.config.assigneeKey;
   }
 
   private defaultGuard(): string | null {
@@ -223,7 +237,7 @@ export class PermissionRegistrar {
       throw new DuplicateNameError("role", name, guard);
     }
 
-    const role = await Role.create({ name, guard_name: guard });
+    const role = (await permissionModels.role.create({ name, guard_name: guard })) as Role;
     await this.forgetCache();
 
     return role;
@@ -237,7 +251,10 @@ export class PermissionRegistrar {
       throw new DuplicateNameError("permission", name, guard);
     }
 
-    const permission = await Permission.create({ name, guard_name: guard });
+    const permission = (await permissionModels.permission.create({
+      name,
+      guard_name: guard,
+    })) as Permission;
     await this.forgetCache();
 
     return permission;
@@ -249,7 +266,7 @@ export class PermissionRegistrar {
     const existing = (await this.map()).roleByName.get(mapKey(guard, name));
 
     if (existing !== undefined) {
-      return (await Role.findOrFail(existing.id)) as Role;
+      return (await permissionModels.role.findOrFail(existing.id)) as Role;
     }
 
     return this.createRole(name, { guard });
@@ -261,7 +278,7 @@ export class PermissionRegistrar {
     const existing = (await this.map()).permissionByName.get(mapKey(guard, name));
 
     if (existing !== undefined) {
-      return (await Permission.findOrFail(existing.id)) as Permission;
+      return (await permissionModels.permission.findOrFail(existing.id)) as Permission;
     }
 
     return this.createPermission(name, { guard });
@@ -276,7 +293,7 @@ export class PermissionRegistrar {
       throw new RoleNotFoundError(name, guard);
     }
 
-    return (await Role.findOrFail(mapped.id)) as Role;
+    return (await permissionModels.role.findOrFail(mapped.id)) as Role;
   }
 
   /** The permission with this name, or `PermissionNotFoundError`. */
@@ -288,7 +305,7 @@ export class PermissionRegistrar {
       throw new PermissionNotFoundError(name, guard);
     }
 
-    return (await Permission.findOrFail(mapped.id)) as Permission;
+    return (await permissionModels.permission.findOrFail(mapped.id)) as Permission;
   }
 
   /**
@@ -297,14 +314,14 @@ export class PermissionRegistrar {
    */
   async deleteRole(role: RoleRef, options: GuardOption = {}): Promise<void> {
     const id = await this.roleId(role, options);
-    await Role.delete(id);
+    await permissionModels.role.delete(id);
     await this.forgetCache();
   }
 
   /** Delete a permission. Its assignments and role links cascade. */
   async deletePermission(permission: PermissionRef, options: GuardOption = {}): Promise<void> {
     const id = await this.permissionId(permission, options);
-    await Permission.delete(id);
+    await permissionModels.permission.delete(id);
     await this.forgetCache();
   }
 
@@ -390,7 +407,7 @@ export class PermissionRegistrar {
     roles: RoleRef | RoleRef[],
     options: GuardOption = {},
   ): Promise<void> {
-    const subject = resolveAssignee(assignee);
+    const subject = this.subject(assignee);
     const ids = await this.roleIds(roles, options);
     const current = await this.assignmentsFor(subject);
     const held = new Set(current.roleIds.map(String));
@@ -417,7 +434,7 @@ export class PermissionRegistrar {
     roles: RoleRef | RoleRef[],
     options: GuardOption = {},
   ): Promise<void> {
-    const subject = resolveAssignee(assignee);
+    const subject = this.subject(assignee);
     const ids = await this.roleIds(roles, options);
 
     if (ids.length === 0) {
@@ -438,7 +455,7 @@ export class PermissionRegistrar {
     roles: RoleRef | RoleRef[],
     options: GuardOption = {},
   ): Promise<void> {
-    const subject = resolveAssignee(assignee);
+    const subject = this.subject(assignee);
     const wanted = await this.roleIds(roles, options);
 
     await DB.transaction(async () => {
@@ -467,7 +484,7 @@ export class PermissionRegistrar {
     permissions: PermissionRef | PermissionRef[],
     options: GuardOption = {},
   ): Promise<void> {
-    const subject = resolveAssignee(assignee);
+    const subject = this.subject(assignee);
     const ids = await this.permissionIds(permissions, options);
     const current = await this.assignmentsFor(subject);
     const held = new Set(current.permissionIds.map(String));
@@ -501,7 +518,7 @@ export class PermissionRegistrar {
     permissions: PermissionRef | PermissionRef[],
     options: GuardOption = {},
   ): Promise<void> {
-    const subject = resolveAssignee(assignee);
+    const subject = this.subject(assignee);
     const ids = await this.permissionIds(permissions, options);
 
     if (ids.length === 0) {
@@ -522,7 +539,7 @@ export class PermissionRegistrar {
     permissions: PermissionRef | PermissionRef[],
     options: GuardOption = {},
   ): Promise<void> {
-    const subject = resolveAssignee(assignee);
+    const subject = this.subject(assignee);
     const wanted = await this.permissionIds(permissions, options);
 
     await DB.transaction(async () => {
@@ -646,7 +663,7 @@ export class PermissionRegistrar {
   async getRoleNames(assignee: Assignee, options: GuardOption = {}): Promise<Set<string>> {
     const guard = this.guardName(options);
     const map = await this.map();
-    const assignments = await this.assignmentsFor(resolveAssignee(assignee));
+    const assignments = await this.assignmentsFor(this.subject(assignee));
     const names = new Set<string>();
 
     for (const roleId of assignments.roleIds) {
@@ -670,7 +687,7 @@ export class PermissionRegistrar {
   ): Promise<Set<string>> {
     const guard = this.guardName(options);
     const map = await this.map();
-    const assignments = await this.assignmentsFor(resolveAssignee(assignee));
+    const assignments = await this.assignmentsFor(this.subject(assignee));
     const names = new Set<string>();
 
     for (const roleId of assignments.roleIds) {
@@ -696,7 +713,7 @@ export class PermissionRegistrar {
   async getDirectPermissions(assignee: Assignee, options: GuardOption = {}): Promise<Set<string>> {
     const guard = this.guardName(options);
     const map = await this.map();
-    const assignments = await this.assignmentsFor(resolveAssignee(assignee));
+    const assignments = await this.assignmentsFor(this.subject(assignee));
     const names = new Set<string>();
 
     for (const permissionId of assignments.permissionIds) {
@@ -725,6 +742,17 @@ export class PermissionRegistrar {
   }
 
   // ------------------------------------------------------------- internals
+
+  /**
+   * Resolve a subject, against this install's configured key type.
+   *
+   * Every public method funnels through here rather than calling
+   * `resolveAssignee()` directly, so the key check cannot be reached
+   * without the config that decides what it checks for.
+   */
+  private subject(assignee: Assignee): ResolvedAssignee {
+    return resolveAssignee(assignee, this.config.assigneeKey);
+  }
 
   /**
    * One subject's raw assignment ids, memoised per request.
@@ -793,6 +821,9 @@ export class PermissionRegistrar {
       return role;
     }
 
+    // The BASE class, not `permissionModels.role`: an app's subclass is
+    // still `instanceof Role`, so this accepts either, and the narrowing
+    // a concrete class gives is worth keeping.
     if (role instanceof Role) {
       return role.id;
     }
@@ -867,7 +898,7 @@ export class PermissionRegistrar {
       return;
     }
 
-    const connection = Role.resolveConnection();
+    const connection = permissionModels.role.resolveConnection();
 
     for (let index = 0; index < rows.length; index += INSERT_CHUNK) {
       await connection

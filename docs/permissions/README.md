@@ -4,8 +4,9 @@ Roles, permissions, and the cache that keeps checking them cheap. A port
 of the ideas in `spatie/laravel-permission`, adapted to this framework's
 gate and its lack of traits.
 
-A `Role` holds `Permission`s. Any integer-keyed model holds `Role`s and
-inherits their permissions, and may also hold a `Permission` directly.
+A `Role` holds `Permission`s. Any model holds `Role`s and inherits their
+permissions, and may also hold a `Permission` directly — keyed on a
+`bigint` by default, or on a uuid with one config line.
 
 ```ts
 import { Permissions } from "@mahiframework/permissions";
@@ -70,20 +71,38 @@ Then run the migration:
 
 ## Read this first: two hard limits
 
-**Only integer-keyed models can hold roles.** `model_has_roles.model_id`
-is a `bigInteger`, so a model keyed on a uuid or a string cannot be
-assigned a role or a permission. Attempting it throws
+**A role-holder's key type is fixed at migration time.** `assigneeKey`
+chooses it, and the default is `bigint`:
+
+```ts
+{ assigneeKey: "bigint" }   // model_has_roles.model_id is a bigInteger
+{ assigneeKey: "uuid" }     // ... a uuid, and keys are strings
+```
+
+An app whose models key on `uuidv7` — which is what
+[Models](../models/) recommends and `make:model --uuidv7` scaffolds —
+sets `uuid`. Assigning a key of the other type throws
 `UnsupportedAssigneeKeyError` rather than reaching SQL.
 
-This is a deliberate trade and the one place the schema diverges from
-`activity_logs` and `notifications`, which use text for their
-polymorphic id columns. Those tables are only read back by equality from
-code that already knows the type, so text (which holds every key type
-losslessly) costs them nothing. Here the column is the local side of a
-`morphToMany` pivot, and the relation builder binds the local key *raw* —
-a `bigint` against a `varchar` makes Postgres raise `operator does not
-exist`. Text would therefore have broken `with("roles")` and
-`whereHas("roles", ...)` entirely.
+The column is typed rather than text, which is the one place this schema
+diverges from `activity_logs` and `notifications`. Those tables are only
+read back by equality from code that already knows the type, so text
+(which holds every key type losslessly) costs them nothing. Here the
+column is the local side of a `morphToMany` pivot and the relation
+builder binds the local key *raw* — a `bigint` against a `varchar` makes
+Postgres raise `operator does not exist`, which would break
+`with("roles")` and `whereHas("roles", ...)` entirely. One setting
+drives both the column and the guard precisely so they cannot disagree.
+
+> [!WARNING]
+> **Changing `assigneeKey` after migrating is not a migration.** Nothing
+> rewrites existing rows, so they are left intact and unmatchable: the
+> column holds one type and every lookup now binds the other.
+> `permissions:check` detects it and exits non-zero. Decide before the
+> first migration, or migrate the column and the rows together.
+
+`role_id` and `permission_id` stay `bigInteger` either way — they
+reference this package's own tables, whose keys it assigns.
 
 **There are no wildcard permissions.** `posts.*` does not grant
 `posts.edit`. Names match exactly, consistent with the gate's own stance
@@ -106,6 +125,7 @@ import type { PermissionsConfig } from "@mahiframework/permissions";
 export function permissionsConfig(): PermissionsConfig {
   return {
     guard: "web",
+    assigneeKey: "bigint",
     cache: {
       key: "mahi.permissions",
       ttlSeconds: 86_400,
@@ -124,6 +144,7 @@ app.config.set("permissions", permissionsConfig());
 | Option | Default | Purpose |
 |---|---|---|
 | `guard` | `auth.default` | Guard stamped on new roles/permissions, and used by any check that doesn't name one |
+| `assigneeKey` | `"bigint"` | The key type of models that hold roles. `"uuid"` for a uuid-keyed app. Set it before migrating |
 | `cache.key` | `"mahi.permissions"` | The single key holding the whole map |
 | `cache.store` | the default store | A named cache store |
 | `cache.ttlSeconds` | `86400` | Backstop against a missed invalidation |
@@ -452,7 +473,7 @@ what the application currently *believes* rather than what the tables
 say — the more useful answer when the suspicion is a stale cache. Follow
 with `permissions:cache-reset` to compare.
 
-`permissions:check` exists because two things can rot silently:
+`permissions:check` exists because three things can rot silently:
 
 1. **A `model_type` naming no model.** Assignment rows store a morph
    alias, and `morphAlias()` falls back to the *table name* when no
@@ -462,6 +483,10 @@ with `permissions:cache-reset` to compare.
 2. **A `guard_name` naming no configured guard.** A role created under a
    guard later renamed in `config/auth.ts` can never satisfy a check
    again.
+3. **A `model_id` that is not the shape `assigneeKey` now says.**
+   Changing that setting after migrating leaves every stored assignment
+   intact and unmatchable; nothing rewrites the rows. Reported per table
+   with a count.
 
 It exits non-zero, so CI can gate on it. Which leads to the
 recommendation:
@@ -507,7 +532,42 @@ only on the package-owned side (`role_id`, `permission_id`), with
 `cascadeOnDelete`, so deleting a role takes its assignments with it.
 `model_id` carries no foreign key at all: `users` is app-owned, so the
 framework cannot assume its name, and the column holds the key of any
-assignable model.
+assignable model. Its *type* is `bigInteger` or `uuid`, per
+[`assigneeKey`](#read-this-first-two-hard-limits).
+
+## Using your own models
+
+Subclass `Role` or `Permission` to add methods, scopes or casts — Mahi's
+static finders are this-polymorphic, so `AppRole.find(id)` returns an
+`AppRole`. To make the **package's own** reads and writes produce your
+class, register it:
+
+```ts
+import { Role, usePermissionModels } from "@mahiframework/permissions";
+
+export class AppRole extends Role {
+  label(): string {
+    return Str.headline(this.name);
+  }
+}
+
+usePermissionModels({ role: AppRole });
+```
+
+Call it from a provider's `register()`, before `bootstrap()`. Calling it
+later is not wrong so much as partial: anything already read through the
+old class stays an instance of it.
+
+A **method**, not a getter. A model instance is handed out behind a proxy
+that resolves attribute reads, and it binds methods to that proxy but
+forwards a getter to the raw instance — so `this.name` inside a getter
+reads `undefined`.
+
+Overriding either class covers the registrar's reads and writes, the
+relation helpers, the cache-invalidation listener and the queue codec
+registration. It does **not** change the table names: both classes
+declare their table and the migration creates it. See
+[extending package models](../extending-models/) for adding columns.
 
 ## Related
 

@@ -3,8 +3,7 @@ import type { Listener } from "@mahiframework/events";
 import type { ModelLifecycleEvent } from "@mahiframework/database";
 import { PermissionRegistrar } from "../permission-registrar.js";
 import { PERMISSIONS_TOKEN } from "../tokens.js";
-import { Permission } from "../models/permission.model.js";
-import { Role } from "../models/role.model.js";
+import { permissionModels } from "../models/registry.js";
 
 /**
  * Forgets the cached role/permission map when a `Role` or `Permission`
@@ -40,11 +39,16 @@ export class InvalidatePermissionCacheListener implements Listener<ModelLifecycl
   constructor(private readonly app: Application) {}
 
   async handle(event: ModelLifecycleEvent): Promise<void> {
-    // Identity, not `morphAlias()`: an app may legitimately map `Role` to
-    // some other alias, and the question here is only whether the row
-    // that moved belongs to one of the two tables this cache is built
-    // from.
-    if (event.model !== (Role as never) && event.model !== (Permission as never)) {
+    // Identity against the REGISTERED classes, not `morphAlias()`: an
+    // app may legitimately map `Role` to some other alias, and the
+    // question here is only whether the row that moved belongs to one of
+    // the two tables this cache is built from. Read through the registry
+    // so an app's subclass is recognised — a write through `AppRole`
+    // invalidates the same cache a write through `Role` does.
+    if (
+      event.model !== (permissionModels.role as never) &&
+      event.model !== (permissionModels.permission as never)
+    ) {
       return;
     }
 

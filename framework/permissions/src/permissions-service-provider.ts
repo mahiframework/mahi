@@ -6,8 +6,7 @@ import type { ListenerRegistration } from "@mahiframework/events";
 import type { HttpPipe } from "@mahiframework/http";
 import { PermissionRegistrar } from "./permission-registrar.js";
 import { resolveConfig, type PermissionsConfig } from "./permissions-config.js";
-import { Permission } from "./models/permission.model.js";
-import { Role } from "./models/role.model.js";
+import { permissionModels } from "./models/registry.js";
 import { InvalidatePermissionCacheListener } from "./listeners/invalidate-permission-cache.listener.js";
 import { PermissionsCacheResetCommand } from "./commands/permissions-cache-reset.js";
 import { PermissionsCheckCommand } from "./commands/permissions-check.js";
@@ -79,10 +78,13 @@ export class PermissionsServiceProvider extends ServiceProvider {
    *    `Permissions.hasPermissionTo()` explicitly — which is where that
    *    decision belongs anyway, next to the row it concerns.
    *
-   * 3. A non-model user abstains too. The pivots need a morph alias and a
-   *    `bigint` key; a token-guard adapter or a plain object has neither,
-   *    and `resolveAssignee()` would throw. A hook that throws turns every
-   *    authorization check in the app into a 500.
+   * 3. A non-model user abstains too. The pivots need a morph alias and
+   *    a key of the configured type; a token-guard adapter or a plain
+   *    object has neither, and `resolveAssignee()` would throw. A hook
+   *    that throws turns every authorization check in the app into a
+   *    500. Note that a model whose key is the WRONG type still throws —
+   *    deliberately, since that is a misconfiguration the app has to
+   *    fix rather than a subject that merely holds no permissions.
    *
    * `gates()` is synchronous, so nothing is loaded here. The closure is
    * async and the first check of the process populates the cache.
@@ -142,9 +144,19 @@ export class PermissionsServiceProvider extends ServiceProvider {
     return [{ name: "0001_create_permission_tables", migration: createPermissionTables }];
   }
 
-  /** Registered so a queued job can carry a `Role` or a `Permission`. */
+  /**
+   * Registered so a queued job can carry a `Role` or a `Permission`.
+   *
+   * Read through the registry, so an app that called
+   * `usePermissionModels()` has ITS classes registered rather than the
+   * package's — a job carrying an `AppRole` would otherwise fail to
+   * resolve at dispatch.
+   */
   models(): AnyModelClass[] {
-    return [Role as unknown as AnyModelClass, Permission as unknown as AnyModelClass];
+    return [
+      permissionModels.role as unknown as AnyModelClass,
+      permissionModels.permission as unknown as AnyModelClass,
+    ];
   }
 
   commands() {

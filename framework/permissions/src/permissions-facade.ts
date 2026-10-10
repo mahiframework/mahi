@@ -8,6 +8,7 @@ import type {
   PermissionRegistrar,
   RoleRef,
 } from "./permission-registrar.js";
+import type { AssigneeKeyType } from "./permissions-config.js";
 import { withPermissionCache } from "./request-cache.js";
 import { PERMISSIONS_TOKEN } from "./tokens.js";
 
@@ -227,6 +228,11 @@ export class Permissions extends Facade<PermissionRegistrar>(() => PERMISSIONS_T
   /** Drop the cached role/permission map and every memoised assignment. */
   static forgetCache(): Promise<void> {
     return this.instance().forgetCache();
+  }
+
+  /** The key type this install's assignment pivots are built for. */
+  static assigneeKeyType(): AssigneeKeyType {
+    return this.instance().assigneeKeyType();
   }
 
   /**

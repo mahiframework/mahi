@@ -7,14 +7,17 @@ export { Role } from "./models/role.model.js";
 export type { RoleAttributes } from "./models/role.model.js";
 export { Permission } from "./models/permission.model.js";
 export type { PermissionAttributes } from "./models/permission.model.js";
+export { permissionModels, resetPermissionModels, usePermissionModels } from "./models/registry.js";
+export type { PermissionModels } from "./models/registry.js";
 
 export { rolesRelation, permissionsRelation } from "./relations.js";
 
 export { resolveAssignee, assigneeCacheKey } from "./assignee.js";
-export type { Assignee, AssigneeRef, ResolvedAssignee } from "./assignee.js";
+export type { Assignee, AssigneeKey, AssigneeRef, ResolvedAssignee } from "./assignee.js";
 
-export { resolveConfig } from "./permissions-config.js";
+export { configuredAssigneeKey, resolveConfig } from "./permissions-config.js";
 export type {
+  AssigneeKeyType,
   PermissionsConfig,
   PermissionsCacheConfig,
   ResolvedPermissionsConfig,

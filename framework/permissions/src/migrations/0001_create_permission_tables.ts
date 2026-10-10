@@ -1,4 +1,5 @@
 import { Schema, type Migration, type Blueprint } from "@mahiframework/database";
+import { configuredAssigneeKey } from "../permissions-config.js";
 
 /**
  * All five permission tables in one migration, mirroring spatie's single
@@ -44,24 +45,36 @@ import { Schema, type Migration, type Blueprint } from "@mahiframework/database"
  * assignable model. Same reasoning as `activity_logs.model_id` and
  * `sessions.user_id`.
  *
- * `model_id` is a `bigInteger`, NOT text, which is the one place this
- * schema diverges from `activity_logs`/`notifications`. Those tables are
- * only ever read back by equality from code that already knows the type,
- * so text (which holds every key type losslessly) costs them nothing.
- * Here the column is the local side of a `morphToMany` pivot, and
+ * `model_id` IS TYPED, NOT TEXT, which is the one place this schema
+ * diverges from `activity_logs`/`notifications`. Those tables are only
+ * ever read back by equality from code that already knows the type, so
+ * text (which holds every key type losslessly) costs them nothing. Here
+ * the column is the local side of a `morphToMany` pivot, and
  * `buildPivotQuery()` binds the local key value RAW — a `bigint` against
- * a `varchar` column makes Postgres raise `operator does not exist`. Text
- * would therefore have broken the exported relation helpers, and with
- * them `with("roles")` and `whereHas("roles", ...)`. The cost is that
- * only integer-keyed models can hold roles, which
- * `resolveAssignee()` enforces with a clear error rather than letting it
- * reach SQL.
+ * a `varchar` column makes Postgres raise `operator does not exist`.
+ * Text would therefore have broken the exported relation helpers, and
+ * with them `with("roles")` and `whereHas("roles", ...)`.
+ *
+ * Which type it is comes from `permissions.assigneeKey`: `bigInteger`
+ * by default, `uuid` for an app whose models key on `uuidv7`.
+ * `resolveAssignee()` reads the same setting and rejects a key of the
+ * other type with a clear error rather than letting it reach SQL. The
+ * two must agree, which is why one config value drives both.
+ *
+ * `role_id` and `permission_id` stay `bigInteger` regardless: they
+ * reference this package's own `bigIncrements` keys, and the app's
+ * choice has nothing to say about them.
  *
  * No timestamps on the pivots. spatie has none either, and there is
  * nothing to record: the composite key carries the entire fact.
  */
 const migration: Migration = {
   async up(): Promise<void> {
+    const assigneeKey = configuredAssigneeKey();
+    /** `model_id`, typed to match the app's own keys. See the header. */
+    const modelId = (table: Blueprint) =>
+      assigneeKey === "uuid" ? table.uuid("model_id") : table.bigInteger("model_id");
+
     await Schema.create("roles", (table: Blueprint) => {
       table.bigIncrements("id");
       table.string("name");
@@ -91,7 +104,7 @@ const migration: Migration = {
     await Schema.create("model_has_roles", (table: Blueprint) => {
       table.bigInteger("role_id");
       table.string("model_type");
-      table.bigInteger("model_id");
+      modelId(table);
       table.primary(["role_id", "model_id", "model_type"]);
       table.index(["model_id", "model_type"]);
       table.foreign("role_id").references("id").on("roles").cascadeOnDelete();
@@ -100,7 +113,7 @@ const migration: Migration = {
     await Schema.create("model_has_permissions", (table: Blueprint) => {
       table.bigInteger("permission_id");
       table.string("model_type");
-      table.bigInteger("model_id");
+      modelId(table);
       table.primary(["permission_id", "model_id", "model_type"]);
       table.index(["model_id", "model_type"]);
       table.foreign("permission_id").references("id").on("permissions").cascadeOnDelete();

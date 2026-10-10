@@ -55,23 +55,33 @@ export class DuplicateNameError extends PermissionsError {
 }
 
 /**
- * The assignee's primary key is not a `bigint`.
+ * The assignee's primary key is not the type this install is configured
+ * for.
  *
- * `model_has_roles.model_id` is a `bigInteger` column, so only
- * integer-keyed models can hold roles. Thrown here rather than letting
- * the value reach SQL: Postgres rejects a non-numeric string against a
- * `bigint` with `operator does not exist`, which is a 500 that says
- * nothing about why, and SQLite would accept it and simply never match.
+ * `model_has_roles.model_id` is a `bigInteger` or a `uuid` depending on
+ * `permissions.assigneeKey`, and the pivot query binds the key raw, so
+ * the key's runtime type has to match the column's. Thrown here rather
+ * than letting the value reach SQL: Postgres rejects a mismatch with
+ * `operator does not exist`, a 500 that says nothing about why, and
+ * SQLite accepts it and simply never matches again.
  */
 export class UnsupportedAssigneeKeyError extends PermissionsError {
   constructor(
     readonly morphType: string,
     readonly key: unknown,
+    /** The configured key type the value failed to be. */
+    readonly expected: "bigint" | "uuid" = "bigint",
   ) {
     super(
-      `"${morphType}" keys on ${typeof key}, but model_has_roles.model_id is a bigInteger, ` +
-        `so only integer-keyed models can hold roles or permissions. ` +
-        `Assign to a model whose primary key is a bigint.`,
+      expected === "uuid"
+        ? `"${morphType}" keys on ${typeof key}, but permissions.assigneeKey is "uuid", so ` +
+            `model_has_roles.model_id is a uuid column and a role-holder's key must be a ` +
+            `non-empty string. Assign to a model whose primary key is a uuid, or set ` +
+            `assigneeKey to "bigint".`
+        : `"${morphType}" keys on ${typeof key}, but permissions.assigneeKey is "bigint", so ` +
+            `model_has_roles.model_id is a bigInteger and only integer-keyed models can hold ` +
+            `roles or permissions. Assign to a model whose primary key is a bigint, or set ` +
+            `assigneeKey to "uuid" before migrating.`,
     );
   }
 }

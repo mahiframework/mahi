@@ -1,3 +1,5 @@
+import { app } from "@mahiframework/core";
+
 /**
  * The optional `"permissions"` config namespace.
  *
@@ -10,6 +12,20 @@
  * `app.bootstrap()`, so importing a model would pull the ORM into
  * config-load time.
  */
+/**
+ * How a role-holder's primary key is stored in the assignment pivots.
+ *
+ * Two values rather than a free-form column type, because the pivot's
+ * `model_id` is bound RAW into the local side of a `morphToMany` query
+ * and so has to match the key's runtime type exactly. `"bigint"` means
+ * a `bigInteger` column and a `bigint` key; `"uuid"` means a `uuid`
+ * column and a `string` key. Anything else — a `text` column holding
+ * whatever — would need the query builder to cast on every pivot read,
+ * which is what the migration's own docstring records as the reason to
+ * avoid it.
+ */
+export type AssigneeKeyType = "bigint" | "uuid";
+
 export interface PermissionsConfig {
   /**
    * The guard name stamped on new roles and permissions, and used by any
@@ -25,6 +41,36 @@ export interface PermissionsConfig {
   guard?: string;
 
   cache?: PermissionsCacheConfig;
+
+  /**
+   * The key type of the models that hold roles and permissions.
+   * Defaults to `"bigint"`.
+   *
+   *   { assigneeKey: "bigint" }   // model_id is a bigInteger
+   *   { assigneeKey: "uuid" }     // model_id is a uuid, keys are strings
+   *
+   * Read by BOTH the migration — which chooses `bigInteger` or `uuid`
+   * for `model_has_roles.model_id` and
+   * `model_has_permissions.model_id` — and `resolveAssignee()`, which
+   * rejects a key of the wrong type before it reaches SQL. They have to
+   * move together: a guard that kept expecting a `bigint` would reject
+   * exactly what the column now accepts.
+   *
+   * `uuid` for an app that took `docs/models`' advice and keyed its
+   * `User` on `uuidv7`. Without it the package is unusable there, and
+   * the workaround is keying one table on `bigint` because an unrelated
+   * package said so.
+   *
+   * `role_id` and `permission_id` stay `bigInteger` either way: they
+   * reference this package's own tables, whose keys it assigns, and the
+   * app's choice has nothing to say about them.
+   *
+   * 🚨 ONLY SAFE BEFORE THE FIRST MIGRATION RUNS. Changing it on an
+   * install that already has assignment rows does not re-interpret
+   * them — the column type is set and the rows are written.
+   * `permissions:check` detects the mismatch and exits non-zero.
+   */
+  assigneeKey?: AssigneeKeyType;
 
   /**
    * Register the `Gate.before()` hook that makes `can("posts.edit")`
@@ -71,6 +117,7 @@ export interface ResolvedPermissionsConfig {
   cacheKey: string;
   cacheStore: string | undefined;
   cacheTtlSeconds: number;
+  assigneeKey: AssigneeKeyType;
   gate: boolean;
 }
 
@@ -94,6 +141,30 @@ export function resolveConfig(config: PermissionsConfig = {}): ResolvedPermissio
     cacheKey: cache.key ?? DEFAULT_CACHE_KEY,
     cacheStore: cache.store,
     cacheTtlSeconds: cache.ttlSeconds ?? DEFAULT_TTL_SECONDS,
+    assigneeKey: config.assigneeKey ?? "bigint",
     gate: config.gate ?? true,
   };
+}
+
+/**
+ * The configured assignee key type, read from the current application.
+ *
+ * A function rather than a value because the migration needs it and a
+ * migration has no injected `app` — it is a bare `{ up, down }` module,
+ * run by the migrator. Defaults to `"bigint"` when there is no
+ * application at all, which is the case for a migration being linted or
+ * inspected rather than run.
+ */
+export function configuredAssigneeKey(): AssigneeKeyType {
+  let config: PermissionsConfig | undefined;
+
+  try {
+    config = app().config.get<PermissionsConfig>("permissions");
+  } catch {
+    // No application is current. A migration cannot run in that state,
+    // so this is an inspection; the default is the honest answer.
+    return "bigint";
+  }
+
+  return config?.assigneeKey ?? "bigint";
 }

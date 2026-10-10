@@ -22,6 +22,7 @@ import { PermissionRegistrar } from "../../src/permission-registrar.js";
 import { PERMISSIONS_TOKEN } from "../../src/tokens.js";
 import type { PermissionsConfig } from "../../src/permissions-config.js";
 import { permissionsRelation, rolesRelation } from "../../src/relations.js";
+import { resetPermissionModels } from "../../src/models/registry.js";
 import type { Permission } from "../../src/models/permission.model.js";
 import type { Role } from "../../src/models/role.model.js";
 import createPermissionTables from "../../src/migrations/0001_create_permission_tables.js";
@@ -69,10 +70,19 @@ export class Team extends Model<TeamAttributes>()({
   timestamps: false,
 }) {}
 
-/** A model that keys on a string, for the unsupported-key path. */
+/**
+ * A model that keys on a string.
+ *
+ * Both halves of the key-type guard are exercised through this one
+ * class: it is the rejected shape under the default
+ * `assigneeKey: "bigint"`, and the accepted one under `"uuid"`. A
+ * separate uuid model would let the two paths drift.
+ */
 export interface LegacyAccountAttributes {
   id: string;
   name: string;
+  roles: MorphToMany<Role>;
+  permissions: MorphToMany<Permission>;
 }
 
 export class LegacyAccount extends Model<LegacyAccountAttributes>()({
@@ -80,7 +90,12 @@ export class LegacyAccount extends Model<LegacyAccountAttributes>()({
   primaryKey: "id",
   morphName: "LegacyAccount",
   timestamps: false,
-}) {}
+}) {
+  static override relationships = {
+    roles: rolesRelation(),
+    permissions: permissionsRelation(),
+  };
+}
 
 export interface Harness {
   app: Application;
@@ -166,9 +181,10 @@ export async function createHarness(config: PermissionsConfig = {}): Promise<Har
     registrar: app.make<PermissionRegistrar>(PERMISSIONS_TOKEN),
     store: cache.store(),
     cleanup: () => {
-      // The morph map is process-global, not container-bound, so a test
-      // that registered one would leak into the next file.
+      // Both registries are process-global rather than container-bound,
+      // so a test that touched either would leak into the next file.
       Relation.resetMorphMap();
+      resetPermissionModels();
       clearCurrentApp();
     },
   };
@@ -188,6 +204,13 @@ export async function makeTeam(name = `team${nextKey}`): Promise<Team> {
   const id = 9_000_000_000_000_000_000n + nextKey++;
 
   return (await Team.create({ id, name })) as Team;
+}
+
+/** A uuid-keyed subject, for `assigneeKey: "uuid"`. */
+export async function makeLegacyAccount(name = `account${nextKey}`): Promise<LegacyAccount> {
+  const id = `11111111-1111-4111-8111-${String(nextKey++).padStart(12, "0")}`;
+
+  return (await LegacyAccount.create({ id, name })) as LegacyAccount;
 }
 
 /**

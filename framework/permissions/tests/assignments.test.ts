@@ -5,6 +5,7 @@ import { resolveAssignee } from "../src/assignee.js";
 import {
   createHarness,
   captureError,
+  makeLegacyAccount,
   makeTeam,
   makeUser,
   LegacyAccount,
@@ -230,5 +231,137 @@ describe("assignee resolution", () => {
     const user = await makeUser();
 
     expect(resolveAssignee(user)).toEqual({ morphType: "User", key: user.id });
+  });
+
+  it("names the configured key type in the error", async () => {
+    const account = await LegacyAccount.create({ id: "acct_2", name: "Legacy" });
+    const error = await captureError(harness.registrar.assignRole(account, "admin"));
+
+    expect(String(error)).toContain('permissions.assigneeKey is "bigint"');
+  });
+
+  it("reports the configured key type", () => {
+    expect(harness.registrar.assigneeKeyType()).toBe("bigint");
+  });
+});
+
+describe('assigneeKey: "uuid"', () => {
+  // `keyType: "uuidv7"` is what `docs/models` recommends and
+  // `make:model --uuidv7` scaffolds, so an app that took that advice has
+  // to be able to install this package at all.
+  let uuid: Harness;
+
+  beforeEach(async () => {
+    uuid = await createHarness({ assigneeKey: "uuid" });
+    await uuid.registrar.createRole("admin");
+    await uuid.registrar.createPermission("posts.edit");
+    await uuid.registrar.givePermissionToRole("admin", "posts.edit");
+  });
+
+  afterEach(() => uuid.cleanup());
+
+  it("assigns a role to a uuid-keyed subject", async () => {
+    const account = await makeLegacyAccount();
+
+    await uuid.registrar.assignRole(account, "admin");
+
+    expect(await uuid.registrar.hasRole(account, "admin")).toBe(true);
+  });
+
+  it("grants that role's permissions", async () => {
+    const account = await makeLegacyAccount();
+
+    await uuid.registrar.assignRole(account, "admin");
+
+    expect(await uuid.registrar.hasPermissionTo(account, "posts.edit")).toBe(true);
+  });
+
+  it("grants a direct permission", async () => {
+    const account = await makeLegacyAccount();
+
+    await uuid.registrar.givePermissionTo(account, "posts.edit");
+
+    expect(await uuid.registrar.hasDirectPermission(account, "posts.edit")).toBe(true);
+  });
+
+  it("stores the key as a string, so the pivot read matches it back", async () => {
+    const account = await makeLegacyAccount();
+
+    await uuid.registrar.assignRole(account, "admin");
+
+    const rows = await DB.table<{ model_id: unknown }>("model_has_roles").select("model_id").get();
+
+    expect(typeof rows[0]?.model_id).toBe("string");
+    expect(rows[0]?.model_id).toBe(account.id);
+  });
+
+  it("eager-loads through the relation, which binds the local key raw", async () => {
+    // The whole reason the column is typed rather than text: a mismatch
+    // breaks `with("roles")` and `whereHas("roles", ...)` entirely.
+    const account = await makeLegacyAccount();
+
+    await uuid.registrar.assignRole(account, "admin");
+
+    const loaded = await LegacyAccount.query().with("roles").whereKey(account.id).first();
+
+    expect([...(loaded?.roles ?? [])].map((role) => role.name)).toEqual(["admin"]);
+  });
+
+  it("does not leak one subject's roles to another with a similar key", async () => {
+    const [one, two] = [await makeLegacyAccount(), await makeLegacyAccount()];
+
+    await uuid.registrar.assignRole(one, "admin");
+
+    expect(await uuid.registrar.hasRole(two, "admin")).toBe(false);
+  });
+
+  it("syncs and removes", async () => {
+    const account = await makeLegacyAccount();
+
+    await uuid.registrar.assignRole(account, "admin");
+    await uuid.registrar.syncRoles(account, []);
+
+    expect(await uuid.registrar.hasRole(account, "admin")).toBe(false);
+  });
+
+  it("rejects a bigint-keyed model, which is now the wrong shape", async () => {
+    // The guard moves with the column rather than being dropped: an
+    // integer key against a uuid column is the same class of defect in
+    // the other direction.
+    const user = await makeUser();
+    const error = await captureError(uuid.registrar.assignRole(user, "admin"));
+
+    expect(error).toBeInstanceOf(UnsupportedAssigneeKeyError);
+    expect(String(error)).toContain('permissions.assigneeKey is "uuid"');
+  });
+
+  it("rejects an empty string, which is not a key", async () => {
+    const error = await captureError(
+      uuid.registrar.assignRole({ type: "LegacyAccount", id: "" }, "admin"),
+    );
+
+    expect(error).toBeInstanceOf(UnsupportedAssigneeKeyError);
+  });
+
+  it("accepts an explicit descriptor", async () => {
+    const account = await makeLegacyAccount();
+
+    await uuid.registrar.assignRole({ type: "LegacyAccount", id: account.id }, "admin");
+
+    expect(await uuid.registrar.hasRole(account, "admin")).toBe(true);
+  });
+
+  it("reports the configured key type", () => {
+    expect(uuid.registrar.assigneeKeyType()).toBe("uuid");
+  });
+
+  it("keeps role_id a bigint, since it references this package's own table", async () => {
+    const account = await makeLegacyAccount();
+
+    await uuid.registrar.assignRole(account, "admin");
+
+    const rows = await DB.table<{ role_id: unknown }>("model_has_roles").select("role_id").get();
+
+    expect(typeof rows[0]?.role_id).not.toBe("string");
   });
 });

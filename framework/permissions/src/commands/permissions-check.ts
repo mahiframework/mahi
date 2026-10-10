@@ -9,11 +9,16 @@ interface AliasCount {
   total: number;
 }
 
+/** One stored `model_id`, read back as whatever the column holds. */
+interface ModelIdRow {
+  model_id: unknown;
+}
+
 /**
- * Validate stored assignment rows against the models and guards that
- * exist.
+ * Validate stored assignment rows against the models, guards and key
+ * type that exist.
  *
- * Two things can rot without anything noticing:
+ * Three things can rot without anything noticing:
  *
  * 1. A `model_type` that names no model. Assignment rows store a morph
  *    alias, and `morphAlias()` falls back to the TABLE NAME when no
@@ -26,6 +31,15 @@ interface AliasCount {
  * 2. A `guard_name` naming no configured guard. `guard_name` is NOT NULL
  *    with no wildcard, so a role created under a guard that was later
  *    renamed in `config/auth.ts` can never again satisfy a check.
+ *
+ * 3. A `model_id` that is not the shape `permissions.assigneeKey` now
+ *    says. The setting chooses both the column's type and what
+ *    `resolveAssignee()` accepts, so changing it after the migration
+ *    has run leaves every existing row unreadable by the checks: the
+ *    column still holds `bigint`s and every lookup now binds a string,
+ *    which Postgres rejects and SQLite silently fails to match. Nothing
+ *    rewrites the rows, so this reports them rather than pretending the
+ *    switch was free.
  *
  * A CHECK, not a boot failure. A model can legitimately be registered by
  * a provider this command never loads, so an unmatched alias is reported
@@ -79,6 +93,8 @@ export class PermissionsCheckCommand extends Command {
       }
     }
 
+    errors.push(...(await this.keyTypeErrors()));
+
     for (const error of errors) {
       this.app.logger.error(`permissions:check: ${error}`);
     }
@@ -111,6 +127,43 @@ export class PermissionsCheckCommand extends Command {
   }
 
   /**
+   * Stored `model_id` values that `permissions.assigneeKey` no longer
+   * describes.
+   *
+   * 🚨 CHANGING `assigneeKey` ON A POPULATED INSTALL IS NOT A
+   * MIGRATION. The setting picks the column's type and the guard's
+   * expectation together, and nothing rewrites existing rows — so after
+   * a switch the rows are intact and unreachable. Reported per table
+   * with a count, loudly, rather than left to be discovered as "this
+   * user lost their roles".
+   *
+   * A `number` counts as integer-shaped: SQLite hands back a plain
+   * number for a small `bigInteger`, and that is a storage detail rather
+   * than a defect in the row.
+   */
+  private async keyTypeErrors(): Promise<string[]> {
+    const expected = this.app.make<PermissionRegistrar>(PERMISSIONS_TOKEN).assigneeKeyType();
+    const errors: string[] = [];
+
+    for (const table of ["model_has_roles", "model_has_permissions"]) {
+      const rows = await DB.table<ModelIdRow>(table).select("model_id").get();
+      const wrong = rows.filter((row) => !matchesKeyType(row.model_id, expected)).length;
+
+      if (wrong > 0) {
+        errors.push(
+          `${wrong} of ${rows.length} row(s) in ${table} hold a model_id that is not a ` +
+            `${expected}, but permissions.assigneeKey is "${expected}". The column's type and ` +
+            `the guard's expectation come from that one setting, and changing it does not ` +
+            `rewrite stored rows — these assignments can no longer be matched. Restore the ` +
+            `previous assigneeKey, or migrate the column and the rows together.`,
+        );
+      }
+    }
+
+    return errors;
+  }
+
+  /**
    * The app's configured guard names, or null if auth isn't configured at
    * all — in which case there is nothing to validate against and the
    * guard check is skipped rather than reporting every guard as unknown.
@@ -120,4 +173,16 @@ export class PermissionsCheckCommand extends Command {
 
     return guards === undefined ? null : new Set(Object.keys(guards));
   }
+}
+
+/** Whether a stored `model_id` is the shape `assigneeKey` describes. */
+function matchesKeyType(value: unknown, expected: "bigint" | "uuid"): boolean {
+  if (expected === "uuid") {
+    return typeof value === "string" && value !== "";
+  }
+
+  // A driver may hand an integer column back as a `bigint` or, for a
+  // small value on SQLite, a plain `number`. Both are the column doing
+  // its job; a string is not.
+  return typeof value === "bigint" || typeof value === "number";
 }
