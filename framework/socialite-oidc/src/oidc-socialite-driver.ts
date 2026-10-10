@@ -62,6 +62,25 @@ export interface OidcProviderConfig {
   idTokenOnly?: boolean;
   /** Human label for a login page. Defaults to the issuer's host. */
   label?: string;
+
+  /**
+   * Hosts, besides the issuer's own, whose endpoints are acceptable.
+   * Defaults to none.
+   *
+   * The discovery document supplies four URLs this server afterwards
+   * fetches, and they are pinned to the issuer's origin precisely
+   * because the issuer is admin-entered configuration and the document
+   * is not. Some IdPs genuinely split endpoints across names — Entra
+   * ID's `jwks_uri` is on `login.microsoftonline.com` while the issuer
+   * is `sts.windows.net` — and those hosts go here.
+   *
+   * A host named here is trusted as the issuer is, internal addresses
+   * included: an admin writing `keys.idp.internal` into config has said
+   * what they meant. There is no separate private-address flag, because
+   * a self-hosted IdP's endpoints are reachable already — its issuer is
+   * the internal URL too.
+   */
+  allowEndpointHosts?: string[];
 }
 
 const DEFAULT_ALGORITHMS = ["RS256"];
@@ -143,7 +162,9 @@ export class OidcSocialiteDriver extends Oauth2SocialiteDriver<OidcRawUser> {
   }
 
   private discovery(): DiscoveryCache {
-    this.caches.discovery ??= new DiscoveryCache(this.oidc.issuer, this.oidc.discoveryTtlMs);
+    this.caches.discovery ??= new DiscoveryCache(this.oidc.issuer, this.oidc.discoveryTtlMs, {
+      allowHosts: this.oidc.allowEndpointHosts,
+    });
 
     return this.caches.discovery;
   }
@@ -493,6 +514,7 @@ export interface ResolvedOidcConfig {
   discoveryTtlMs: number;
   jwksCooldownMs: number;
   idTokenOnly: boolean;
+  allowEndpointHosts: readonly string[];
 }
 
 /** Apply defaults to an `oidc` provider config. */
@@ -505,5 +527,9 @@ export function resolveOidcConfig(issuer: string, config: OidcProviderConfig): R
     discoveryTtlMs: (config.discoveryTtlSeconds ?? 3600) * 1000,
     jwksCooldownMs: (config.jwksCooldownSeconds ?? 30) * 1000,
     idTokenOnly: config.idTokenOnly ?? false,
+    // Empty by default: pinning the endpoints to the issuer's origin is
+    // what makes a hostile discovery document harmless, and an app that
+    // needs to widen it should have to say so.
+    allowEndpointHosts: config.allowEndpointHosts ?? [],
   };
 }

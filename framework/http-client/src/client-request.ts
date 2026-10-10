@@ -173,9 +173,36 @@ export class ClientRequest {
     return this.copyWith({ headers });
   }
 
+  /**
+   * A copy without `name`.
+   *
+   * Needed by redirect following, which must drop `Authorization` and
+   * `Cookie` on a cross-host hop and `Content-Type` on a 303's rewrite
+   * to GET. Removing a header is not expressible through `withHeader()`:
+   * an empty string is a header with an empty value, which is not the
+   * same thing to a server.
+   */
+  withoutHeader(name: string): ClientRequest {
+    const headers = new Headers(this._headers);
+    headers.delete(name);
+
+    return this.copyWith({ headers });
+  }
+
   /** A copy targeting `url` instead. */
   withUrl(url: string): ClientRequest {
     return this.copyWith({ url });
+  }
+
+  /**
+   * A copy using `method` instead.
+   *
+   * For redirect following: a 303, and a 301/302 on a POST, rewrite the
+   * method to GET. Not part of the fluent builder surface, where the
+   * method is chosen by the verb being called.
+   */
+  withMethod(method: string): ClientRequest {
+    return this.copyWith({ method });
   }
 
   /** A copy carrying `body`, optionally setting `Content-Type` with it. */

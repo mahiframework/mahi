@@ -1,10 +1,16 @@
-import { retry } from "@mahiframework/core";
+import { assertSafeUrl, retry } from "@mahiframework/core";
 import { Pipeline, type PipeFn } from "@mahiframework/pipeline";
 import { ClientRequest, type ClientRequestBody } from "./client-request.js";
 import { makeClientResponse, type ClientResponse } from "./client-response.js";
-import { ConnectionError, RequestFailedError } from "./errors.js";
+import { ConnectionError, RequestFailedError, TooManyRedirectsError } from "./errors.js";
 import { ConnectionFailed, RequestSending, ResponseReceived, type EventSink } from "./events.js";
 import { buildMultipart, type Attachment, type AttachmentContents } from "./multipart.js";
+import {
+  DEFAULT_MAX_REDIRECTS,
+  nextHop,
+  redirectTarget,
+  type SafeRedirectOptions,
+} from "./safe-redirects.js";
 import { fetchTransport, type Transport } from "./transport.js";
 import { encodeNested } from "./query-encoder.js";
 import { appendQuery, expandUrlTemplate, resolveUrl } from "./url-template.js";
@@ -46,6 +52,7 @@ interface RequestOptions {
   queryParameters: Readonly<Record<string, unknown>>;
   timeoutMs?: number;
   redirect?: NonNullable<RequestInit["redirect"]>;
+  safeRedirects?: SafeRedirectOptions;
   cookies: Readonly<Record<string, string>>;
   sink?: Sink;
   streamed: boolean;
@@ -268,6 +275,43 @@ export class PendingRequest {
   /** Return the 3xx instead of following it (`redirect: "manual"`). */
   withoutRedirecting(): PendingRequest {
     return this.with({ redirect: "manual" });
+  }
+
+  /**
+   * Follow redirects, validating the target of **every hop** against a
+   * `UrlPolicy` before it is requested.
+   *
+   *   Http.withSafeRedirects({ maxRedirects: 3 }).get(url);
+   *   Http.withSafeRedirects({ allowPrivate: true }).get(url);
+   *
+   * This is the piece an application cannot write for itself. `fetch`
+   * follows the whole chain inside one call and exposes only the final
+   * URL (`response.url`) and the fact that it happened
+   * (`response.redirected`) — the intermediate hops are not observable,
+   * so a request middleware sees one request and a public URL that
+   * redirects to `127.0.0.1` reaches it unchecked. The only way to see
+   * each hop is to drive the chain with `redirect: "manual"`, and doing
+   * that correctly means reimplementing 303 method rewriting, 307/308
+   * body replay, cross-host credential stripping and a hop cap. That is
+   * this package's job, not every app's.
+   *
+   * The FIRST request is validated too, so a direct
+   * `http://169.254.169.254/` is refused without a redirect being
+   * involved.
+   *
+   * 🚨 VALIDATION IS BY NAME AND SO IS RACY. `assertSafeUrl()` resolves
+   * the host; the transport then resolves it again, and a name can
+   * answer differently the second time. See that function's docstring.
+   * Pinning resolution needs a custom dispatcher, which this package has
+   * no dependency to build.
+   *
+   * Overrides `withoutRedirecting()`: following every hop and following
+   * none are not combinable, and the explicit safety request wins.
+   * Raises `UnsafeUrlError` for a rejected hop and
+   * `TooManyRedirectsError` past the cap.
+   */
+  withSafeRedirects(options: SafeRedirectOptions = {}): PendingRequest {
+    return this.with({ safeRedirects: options });
   }
 
   /**
@@ -665,12 +709,105 @@ export class PendingRequest {
       .run((finalRequest) => this.dispatch(finalRequest));
   }
 
-  /** The innermost step: hand the request to the transport and wrap the result. */
-  private async dispatch(request: ClientRequest): Promise<ClientResponse> {
-    const init: RequestInit & Record<string, unknown> = { ...this.options.fetchOptions };
+  /**
+   * The innermost step: hand the request to the transport, following
+   * redirects by hand when `withSafeRedirects()` asked for it.
+   */
+  private dispatch(request: ClientRequest): Promise<ClientResponse> {
+    return this.options.safeRedirects === undefined
+      ? this.dispatchOnce(request)
+      : this.dispatchChain(request, this.options.safeRedirects);
+  }
 
-    if (this.options.redirect !== undefined) {
-      init.redirect = this.options.redirect;
+  /**
+   * Drive the redirect chain one hop at a time, validating each target
+   * before it is requested.
+   *
+   * `redirect: "manual"` is forced, because seeing each `Location`
+   * before the next request goes out is the entire point — `fetch`
+   * following the chain internally is exactly what makes per-hop
+   * validation impossible. See `withSafeRedirects()`.
+   *
+   * A redirect's own body is DISCARDED rather than buffered, streamed or
+   * written to a `sink()`: "302, go here" is not the response the caller
+   * asked for, and draining it into a sink would leave the file holding
+   * the wrong bytes. Only the terminal hop produces a `ClientResponse`
+   * the caller sees.
+   *
+   * Each hop is recorded and fires its own events, since each is a real
+   * request and `assertSentCount()` means "how many went out".
+   */
+  private async dispatchChain(
+    request: ClientRequest,
+    policy: SafeRedirectOptions,
+  ): Promise<ClientResponse> {
+    const cap = policy.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
+    const visited: string[] = [];
+    let current = request;
+
+    for (let hop = 0; ; hop++) {
+      // The FIRST request is validated too: a direct call to a metadata
+      // address is the same problem as a redirect to one.
+      await assertSafeUrl(current.url, policy);
+      visited.push(current.url);
+
+      const { raw, durationMs } = await this.callTransport(current, "manual");
+      const target = redirectTarget(raw, current.url);
+
+      if (target === undefined) {
+        return this.wrapResponse(raw, current, durationMs);
+      }
+
+      // The redirect's body is of no interest and holds a connection
+      // open until it is read.
+      await raw.body?.cancel();
+      this.options.observer?.record(current, undefined);
+
+      if (hop >= cap) {
+        throw new TooManyRedirectsError(current, [...visited, target], cap);
+      }
+
+      const next = nextHop(current, raw.status, target);
+
+      // The stream was consumed by the hop that just went out, so a
+      // 307/308 replay would reject with the opaque "body object should
+      // not be disturbed or locked". Say what the problem actually is.
+      if (next.rawBody() instanceof ReadableStream) {
+        throw new ConnectionError(
+          `Cannot follow the ${raw.status} from ${current.url}: the request body is a ` +
+            `ReadableStream, which can only be sent once, and a ${raw.status} replays it. ` +
+            `Buffer the body (pass a string or Uint8Array) if the request may be redirected.`,
+          current,
+        );
+      }
+
+      current = next;
+    }
+  }
+
+  /** One request, one response. The transport boundary. */
+  private async dispatchOnce(request: ClientRequest): Promise<ClientResponse> {
+    const { raw, durationMs } = await this.callTransport(request);
+
+    return this.wrapResponse(raw, request, durationMs);
+  }
+
+  /**
+   * Hand one request to the transport and time it.
+   *
+   * Split from `wrapResponse()` so the redirect chain can read a hop's
+   * status and `Location` and then discard its body, which buffering it
+   * into a `ClientResponse` would have already consumed.
+   */
+  private async callTransport(
+    request: ClientRequest,
+    redirect?: NonNullable<RequestInit["redirect"]>,
+  ): Promise<{ raw: Response; durationMs: number }> {
+    const init: RequestInit & Record<string, unknown> = { ...this.options.fetchOptions };
+    const mode = redirect ?? this.options.redirect;
+
+    if (mode !== undefined) {
+      init.redirect = mode;
     }
 
     if (this.options.timeoutMs !== undefined) {
@@ -688,9 +825,11 @@ export class PendingRequest {
     this.options.events?.dispatch(new RequestSending(request));
 
     const startedAt = Date.now();
-    let raw: Response;
+
     try {
-      raw = await this.options.transport(request.toFetchRequest(init), init);
+      const raw = await this.options.transport(request.toFetchRequest(init), init);
+
+      return { raw, durationMs: Date.now() - startedAt };
     } catch (error) {
       const failure = new ConnectionError(connectionMessage(error, request), request, {
         cause: error,
@@ -701,8 +840,14 @@ export class PendingRequest {
       this.options.events?.dispatch(new ConnectionFailed(request, failure));
       throw failure;
     }
-    const durationMs = Date.now() - startedAt;
+  }
 
+  /** Buffer, sink or stream a transport response, and record it. */
+  private async wrapResponse(
+    raw: Response,
+    request: ClientRequest,
+    durationMs: number,
+  ): Promise<ClientResponse> {
     let buffered: Uint8Array | undefined;
 
     if (this.options.sink !== undefined) {

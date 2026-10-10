@@ -77,6 +77,32 @@ export class RequestFailedError extends Error {
 }
 
 /**
+ * A `withSafeRedirects()` chain exceeded its hop cap.
+ *
+ * Distinct from a `ConnectionError`: every hop answered, and the chain
+ * is well-formed in the sense that each `Location` validated — there
+ * were simply too many. Carries the whole chain, because "where did it
+ * go" is the question, and a redirect loop is only legible as a list.
+ *
+ * Not reachable without `withSafeRedirects()`: `fetch` enforces its own
+ * cap internally and reports exhaustion as a generic failure.
+ */
+export class TooManyRedirectsError extends Error {
+  constructor(
+    readonly request: ClientRequest,
+    /** Every URL requested, in order, plus the one that was refused. */
+    readonly chain: readonly string[],
+    readonly maxRedirects: number,
+  ) {
+    super(
+      `Gave up after ${maxRedirects} redirect(s): ${chain.join(" -> ")}. Raise maxRedirects if ` +
+        `the chain is legitimate.`,
+    );
+    this.name = "TooManyRedirectsError";
+  }
+}
+
+/**
  * Thrown when a request matches no registered stub while `Http.fake()` is
  * active. The request is refused rather than falling through to the real
  * network.

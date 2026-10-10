@@ -49,7 +49,18 @@ export type { StubResponse, StubHandler, StubEntry, StubResponseSpec } from "./s
 export type { Sink } from "./sink.js";
 export type { Attachment, AttachmentContents } from "./multipart.js";
 
-export { ConnectionError, RequestFailedError, StrayRequestError } from "./errors.js";
+export {
+  ConnectionError,
+  RequestFailedError,
+  StrayRequestError,
+  TooManyRedirectsError,
+} from "./errors.js";
+
+// Per-hop redirect validation. The piece an app cannot write for itself,
+// because `fetch` follows the whole chain inside one call and the
+// intermediate hops are not observable.
+export { nextHop, redirectTarget, DEFAULT_MAX_REDIRECTS } from "./safe-redirects.js";
+export type { SafeRedirectOptions } from "./safe-redirects.js";
 
 export { RequestSending, ResponseReceived, ConnectionFailed } from "./events.js";
 export type { HttpClientEvent, EventSink } from "./events.js";

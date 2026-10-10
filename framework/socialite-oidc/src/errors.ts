@@ -18,6 +18,32 @@ export class DiscoveryFailedError extends SocialiteError {
 }
 
 /**
+ * A discovery document named an endpoint this driver will not fetch.
+ *
+ * Separate from `DiscoveryFailedError`, which means the document could
+ * not be obtained or did not describe the configured issuer. This one
+ * means it was obtained, describes the right issuer, and still points
+ * somewhere it has no business pointing — which is the shape of an
+ * attack rather than a misconfiguration, and worth distinguishing in a
+ * log.
+ */
+export class UnsafeEndpointError extends SocialiteError {
+  constructor(
+    readonly issuer: string,
+    /** The document key, e.g. `"token_endpoint"`. */
+    readonly endpointName: string,
+    readonly endpoint: string,
+    readonly reason: string,
+  ) {
+    super(
+      `The "${issuer}" discovery document's ${endpointName} ("${endpoint}") will not be used: ` +
+        `${reason}. Endpoints must share the issuer's origin unless their host is listed in ` +
+        `the provider's \`allowEndpointHosts\`.`,
+    );
+  }
+}
+
+/**
  * Why an `id_token` was rejected.
  *
  * Each value is a distinct failure with a distinct operational meaning,

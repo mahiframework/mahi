@@ -419,6 +419,8 @@ everything below follows from that one difference:
   the document's own `issuer` checked against the configured one.
   Without that check a substituted document relocates the
   authorization, token and JWKS endpoints at once.
+- **Every endpoint the document names pinned to the issuer's origin.**
+  See [below](#the-endpoints-come-from-the-document-not-from-you).
 - **Signature** against the JWKS key named by the token's `kid`.
 - **An `alg` allow-list** (`RS256` by default), never the token's own
   claim about itself. This is what rejects `alg: none` and the
@@ -448,7 +450,59 @@ All of it runs inside `user()`, so an app gets it and cannot forget it.
 | `discoveryTtlSeconds` | `3600` | How long the metadata is cached. |
 | `jwksCooldownSeconds` | `30` | Minimum gap between JWKS refetches. |
 | `idTokenOnly` | `false` | Skip userinfo; take identity from the token. |
+| `allowEndpointHosts` | `[]` | Hosts besides the issuer's whose endpoints are acceptable. |
 | `label` | the issuer's host | Display name. |
+
+### The endpoints come from the document, not from you
+
+The issuer URL is yours: you typed it into config, or an admin did. The
+**four endpoints are not.** `.well-known/openid-configuration` supplies
+`authorization_endpoint`, `token_endpoint`, `jwks_uri` and
+`userinfo_endpoint`, and this server afterwards fetches three of them
+and redirects a browser to the fourth. A hostile or compromised issuer
+would otherwise hold a fetch primitive aimed at your network, including
+its instance metadata.
+
+So every endpoint must share the issuer's **origin** — scheme, host and
+port:
+
+```
+issuer:         https://keycloak.test/realms/main
+token_endpoint: https://keycloak.test/realms/main/protocol/openid-connect/token   ✓
+token_endpoint: http://169.254.169.254/latest/meta-data/                          ✗
+token_endpoint: https://evil.test/token                                           ✗
+token_endpoint: https://keycloak.test:8443/token                                  ✗
+```
+
+An origin check rather than an address policy, deliberately. It is
+stronger — a hostile document cannot name *anywhere* you did not
+already pick, including a public host of its own choosing, which an
+address policy would happily allow. And it is cheaper: no DNS, so it
+decides the same way in an air-gapped deployment, costs no resolver
+round trip per login, and is immune to the rebinding race that makes a
+by-name address check advisory. A self-hosted IdP on `192.168.1.10`
+needs no exception, because its issuer is that address too — your
+decision, not the document's.
+
+For the IdPs that genuinely split endpoints across names — Entra ID
+serves `jwks_uri` from `login.microsoftonline.com` while its issuer is
+`sts.windows.net` — name the host:
+
+```ts
+{ driver: "oidc", issuer, allowEndpointHosts: ["login.microsoftonline.com"] }
+```
+
+A named host is trusted as the issuer is, internal addresses included.
+The scheme and credential rules still apply, so a document answering
+with `javascript:` in `end_session_endpoint` is still refused — that one
+is never fetched, but `logoutUrl()` would put it in a `Location` header.
+
+Checked on every discovery fetch rather than once, so an issuer that
+starts answering with a hostile document is caught at the next TTL
+boundary. Raises `UnsafeEndpointError`, which is distinct from
+`DiscoveryFailedError`: the document *was* obtained and *does* describe
+the right issuer, which makes it the shape of an attack rather than a
+misconfiguration.
 
 ### Caching and key rotation
 
@@ -500,6 +554,7 @@ reassignable, and keying on either is a known account-takeover vector.
 | Error | When |
 |---|---|
 | `DiscoveryFailedError` | The metadata was unreachable, malformed, or declared a different issuer. |
+| `UnsafeEndpointError` | The metadata named an endpoint off the issuer's origin. |
 | `IdTokenInvalidError` | The token failed validation. Carries `reason`. |
 | `SubjectMismatchError` | userinfo describes a different subject. |
 | `EndpointUnsupportedError` | The issuer advertises no endpoint the driver needs. |

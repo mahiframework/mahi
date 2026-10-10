@@ -31,6 +31,7 @@ if (response.successful()) {
 - [Concurrent requests](#concurrent-requests)
 - [Streaming and downloads](#streaming-and-downloads)
 - [Testing](#testing)
+- [Outbound URL safety](#outbound-url-safety)
 - [Configuration](#configuration)
 - [Differences from Laravel](#differences-from-laravel)
 
@@ -239,6 +240,8 @@ Errors:
 |---|---|
 | `ConnectionError` | The transport failed. No response was received. |
 | `RequestFailedError` | A failed status, and you opted into throwing. |
+| `TooManyRedirectsError` | A `withSafeRedirects()` chain exceeded its hop cap. Carries the chain. |
+| `UnsafeUrlError` | A `withSafeRedirects()` hop failed its policy. From `@mahiframework/core`. |
 | `StrayRequestError` | A request matched no stub while faking. Never thrown in production. |
 
 `StrayRequestError` extends `Error` directly, not a shared base, so
@@ -398,15 +401,77 @@ it("notifies the webhook", async () => {
 An unmatched request raises `StrayRequestError` rather than reaching the
 network. `Http.allowStrayRequests()` opts out.
 
-## A note on SSRF
+## Outbound URL safety
 
-Like Laravel's client, this package does **not** apply an allow/deny list
-to request hosts: a URL built from user input can reach internal addresses
-(`169.254.169.254`, `localhost`, RFC 1918 ranges). If any part of a request
-URL is attacker-influenced, validate the host before sending, reject
-non-public addresses, or restrict to an explicit allow-list of hosts. The
-transport seam (`withTransport()`) or a request middleware is the natural
-place to enforce this centrally.
+Nothing is validated by default. A URL built from user input can reach
+`169.254.169.254`, `localhost` or an RFC 1918 address, and the client
+will fetch it — which is correct for a client whose caller chose the
+URL, and a problem the moment any part of one is attacker-influenced.
+
+Two pieces, because they answer different questions.
+
+**`assertSafeUrl()`**, from `@mahiframework/core`, for a single URL.
+Pure, no HTTP dependency:
+
+```ts
+import { assertSafeUrl, UnsafeUrlError } from "@mahiframework/core";
+
+try {
+  await assertSafeUrl(input);                       // public targets only
+  await assertSafeUrl(input, { allowPrivate: true }); // plus your LAN
+} catch (error) {
+  if (error instanceof UnsafeUrlError) {
+    return response.unprocessable({ url: error.rule });
+  }
+}
+```
+
+It rejects a scheme outside `["https:", "http:"]`, credentials in the
+URL, a host that resolves to nothing, and any resolved address that is
+loopback, RFC 1918, link-local, CGNAT or an IPv6 equivalent. **Cloud
+metadata addresses are rejected even under `allowPrivate: true`** —
+that setting is the normal one for a self-hosted app talking to its own
+network, and the metadata address sits inside the range it opens.
+`error.rule` names what rejected, so a UI can say which.
+
+**`withSafeRedirects()`**, here, for the chain:
+
+```ts
+await Http.withSafeRedirects({ maxRedirects: 3 }).get(url);
+```
+
+This is the piece you cannot write yourself. `fetch` follows the whole
+redirect chain inside one call and exposes only the final URL, so a
+request middleware sees one public URL while a hop to `127.0.0.1`
+happens unobserved. Driving the chain manually means reimplementing 303
+method rewriting, 307/308 body replay, cross-host credential stripping
+and a hop cap — so the package does it:
+
+| | |
+|---|---|
+| Every hop, including the first | validated before the request goes out |
+| 303 | rewritten to `GET`, body dropped |
+| 301/302 on a `POST` | rewritten to `GET` |
+| 307/308 | method and body preserved |
+| Cross-host hop | `Authorization` and `Cookie` dropped |
+| Past the cap | `TooManyRedirectsError`, carrying the chain |
+
+> [!WARNING]
+> **A hostname check is time-of-check-to-time-of-use racy.**
+> `assertSafeUrl()` resolves the host; the transport then resolves it
+> again, and a name that answered a public address the first time can
+> answer `127.0.0.1` the second — DNS rebinding. Closing that means
+> connecting to the address that was validated while carrying the
+> original hostname in `Host`, which needs a custom `undici` dispatcher
+> with a pinned `lookup`; `undici` is not a dependency of this package,
+> and Node's `fetch` silently *discards* a caller-supplied `Host`
+> header, so the obvious workaround fails quietly. Treat a pass as
+> "not obviously hostile", not as a guarantee.
+
+Validate at **fetch** time, not only when a URL is saved. A save-time
+check is a rebinding hole by construction: the host that validated when
+an admin pressed save resolves again, later, from a different process.
+A save-time pass is for the error message.
 
 ## Configuration
 

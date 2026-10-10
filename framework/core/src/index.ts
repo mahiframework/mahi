@@ -114,3 +114,13 @@ export {
 } from "./paths.js";
 
 export { TempFile, withTemporaryFile, sweepOrphans } from "./temp-file.js";
+
+export {
+  UnsafeUrlError,
+  assertSafeUrl,
+  isAllowedAddress,
+  isMetadataAddress,
+  isPrivateAddress,
+  resolveSafeAddresses,
+} from "./url-safety.js";
+export type { UnsafeUrlRule, UrlPolicy } from "./url-safety.js";

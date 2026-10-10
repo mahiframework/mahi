@@ -7,6 +7,7 @@ import { urlMatch } from "./matching.js";
 import type { AttachmentContents } from "./multipart.js";
 import type { BodyFormat, PendingRequest } from "./pending-request.js";
 import { ResponseSequence } from "./response-sequence.js";
+import type { SafeRedirectOptions } from "./safe-redirects.js";
 import type { StubEntry, StubHandler, StubResponse, StubResponseSpec } from "./stub.js";
 import type { Transport } from "./transport.js";
 
@@ -151,6 +152,14 @@ export class Http {
 
   static withoutRedirecting(): PendingRequest {
     return factory.request().withoutRedirecting();
+  }
+
+  /**
+   * Follow redirects, validating every hop's target before requesting
+   * it. See `PendingRequest.withSafeRedirects()`.
+   */
+  static withSafeRedirects(options?: SafeRedirectOptions): PendingRequest {
+    return factory.request().withSafeRedirects(options);
   }
 
   static withCookies(cookies: Record<string, string>): PendingRequest {

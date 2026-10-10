@@ -1597,6 +1597,76 @@ const path = await file.keep();   // opt out of every sweeper
 artifact that exists precisely to outlive the run. The file becomes yours
 to remove.
 
+## Outbound URL safety
+
+```ts
+import { assertSafeUrl, UnsafeUrlError } from "@mahiframework/core";
+```
+
+Validate a URL before fetching it, for the case where the URL came from
+somewhere other than you: a webhook target an admin typed, an avatar URL
+to mirror, an endpoint out of a remote discovery document.
+
+```ts
+const url = await assertSafeUrl(input);                       // public only
+const lan = await assertSafeUrl(input, { allowPrivate: true }); // plus the LAN
+```
+
+Rejected by default: a scheme outside `["https:", "http:"]`, credentials
+in the URL (`https://user:pass@host/`), a host that resolves to nothing,
+and any resolved address that is loopback, RFC 1918, link-local, CGNAT
+(`100.64/10`), IPv6 ULA, multicast or otherwise not globally routable.
+*Every* resolved address must pass, not just the first — a host with one
+public and one loopback `A` record is refused, because which one a
+connection picks is not this function's to decide.
+
+**Cloud metadata addresses are refused even under
+`allowPrivate: true`.** `allowPrivate` is the normal setting for a
+self-hosted app reaching its own NAS, and `169.254.169.254` is inside
+the link-local range that setting opens — so the exception has to
+survive it. Nothing legitimate lives there, and the response is a
+credential.
+
+`UnsafeUrlError.rule` names what rejected, so a form can explain itself
+rather than reporting a generic failure: `"scheme"`, `"credentials"`,
+`"host"`, `"dns"`, `"private"`, `"metadata"` or `"parse"`.
+
+| | |
+|---|---|
+| `schemes` | The allow-list. Default `["https:", "http:"]`. |
+| `allowPrivate` | Permit private/loopback/link-local. Default `false`. |
+| `rejectCredentials` | Refuse userinfo in the URL. Default `true`. |
+| `allowHosts` | Hosts accepted by name, skipping address checks. |
+
+`allowHosts` is the narrow escape hatch: one internal target
+(`{ allowHosts: ["nas.internal"] }`) rather than opening the whole
+private space. The scheme and credential rules still apply.
+
+Three smaller pieces, for a caller holding an address rather than a URL:
+
+```ts
+isPrivateAddress("10.0.0.1");                 // true
+isMetadataAddress("169.254.169.254");         // true
+isAllowedAddress(addr, { allowPrivate: true });
+await resolveSafeAddresses(url);              // validated, in resolution order
+```
+
+> [!WARNING]
+> **A hostname check is time-of-check-to-time-of-use racy.** This
+> resolves the host; whatever performs the request resolves it *again*,
+> and a name can answer differently the second time — DNS rebinding,
+> against which a by-name check is decorative. Closing it means
+> connecting to the validated address while carrying the original
+> hostname in `Host`, which needs a pinned resolver, and Node's `fetch`
+> silently discards a caller-supplied `Host` header. Treat a pass as
+> "not obviously hostile". Validate at fetch time, not only at save
+> time: a save-time check is a rebinding hole by construction.
+
+For a URL that may redirect, the hops matter as much as the target — see
+[`Http.withSafeRedirects()`](../http-client/README.md#outbound-url-safety),
+which validates each one. `fetch` does not expose intermediate hops, so
+this function alone cannot see them.
+
 ## `@mahiframework/pipeline`
 
 ```ts

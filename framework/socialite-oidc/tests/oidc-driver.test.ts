@@ -1,7 +1,12 @@
 import { Http } from "@mahiframework/http-client";
 import { generateSecret } from "jose";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { DiscoveryFailedError, IdTokenInvalidError, SubjectMismatchError } from "../src/errors.js";
+import {
+  DiscoveryFailedError,
+  IdTokenInvalidError,
+  SubjectMismatchError,
+  UnsafeEndpointError,
+} from "../src/errors.js";
 import {
   callbackRequest,
   captureError,
@@ -139,6 +144,160 @@ describe("discovery", () => {
 
     expect(error).toBeInstanceOf(DiscoveryFailedError);
     expect(String(error)).toContain("HTTP 503");
+  });
+});
+
+describe("the endpoints a discovery document names", () => {
+  // The issuer URL is admin-entered and so is trusted; the four
+  // endpoints the document supplies are not, and this server fetches
+  // every one of them. Pinning them to the issuer's origin is what keeps
+  // a compromised issuer from becoming a fetch primitive aimed at the
+  // deployment's own network.
+
+  it("rejects a token_endpoint pointed at the LAN, before the token call", async () => {
+    const instance = await setup();
+    fakeIssuer({ keys, discovery: { token_endpoint: "http://192.168.1.10/token" } });
+
+    // Raised from discovery, which runs on `redirect()` — so the token
+    // call never happens, rather than being blocked once it is in flight.
+    const error = await captureError(instance.manager.driver("work").redirect(redirectRequest()));
+
+    expect(error).toBeInstanceOf(UnsafeEndpointError);
+    expect((error as UnsafeEndpointError).endpointName).toBe("token_endpoint");
+    Http.assertNotSent("192.168.1.10/token");
+  });
+
+  it("reaches a self-hosted IdP's own LAN endpoints without a flag", async () => {
+    // An internal issuer is the admin's decision, so its own endpoints
+    // need no exception — the origin check already accepts them, and
+    // requiring `allowPrivate` here is how apps learn to set it
+    // everywhere.
+    const issuer = "https://192.168.1.10/realms/main";
+    const instance = await setup(oidcConfig({ issuer }));
+
+    Http.fake({
+      "192.168.1.10/realms/main/.well-known/openid-configuration": {
+        issuer,
+        authorization_endpoint: `${issuer}/auth`,
+        token_endpoint: `${issuer}/token`,
+        jwks_uri: `${issuer}/certs`,
+      },
+    });
+
+    await expect(instance.manager.driver("work").redirect(redirectRequest())).resolves.toContain(
+      "/auth",
+    );
+  });
+
+  it("rejects a jwks_uri pointed at the metadata endpoint", async () => {
+    const instance = await setup();
+    fakeIssuer({
+      keys,
+      discovery: { jwks_uri: "http://169.254.169.254/latest/meta-data/iam/security-credentials/" },
+    });
+
+    const error = await captureError(instance.manager.driver("work").redirect(redirectRequest()));
+
+    expect(error).toBeInstanceOf(UnsafeEndpointError);
+    expect((error as UnsafeEndpointError).endpointName).toBe("jwks_uri");
+  });
+
+  it("rejects a userinfo_endpoint on another host", async () => {
+    const instance = await setup();
+    fakeIssuer({ keys, discovery: { userinfo_endpoint: "https://evil.test/userinfo" } });
+
+    const error = await captureError(instance.manager.driver("work").redirect(redirectRequest()));
+
+    expect(error).toBeInstanceOf(UnsafeEndpointError);
+    expect(String(error)).toContain("not in allowHosts");
+  });
+
+  it("rejects an authorization_endpoint on a different port of the same host", async () => {
+    // Origin, not host: a sidecar on another port of the same box is a
+    // different service, and the issuer named one port.
+    const instance = await setup();
+    fakeIssuer({ keys, discovery: { authorization_endpoint: "https://idp.test:8443/auth" } });
+
+    const error = await captureError(instance.manager.driver("work").redirect(redirectRequest()));
+
+    expect(error).toBeInstanceOf(UnsafeEndpointError);
+  });
+
+  it("rejects an end_session_endpoint with a hostile scheme", async () => {
+    // Never fetched, but `logoutUrl()` puts it in a Location header.
+    const instance = await setup();
+    fakeIssuer({ keys, discovery: { end_session_endpoint: "javascript:alert(1)" } });
+
+    const error = await captureError(instance.manager.driver("work").redirect(redirectRequest()));
+
+    expect(error).toBeInstanceOf(UnsafeEndpointError);
+    expect((error as UnsafeEndpointError).endpointName).toBe("end_session_endpoint");
+  });
+
+  it("rejects an endpoint carrying credentials", async () => {
+    const instance = await setup();
+    fakeIssuer({ keys, discovery: { token_endpoint: `https://u:p@idp.test/realms/main/token` } });
+
+    const error = await captureError(instance.manager.driver("work").redirect(redirectRequest()));
+
+    expect(error).toBeInstanceOf(UnsafeEndpointError);
+  });
+
+  it("rejects an endpoint that is not a URL", async () => {
+    const instance = await setup();
+    fakeIssuer({ keys, discovery: { token_endpoint: "/relative/token" } });
+
+    const error = await captureError(instance.manager.driver("work").redirect(redirectRequest()));
+
+    expect(error).toBeInstanceOf(UnsafeEndpointError);
+    expect(String(error)).toContain("not a valid URL");
+  });
+
+  it("accepts an off-origin endpoint whose host was named", async () => {
+    // Entra ID's jwks_uri is on login.microsoftonline.com while its
+    // issuer is sts.windows.net, so the escape hatch has to work.
+    const instance = await setup(oidcConfig({ allowEndpointHosts: ["keys.idp.test"] }));
+    fakeIssuer({ keys, discovery: { jwks_uri: "https://keys.idp.test/certs" } });
+
+    await expect(instance.manager.driver("work").redirect(redirectRequest())).resolves.toContain(
+      "/protocol/openid-connect/auth",
+    );
+  });
+
+  it("still rejects a hostile scheme on a named host", async () => {
+    // Naming a host permits the host, not whatever the document wants to
+    // do with it.
+    const instance = await setup(oidcConfig({ allowEndpointHosts: ["keys.idp.test"] }));
+    fakeIssuer({ keys, discovery: { jwks_uri: "ftp://keys.idp.test/certs" } });
+
+    const error = await captureError(instance.manager.driver("work").redirect(redirectRequest()));
+
+    expect(error).toBeInstanceOf(UnsafeEndpointError);
+  });
+
+  it("accepts a document whose endpoints are all the issuer's own", async () => {
+    const instance = await setup();
+    fakeIssuer({ keys });
+
+    await expect(instance.manager.driver("work").redirect(redirectRequest())).resolves.toContain(
+      "/protocol/openid-connect/auth",
+    );
+  });
+
+  it("does not require optional endpoints to be present", async () => {
+    const instance = await setup();
+    Http.fake({
+      "idp.test/realms/main/.well-known/openid-configuration": {
+        issuer: ISSUER,
+        authorization_endpoint: `${ISSUER}/auth`,
+        token_endpoint: `${ISSUER}/token`,
+        jwks_uri: `${ISSUER}/certs`,
+      },
+    });
+
+    await expect(instance.manager.driver("work").redirect(redirectRequest())).resolves.toContain(
+      "/auth",
+    );
   });
 });
 
