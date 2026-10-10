@@ -3068,6 +3068,51 @@ function isClassConstructor(value: (...args: any[]) => any): boolean {
 }
 
 /**
+ * The property descriptor for `prop` anywhere on `prototype`'s chain,
+ * or null, memoised per prototype.
+ *
+ * The chain walk is only needed to tell an ACCESSOR from a method or a
+ * data property (see the handler below), which is a property of the
+ * class rather than of the instance — so it is cached per prototype and
+ * paid once per class per property name. A `WeakMap` keyed on the
+ * prototype, so a class defined inside a test function is collectable.
+ */
+const descriptorCache = new WeakMap<object, Map<string, PropertyDescriptor | null>>();
+
+function findDescriptor(prototype: object, prop: string): PropertyDescriptor | null {
+  let cache = descriptorCache.get(prototype);
+
+  if (cache === undefined) {
+    cache = new Map();
+    descriptorCache.set(prototype, cache);
+  }
+
+  const cached = cache.get(prop);
+
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  let current: object | null = prototype;
+
+  while (current !== null && current !== Object.prototype) {
+    const descriptor = Object.getOwnPropertyDescriptor(current, prop);
+
+    if (descriptor !== undefined) {
+      cache.set(prop, descriptor);
+
+      return descriptor;
+    }
+
+    current = Object.getPrototypeOf(current);
+  }
+
+  cache.set(prop, null);
+
+  return null;
+}
+
+/**
  * The `Proxy` handler wrapping every `Model` instance so attribute access
  * casts transparently (`post.published` reads the DB `0`/`1` as a
  * `boolean`; assigning a `boolean` writes back the int) while real
@@ -3084,6 +3129,28 @@ function isClassConstructor(value: (...args: any[]) => any): boolean {
  * a `WeakMap` keyed by both
  * target and proxy, so `this.$state` resolves whichever `this` is.
  *
+ * GETTERS AND SETTERS ARE INVOKED ON THE RECEIVER for the same reason,
+ * and this needs saying because the naive `Reflect.get(target, prop,
+ * target)` is wrong for them in two ways at once. A getter run with
+ * `this = target` reads `this.name` as `undefined` — the target holds no
+ * attributes, they live in the state record — so
+ * `get isArchived() { return this.archived_at !== null; }` answered
+ * `true` for a null column, which is both wrong and silent. And because
+ * subclass field initialisers run AFTER `super()` has already returned
+ * the proxy, a `#private` field is installed on the PROXY, so a getter
+ * touching one threw "Cannot read private member from an object whose
+ * class did not declare it". A setter had the matching write-side
+ * failure: `set renamed(v) { this.name = v; }` with `this = target`
+ * assigned a shadow own property instead of routing through
+ * `setAttribute()`, leaving the model not dirty and the change dropped
+ * by the next `save()`.
+ *
+ * Accessors are therefore detected on the prototype chain and `.call`ed
+ * with the receiver. Data properties and methods keep the existing
+ * `target` receiver: handing `Reflect.set` the proxy for a plain
+ * property would make it define that property ON the proxy, re-entering
+ * this trap forever.
+ *
  * The `constructor` property is deliberately returned UNBOUND (the raw
  * class), so `Object.getPrototypeOf(instance).constructor` and
  * `instance.constructor.table` still reach the model class's statics.
@@ -3096,6 +3163,14 @@ const MODEL_PROXY_HANDLER: ProxyHandler<Model> = {
     }
 
     if (prop in target) {
+      const descriptor = findDescriptor(target, prop);
+
+      // An accessor runs on the receiver, so `this` inside it reads
+      // attributes and reaches private fields. See the header.
+      if (descriptor?.get !== undefined) {
+        return descriptor.get.call(receiver ?? target);
+      }
+
       const value = Reflect.get(target, prop, target);
 
       if (typeof value !== "function") {
@@ -3134,11 +3209,33 @@ const MODEL_PROXY_HANDLER: ProxyHandler<Model> = {
 
     return target.getAttribute(prop);
   },
-  set(target, prop, value) {
+  set(target, prop, value, receiver) {
     if (typeof prop === "string" && !(prop in target)) {
       target.setAttribute(prop, value);
 
       return true;
+    }
+
+    if (typeof prop === "string") {
+      const descriptor = findDescriptor(target, prop);
+
+      // A declared setter runs on the receiver, so `this.name = v`
+      // inside it routes through this trap and reaches `setAttribute()`
+      // rather than defining a shadow own property that dirty tracking
+      // never sees. See the header.
+      if (descriptor?.set !== undefined) {
+        descriptor.set.call(receiver ?? target, value);
+
+        return true;
+      }
+
+      // A getter with no setter. Assigning is a silent no-op in sloppy
+      // mode and a TypeError in strict; either way `Reflect.set` against
+      // the target would be the wrong answer, so report the failure and
+      // let the caller's own strictness decide.
+      if (descriptor?.get !== undefined) {
+        return false;
+      }
     }
 
     return Reflect.set(target, prop, value, target);

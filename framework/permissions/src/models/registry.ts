@@ -31,17 +31,12 @@ export const permissionModels: PermissionModels = {
  * and the cached role map is built from whichever class was current.
  *
  *   export class AppRole extends Role {
- *     label(): string {
+ *     get label(): string {
  *       return Str.headline(this.name);
  *     }
  *   }
  *
  *   usePermissionModels({ role: AppRole });
- *
- * A METHOD, not a getter. A model instance is handed out behind a proxy
- * that resolves attribute reads, and it binds methods to that proxy but
- * forwards a getter to the raw instance — so `this.name` inside a getter
- * reads `undefined` rather than the column.
  *
  * Typed `typeof Role`/`typeof Permission`, not `AnyModelClass`.
  * `AnyModelClass` is `typeof BaseModel`, which carries no attribute

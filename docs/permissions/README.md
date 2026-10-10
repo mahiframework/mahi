@@ -546,7 +546,7 @@ class, register it:
 import { Role, usePermissionModels } from "@mahiframework/permissions";
 
 export class AppRole extends Role {
-  label(): string {
+  get label(): string {
     return Str.headline(this.name);
   }
 }
@@ -557,11 +557,6 @@ usePermissionModels({ role: AppRole });
 Call it from a provider's `register()`, before `bootstrap()`. Calling it
 later is not wrong so much as partial: anything already read through the
 old class stays an instance of it.
-
-A **method**, not a getter. A model instance is handed out behind a proxy
-that resolves attribute reads, and it binds methods to that proxy but
-forwards a getter to the raw instance — so `this.name` inside a getter
-reads `undefined`.
 
 Overriding either class covers the registrar's reads and writes, the
 relation helpers, the cache-invalidation listener and the queue codec

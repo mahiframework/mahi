@@ -916,9 +916,11 @@ proxy, when that is what the caller holds:
 ```ts
 get(target, prop, receiver) {
   if (prop in target) {
+    const descriptor = findDescriptor(target, prop);
+    if (descriptor?.get) return descriptor.get.call(receiver ?? target);
     const value = Reflect.get(target, prop, target);
     if (typeof value !== "function") return value;
-    if (prop === "constructor") return value;
+    if (isClassConstructor(value)) return value;
     return value.bind(receiver ?? target);
   }
   if (target.relationLoaded(prop)) return target.getRelation(prop);
@@ -941,6 +943,44 @@ class Post extends Model<PostAttributes>()({ table: "posts", casts: { published:
 
 `this.toObject()` is the right call when the consumer wants plain
 row data rather than a live instance, policies, gates, raw inserts.
+
+### `get`/`set` accessors work the same way
+
+A getter or setter declared on a model class is **invoked on the
+receiver**, not on the bare instance, so the same rules apply: reads
+resolve casted attributes, writes route through `setAttribute()` and so
+are dirty-tracked, and `#private` fields are reachable.
+
+```ts
+class Article extends Model<ArticleAttributes>()({ table: "articles" }) {
+  get isArchived(): boolean {
+    return this.archived_at !== null;          // reads the column
+  }
+
+  set renamed(value: string) {
+    this.title = value;                        // dirty-tracked, saved
+  }
+}
+```
+
+That accessors are singled out here is not decoration. They are the one
+member kind where the receiver decides whether the code works at all: a
+getter run against the bare instance sees no attributes (they live in a
+state record, not on the object) and cannot reach private state, because
+subclass field initialisers run *after* `super()` has already returned
+the proxy. Both failures would be silent — a getter reading `undefined`,
+a setter writing a shadow property that `save()` then ignores — so the
+distinction is load-bearing rather than a detail.
+
+Assigning to a getter that declares no setter fails as it would on a
+plain object: a `TypeError` in a module (modules are always strict).
+
+A plain getter and a `static accessors` entry are not interchangeable,
+and the difference is serialisation. A declared accessor is addressable
+by name, so it can be listed in `appends` and appear in `toJSON()`; a
+class getter is invisible to both. Reach for a getter when the value is
+for your own code to read, and for `accessors` when it needs to go out
+on the wire.
 
 ### Enumeration sees columns only: not relations or appends
 
@@ -979,7 +1019,7 @@ Spreading sits between the two and is rarely what you want.
 
 | Trap | Behaviour |
 |---|---|
-| `set` | Unknown string key → `setAttribute()` (casts in). Known key → normal set. |
+| `set` | Unknown string key → `setAttribute()` (casts in). Declared setter → called on the receiver. Getter with no setter → refused. Otherwise a normal set. |
 | `has` | `true` for any stored attribute, else `Reflect.has`. |
 | `deleteProperty` | Removes a stored attribute, else `Reflect.deleteProperty`. |
 

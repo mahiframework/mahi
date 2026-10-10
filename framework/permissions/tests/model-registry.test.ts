@@ -12,18 +12,18 @@ import { createHarness, makeUser, type Harness } from "./__fixtures__/test-app.j
  * without a second migration — the point under test is which class the
  * PACKAGE's own queries produce, not what the subclass holds.
  *
- * A method rather than a getter, deliberately: the model proxy binds
- * methods to itself but forwards a getter to the raw instance, so
- * `this.name` in a getter reads `undefined`.
+ * A getter, matching what the docs tell an app to write. That accessors
+ * resolve attributes at all is pinned in `framework/database`'s own
+ * suite; here it only has to keep working through the registry.
  */
 class AppRole extends Role {
-  shoutedName(): string {
+  get shoutedName(): string {
     return this.name.toUpperCase();
   }
 }
 
 class AppPermission extends Permission {
-  shoutedName(): string {
+  get shoutedName(): string {
     return this.name.toUpperCase();
   }
 }
@@ -48,7 +48,7 @@ describe("usePermissionModels", () => {
     const role = await harness.registrar.createRole("admin");
 
     expect(role).toBeInstanceOf(AppRole);
-    expect((role as AppRole).shoutedName()).toBe("ADMIN");
+    expect((role as AppRole).shoutedName).toBe("ADMIN");
   });
 
   it("makes the package's own reads produce the subclass", async () => {

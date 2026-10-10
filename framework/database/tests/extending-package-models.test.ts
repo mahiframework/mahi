@@ -190,6 +190,13 @@ describe("subclassing a package model", () => {
 
     expect(viaSubclass.archived_at).toBeInstanceOf(DateTime);
     expect(viaSubclass.isArchived).toBe(true);
+    // Both directions, because `isArchived` is a GETTER and the proxy
+    // used to run those against the bare target — where attributes do
+    // not live. `this.archived_at` read `undefined`, so the comparison
+    // against null answered `true` whatever the column held, and the
+    // true case above passed for the wrong reason.
+    await Role.query().insert({ id: "r3b", name: "editor", archived_at: null });
+    expect((await AppRole.findOrFail("r3b")).isArchived).toBe(false);
     // The package's own class never learned about the column's type.
     expect(typeof (viaPackage as unknown as Record<string, unknown>)["archived_at"]).toBe("string");
   });
