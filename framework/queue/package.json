@@ -27,7 +27,7 @@
     "@mahiframework/mail": "workspace:*",
     "@mahiframework/pipeline": "workspace:*",
     "@mahiframework/tui": "workspace:*",
-    "commander": "^12.1.0",
+    "commander": "^15.0.0",
     "kysely": "^0.29.5"
   },
   "devDependencies": {

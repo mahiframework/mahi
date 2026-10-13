@@ -72,8 +72,8 @@ importers:
         specifier: workspace:*
         version: link:../http
       commander:
-        specifier: ^12.1.0
-        version: 12.1.0
+        specifier: ^15.0.0
+        version: 15.0.0
     devDependencies:
       typescript:
         specifier: ^6.0.3
@@ -112,8 +112,8 @@ importers:
         specifier: workspace:*
         version: link:../http
       commander:
-        specifier: ^12.1.0
-        version: 12.1.0
+        specifier: ^15.0.0
+        version: 15.0.0
       hono:
         specifier: ^4.13.12
         version: 4.13.12
@@ -214,8 +214,8 @@ importers:
         specifier: workspace:*
         version: link:../facades
       commander:
-        specifier: ^12.1.0
-        version: 12.1.0
+        specifier: ^15.0.0
+        version: 15.0.0
     devDependencies:
       typescript:
         specifier: ^6.0.3
@@ -239,8 +239,8 @@ importers:
         specifier: workspace:*
         version: link:../tui
       commander:
-        specifier: ^12.1.0
-        version: 12.1.0
+        specifier: ^15.0.0
+        version: 15.0.0
     devDependencies:
       typescript:
         specifier: ^6.0.3
@@ -376,8 +376,8 @@ importers:
         specifier: ^0.41.1
         version: 0.41.1
       commander:
-        specifier: ^12.1.0
-        version: 12.1.0
+        specifier: ^15.0.0
+        version: 15.0.0
     devDependencies:
       typescript:
         specifier: ^6.0.3
@@ -436,8 +436,8 @@ importers:
         specifier: workspace:*
         version: link:../tui
       commander:
-        specifier: ^12.1.0
-        version: 12.1.0
+        specifier: ^15.0.0
+        version: 15.0.0
     devDependencies:
       '@mahiframework/cache':
         specifier: workspace:*
@@ -503,8 +503,8 @@ importers:
         specifier: workspace:*
         version: link:../validation
       commander:
-        specifier: ^12.1.0
-        version: 12.1.0
+        specifier: ^15.0.0
+        version: 15.0.0
       hono:
         specifier: ^4.13.12
         version: 4.13.12
@@ -577,8 +577,8 @@ importers:
         specifier: workspace:*
         version: link:../http
       commander:
-        specifier: ^12.1.0
-        version: 12.1.0
+        specifier: ^15.0.0
+        version: 15.0.0
     devDependencies:
       '@mahiframework/encryption':
         specifier: workspace:*
@@ -654,8 +654,8 @@ importers:
         specifier: workspace:*
         version: link:../storage
       commander:
-        specifier: ^12.1.0
-        version: 12.1.0
+        specifier: ^15.0.0
+        version: 15.0.0
     devDependencies:
       typescript:
         specifier: ^6.0.3
@@ -796,8 +796,8 @@ importers:
         specifier: workspace:*
         version: link:../http
       commander:
-        specifier: ^12.1.0
-        version: 12.1.0
+        specifier: ^15.0.0
+        version: 15.0.0
     devDependencies:
       typescript:
         specifier: ^6.0.3
@@ -866,8 +866,8 @@ importers:
         specifier: workspace:*
         version: link:../tui
       commander:
-        specifier: ^12.1.0
-        version: 12.1.0
+        specifier: ^15.0.0
+        version: 15.0.0
       kysely:
         specifier: ^0.29.5
         version: 0.29.5
@@ -940,8 +940,8 @@ importers:
         specifier: workspace:*
         version: link:../tui
       commander:
-        specifier: ^12.1.0
-        version: 12.1.0
+        specifier: ^15.0.0
+        version: 15.0.0
     devDependencies:
       typescript:
         specifier: ^6.0.3
@@ -983,8 +983,8 @@ importers:
         specifier: workspace:*
         version: link:../validation
       commander:
-        specifier: ^12.1.0
-        version: 12.1.0
+        specifier: ^15.0.0
+        version: 15.0.0
     devDependencies:
       typescript:
         specifier: ^6.0.3
@@ -1276,8 +1276,8 @@ importers:
         specifier: workspace:*
         version: link:../tui
       commander:
-        specifier: ^12.1.0
-        version: 12.1.0
+        specifier: ^15.0.0
+        version: 15.0.0
       kysely:
         specifier: ^0.29.5
         version: 0.29.5
@@ -2125,9 +2125,9 @@ packages:
     resolution: {integrity: sha512-rwHwUfXL40Chm1r08yrhU3qpUvdVlgkKNeyeGPOxnW8/SyVDvgRaed/Uz54AqWNaTCAThlj6QAs3TZcKI0xDEw==}
     engines: {node: '>=0.10.0'}
 
-  commander@12.1.0:
-    resolution: {integrity: sha512-Vw8qHK3bZM9y/P10u3Vib8o/DdkvA2OtPtZvD871QKjy74Wj1WSKFILMPRPSdUSx5RFK1arlJzEtA4PkFgnbuA==}
-    engines: {node: '>=18'}
+  commander@15.0.0:
+    resolution: {integrity: sha512-z67u4ZhzCL/Tydu1lJARtEZYWbWaN7oYLHbsuzocr6y4N6WZAagG3RQ4FW61V1/0+jImpj293XfrcYnd1qxtPg==}
+    engines: {node: '>=22.12.0'}
 
   cpu-features@0.0.10:
     resolution: {integrity: sha512-9IkYqtX3YHPCzoVg1Py+o9057a3i0fp7S530UWokCSaFVTc7CwXPRiOjRjBQQ18ZCNafx78YfnG+HALxtVmOGA==}
@@ -3662,7 +3662,7 @@ snapshots:
 
   cluster-key-slot@1.1.1: {}
 
-  commander@12.1.0: {}
+  commander@15.0.0: {}
 
   cpu-features@0.0.10:
     dependencies:
