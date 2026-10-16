@@ -47,7 +47,7 @@ Four shortcut factories skip the first call:
 | `numberRule(message?)` | `rule().number(message)` |
 | `booleanRule(message?)` | `rule().boolean(message)` |
 | `fileRule(message?)` | `rule().file(message)` |
-| `objectRule(shape)` | `rule().object(shape)` |
+| `objectRule(shape?)` | `rule().object(shape)` |
 
 Nearly every method takes an optional trailing `message` to override the
 default error for that step.
@@ -65,7 +65,8 @@ These set the value type and coerce the validated output.
 | `boolean(message?)` | `boolean` | `true`/`1`/`"1"`/`"true"`/`"on"`/`"yes"` and their falsy counterparts `false`/`0`/`"0"`/`"false"`/`"off"`/`"no"` |
 | `email(message?)` | `string` | A string matching `/^[^\s@]+@[^\s@]+\.[^\s@]+$/` |
 | `array<I>(item?)` | `I[]` | An array. A lone `File` is wrapped into `[file]`. `item` validates each element. |
-| `object(shape, message?)` | Inferred from `shape` | A non-null, non-array, non-`File` object |
+| `object(shape, message?)` | Inferred from `shape` | A non-null, non-array, non-`File` object. `shape` validates each declared key. |
+| `object(message?)` | `Record<string, unknown>` | Same, but with no shape the contents pass through unchanged |
 | `file(message?)` | `File` | A Web `File` instance |
 | `image(message?)` | `File` | A `File` whose MIME is jpeg/png/gif/webp/bmp/svg+xml |
 
@@ -448,6 +449,39 @@ expected produces "must be a string" alone, not that plus a nonsensical
 
 Keys not in the shape are **stripped** from the validated output, same as at
 the top level.
+
+### Objects of unknown shape
+
+Call `object()` with **no shape** for a bag whose schema isn't known at
+rule-declaration time, and the contents pass through unchanged. It still
+asserts the value is a non-null, non-array, non-`File` object, and the
+inferred type is `Record<string, unknown>`:
+
+```ts
+{
+  driver_key: rule().string().required().in(installedDriverKeys()),
+  // checked later, against the chosen driver's own field schema
+  config: rule().object().optional(),
+}
+// input { driver_key: "s3", config: { bucket: "backups", region: "ap-southeast-2" } }
+// validated().config → { bucket: "backups", region: "ap-southeast-2" }
+```
+
+This mirrors `array()` with no item rule. The two read alike on purpose:
+
+```ts
+rule().array().optional()     // → ["a", "b"]                 contents preserved
+rule().object().optional()    // → { host: "example.test" }   contents preserved
+rule().object({}).optional()  // → {}                         every key stripped
+```
+
+> **`object({})` is not the shapeless form.** An empty shape is a
+> declaration that the object has no keys, so it strips every one, and
+> the rule still passes. If you mean "any object", omit the argument.
+
+Validating a shapeless bag against a schema chosen by another field is a
+second validation pass; see
+[`passedValidation()`](../requests/#passedvalidation).
 
 ### Dotted rule keys
 

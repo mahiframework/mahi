@@ -200,14 +200,38 @@ export class Rule<T = unknown, P extends Presence = "required"> {
     return this as unknown as Rule<File, P>;
   }
 
+  /**
+   * With a `shape`: validate each declared key and return **only** those
+   * keys. With no `shape`: assert the value is a non-null, non-array,
+   * non-`File` object and return it **unchanged**.
+   *
+   * The no-shape form mirrors `array()` with no item rule, and is for a
+   * bag whose schema is not known until another field has been read (a
+   * driver's config, a webhook payload keyed by its event type). Without
+   * it there is no way to spell "an object": `object({})` declares an
+   * empty shape, so it strips every key, which is silent data loss for
+   * anyone who meant "any object".
+   */
+  object(message?: string): Rule<Record<string, unknown>, P>;
   object<S extends Record<string, Rule<any, any>>>(
     shape: S,
     message?: string,
-  ): Rule<{ [K in keyof S]: import("./types.js").InferRule<S[K]> }, P> {
+  ): Rule<{ [K in keyof S]: import("./types.js").InferRule<S[K]> }, P>;
+  object(shapeOrMessage?: Record<string, Rule<any, any>> | string, message?: string): Rule<any, P> {
     this.valueType = "object";
-    this.steps.push({ name: "object", objectShape: shape, message });
 
-    return this as unknown as Rule<{ [K in keyof S]: import("./types.js").InferRule<S[K]> }, P>;
+    if (shapeOrMessage === undefined || typeof shapeOrMessage === "string") {
+      // `objectShape` left absent, not `{}`: the validator distinguishes
+      // "no shape given" (pass the contents through) from "empty shape
+      // given" (strip everything), and `{}` is the latter.
+      this.steps.push({ name: "object", message: shapeOrMessage });
+
+      return this as unknown as Rule<Record<string, unknown>, P>;
+    }
+
+    this.steps.push({ name: "object", objectShape: shapeOrMessage, message });
+
+    return this as unknown as Rule<any, P>;
   }
 
   required(message?: string): Rule<T, "required"> {
@@ -806,8 +830,16 @@ export function fileRule(message?: string): Rule<File, "required"> {
   return rule().file(message);
 }
 
+export function objectRule(message?: string): Rule<Record<string, unknown>, "required">;
 export function objectRule<S extends Record<string, Rule<any, any>>>(
   shape: S,
-): Rule<{ [K in keyof S]: import("./types.js").InferRule<S[K]> }, "required"> {
-  return rule().object(shape);
+  message?: string,
+): Rule<{ [K in keyof S]: import("./types.js").InferRule<S[K]> }, "required">;
+export function objectRule(
+  shapeOrMessage?: Record<string, Rule<any, any>> | string,
+  message?: string,
+): Rule<any, "required"> {
+  return typeof shapeOrMessage === "object"
+    ? rule().object(shapeOrMessage, message)
+    : rule().object(shapeOrMessage);
 }

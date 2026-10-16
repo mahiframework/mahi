@@ -609,7 +609,15 @@ export class Validator {
           return { status: "fail" };
         }
 
-        const shape = step.objectShape ?? {};
+        // No shape declared: the type assertion above is the whole rule,
+        // and the contents pass through untouched. Mirrors `array()` with
+        // no item rule. An empty shape (`object({})`) is a declaration
+        // that the object has no keys, and still strips them all.
+        if (step.objectShape === undefined) {
+          return { status: "pass", value, valueType: "object" };
+        }
+
+        const shape = step.objectShape;
         const input = value as Record<string, unknown>;
         const output: Record<string, unknown> = {};
         const nestedErrors: Record<string, string[]> = {};

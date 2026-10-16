@@ -185,6 +185,72 @@ describe("Validator: nested data", () => {
     expect(await new Validator({ tags: ["a", "b"] }, {}, rules).passes()).toBe(true);
     expect(await new Validator({ tags: ["a", 1] }, {}, rules).passes()).toBe(false);
   });
+
+  it("object() with no shape passes the contents through, as array() does", async () => {
+    const validator = new Validator(
+      { tags: ["a", "b"], config: { host: "example.test", retries: 3 } },
+      {},
+      { tags: rule().array().optional(), config: rule().object().optional() },
+    );
+
+    expect(await validator.passes()).toBe(true);
+    expect(validator.validated()).toEqual({
+      tags: ["a", "b"],
+      config: { host: "example.test", retries: 3 },
+    });
+  });
+
+  it("object() with no shape still asserts the value is an object", async () => {
+    const rules = { config: rule().object().required() };
+
+    expect(await new Validator({ config: "nope" }, {}, rules).passes()).toBe(false);
+    expect(await new Validator({ config: [1, 2] }, {}, rules).passes()).toBe(false);
+    expect(await new Validator({ config: null }, {}, rules).passes()).toBe(false);
+    expect(await new Validator({ config: { a: 1 } }, {}, rules).passes()).toBe(true);
+  });
+
+  it("object({}) declares an empty shape, so every key is stripped", async () => {
+    const validator = new Validator(
+      { config: { host: "example.test" } },
+      {},
+      { config: rule().object({}).optional() },
+    );
+
+    expect(await validator.passes()).toBe(true);
+    expect(validator.validated()).toEqual({ config: {} });
+  });
+
+  it("object() takes a message in the no-shape position", async () => {
+    const validator = new Validator(
+      { config: 7 },
+      {},
+      { config: rule().object("Config must be an object.").required() },
+    );
+
+    expect(await validator.passes()).toBe(false);
+    expect(validator.errors().config).toEqual(["Config must be an object."]);
+  });
+
+  it("objectRule() with no shape is rule().object()", async () => {
+    const validator = new Validator(
+      { config: { host: "example.test" } },
+      {},
+      { config: objectRule() },
+    );
+
+    expect(await validator.passes()).toBe(true);
+    expect(validator.validated()).toEqual({ config: { host: "example.test" } });
+  });
+
+  it("a shapeless object() rule survives clone()", async () => {
+    const shared = rule().object().optional();
+
+    for (const config of [{ a: 1 }, { b: 2 }]) {
+      const validator = new Validator({ config }, {}, { config: shared.clone() });
+      expect(await validator.passes()).toBe(true);
+      expect(validator.validated()).toEqual({ config });
+    }
+  });
 });
 
 describe("Validator: files", () => {
@@ -348,6 +414,22 @@ describe("InferRules typing", () => {
       email: string;
       age: number | undefined;
       bio: string | null | undefined;
+    }>();
+  });
+
+  it("infers a shapeless object() as Record<string, unknown>", () => {
+    const rules = {
+      config: rule().object().required(),
+      meta: objectRule().optional(),
+      address: objectRule({ city: rule().string().required() }),
+    };
+
+    expect(Object.keys(rules)).toEqual(["config", "meta", "address"]);
+    type Payload = InferRules<typeof rules>;
+    expectTypeOf<Payload>().toEqualTypeOf<{
+      config: Record<string, unknown>;
+      meta: Record<string, unknown> | undefined;
+      address: { city: string };
     }>();
   });
 });
