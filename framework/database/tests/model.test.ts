@@ -17,6 +17,24 @@ class Widget extends Model<WidgetAttributes>()({
   timestamps: false,
 }) {}
 
+/**
+ * A nullable column (`note`) and a defaulted one (`active`), the two
+ * shapes a `create()` payload can leave out. Separate from `Widget`,
+ * whose every column the existing tests supply.
+ */
+interface GadgetAttributes {
+  id: string;
+  name: string;
+  note: string | null;
+  active: number;
+}
+
+class Gadget extends Model<GadgetAttributes>()({
+  table: "gadgets",
+  primaryKey: "id",
+  timestamps: false,
+}) {}
+
 describe("Model (static)", () => {
   let app: Application;
 
@@ -34,6 +52,15 @@ describe("Model (static)", () => {
       .addColumn("name", "text", (col) => col.notNull())
       .addColumn("active", "integer", (col) => col.notNull().defaultTo(1))
       .execute();
+
+    await manager
+      .driver()
+      .kysely.schema.createTable("gadgets")
+      .addColumn("id", "text", (col) => col.primaryKey())
+      .addColumn("name", "text", (col) => col.notNull())
+      .addColumn("note", "text")
+      .addColumn("active", "integer", (col) => col.notNull().defaultTo(1))
+      .execute();
   });
 
   afterEach(() => {
@@ -43,6 +70,35 @@ describe("Model (static)", () => {
   it("create() inserts a row and returns the values passed in", async () => {
     const created = await Widget.create({ id: "1", name: "Sprocket", active: 1 });
     expect(created).toEqual({ id: "1", name: "Sprocket", active: 1 });
+  });
+
+  it("create() leaves a column it was not given ABSENT, not null", async () => {
+    // The insert reads back the primary key alone, so the instance holds
+    // exactly what went into it. The same row re-read has the database's
+    // own values, `null` for a nullable column and the default for a
+    // defaulted one — neither of which `create()` can infer from the
+    // payload, which is why they are absent rather than guessed.
+    const created = await Gadget.create({ id: "1", name: "Sprocket" });
+
+    expect(created.note).toBeUndefined();
+    expect(created.active).toBeUndefined();
+
+    const reread = await Gadget.findOrFail("1");
+
+    expect(reread.note).toBeNull();
+    expect(reread.active).toBe(1);
+
+    // `refresh()` brings the instance up to the row.
+    await created.refresh();
+    expect(created.note).toBeNull();
+    expect(created.active).toBe(1);
+  });
+
+  it("create() keeps a column passed explicitly as null, on both the instance and a re-read", async () => {
+    const created = await Gadget.create({ id: "1", name: "Sprocket", note: null });
+
+    expect(created.note).toBeNull();
+    expect((await Gadget.findOrFail("1")).note).toBeNull();
   });
 
   it("find() returns the row by id, or undefined if missing", async () => {

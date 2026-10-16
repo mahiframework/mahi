@@ -619,6 +619,47 @@ a `definition()` is inherently model-specific, and a missing override is a
 development-time mistake worth failing loudly on. See
 [Migrations](../migrations/) for factories.
 
+### `create()` returns what you gave it
+
+The insert reads back the **primary key alone**, so the returned instance
+holds exactly the values that went into it. A column you did not supply
+is **absent**, not filled in:
+
+```ts
+interface ThingAttributes {
+  id: string;
+  name: string;
+  note: string | null;   // declared `string | null` — never undefined
+  active: number;        // NOT NULL DEFAULT 1
+}
+
+const created = await Thing.create({ name: "a" });
+
+created.note;     // undefined — not in the declared type
+created.active;   // undefined — not in the declared type
+
+const reread = await Thing.findOrFail(created.id);
+
+reread.note;      // null
+reread.active;    // 1
+```
+
+The attributes interface declares neither as possibly `undefined`, so a
+`=== null` check against a freshly created instance is wrong in a way no
+type error catches. Three ways out, in order of preference:
+
+- **`await created.refresh()`** for the row as the database has it.
+- **Pass the column explicitly.** `create({ name: "a", note: null })`
+  gives `null` on both the instance and a re-read.
+- **Read through the re-read** when you were going to fetch anyway.
+
+The omitted columns are deliberately not guessed. `null` is right for an
+omitted nullable column and wrong for a defaulted one, and the two are
+indistinguishable from the payload, so filling them in would trade an
+honest absence for a confident lie. Reading every column back would make
+every `create()` a second round trip to correct a case most callers never
+look at.
+
 ### Static `update()` and `delete()` event payloads
 
 `Model.update(id, values)` builds `{ ...values, [primaryKeyColumn]: id }`

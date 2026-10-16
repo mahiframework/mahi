@@ -1151,6 +1151,23 @@ export abstract class BaseModel {
    * so the whole lifecycle (timestamps, generated-id read-back, and the
    * `saving`/`creating`/`created`/`saved` events, now receiving the
    * instance as payload) runs through the one instance code path.
+   *
+   * **A column you did not supply is ABSENT on the returned instance,
+   * not `null`.** The insert reads back the primary key alone, so the
+   * instance holds exactly the values that went into it. A nullable
+   * column reads `undefined` where the same row re-read is `null`, and a
+   * column with a database default reads `undefined` where the row holds
+   * the default. The attributes interface declares neither as possibly
+   * `undefined`, so a `=== null` check against a freshly created
+   * instance is wrong in a way no type error catches.
+   *
+   * Call `refresh()` for the row as the database has it, or pass the
+   * column explicitly. It is deliberately not filled in here: `null` is
+   * the right value for an omitted nullable column but the wrong one for
+   * a defaulted column, and the two are indistinguishable from the
+   * payload, so guessing would trade an honest absence for a confident
+   * lie. Reading every column back would make every `create()` a second
+   * round trip to correct a case most callers never look at.
    */
   static async create<M extends typeof BaseModel>(
     this: M,
