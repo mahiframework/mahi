@@ -21,7 +21,7 @@
     "@mahiframework/core": "workspace:*",
     "@mahiframework/http-client": "workspace:*",
     "@mahiframework/tui": "workspace:*",
-    "commander": "^12.1.0"
+    "commander": "^15.0.0"
   },
   "devDependencies": {
     "typescript": "^6.0.3",
