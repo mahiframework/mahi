@@ -61,8 +61,8 @@ export function isControllerClass(value: unknown): value is ControllerClass<any>
  * Normalise a controller class into a `RouteHandler` the router can mount.
  * Per request it constructs a fresh instance, upgrades the request to the
  * declared Form Request (if any), then runs the Laravel-ordered pipeline:
- * `prepareForValidation()` → `authorize()` (→ 403) → validation (→ 422)
- * → `handle()`.
+ * `prepareForValidation()` → `authorize()` (→ 403) → validation →
+ * `passedValidation()` (either → 422) → `handle()`.
  *
  * `prepareForValidation()` runs FIRST, matching Laravel's
  * `ValidatesWhenResolvedTrait`. Running it after `authorize()` would break

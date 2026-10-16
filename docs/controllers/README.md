@@ -94,12 +94,12 @@ return async (request: Request) => {
   const instance = new ControllerClass();
   const typed = instance.request ? instance.request.fromExisting(request) : request;
 
+  await typed.prepareInput();
+
   const allowed = await typed.authorize();
   if (allowed === false) throw HttpError.forbidden();
 
-  if (Object.keys(typed.rules()).length > 0) {
-    await typed.validateOrFail();
-  }
+  await typed.validateOrFail();
 
   return instance.handle(typed);
 };
@@ -168,6 +168,11 @@ Validation is **skipped entirely** when `rules()` is empty. No `Validator`
 is constructed. A failure throws `ValidationException`, which the central
 error handler renders as `422` with a per-field `errors` bag.
 
+Once the rules pass, `validate()` runs
+[`passedValidation()`](../requests/#passedvalidation), the hook for a
+second pass whose schema depends on an already-validated field. A
+`ValidationException` from it is the same `422`.
+
 ### Why prepare runs before authorize
 
 `prepareForValidation()` is where a request normalizes its own input,
@@ -196,6 +201,7 @@ request returns `403`, not `422`.
 | `authorize()` returns `false` | `HttpError.forbidden()` | `403` |
 | `authorize()` throws `HttpError` | that error's status | its own |
 | `validateOrFail()` | `ValidationException` | `422` |
+| `passedValidation()` throws `ValidationException` | merged into the bag, then `422` | `422` |
 | `handle()` throws `HttpError` | that error's status | its own |
 | `handle()` throws anything else | logged, generic | `500` |
 

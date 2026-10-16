@@ -263,6 +263,71 @@ describe("Controller", () => {
     expect(order).toEqual(["prepare", "authorize", "handle"]);
   });
 
+  it("runs passedValidation() after the rules and before handle(), 422ing on its failure", async () => {
+    const { HttpKernel } = await import("../src/http-kernel.js");
+    const { Application } = await import("@mahiframework/core");
+    const { ValidationException } = await import("@mahiframework/validation");
+    const order: string[] = [];
+
+    class TwoPassRequest extends Request {
+      override rules() {
+        order.push("rules");
+
+        return {
+          driver_key: rule().string().required().in(["s3"]),
+          config: rule().object().optional(),
+        } as const;
+      }
+
+      override passedValidation() {
+        order.push("passed");
+        const { config } = this.validated();
+
+        if ((config as Record<string, unknown> | undefined)?.bucket === undefined) {
+          throw new ValidationException({ "config.bucket": ["The bucket field is required."] });
+        }
+      }
+    }
+
+    class CreateInstanceController extends Controller<TwoPassRequest> {
+      request = TwoPassRequest;
+      async handle(request: TwoPassRequest) {
+        order.push("handle");
+
+        return HttpResponse.json(request.validated(), 201);
+      }
+    }
+
+    class Provider {
+      routes(router: Router) {
+        router.post("/instances", CreateInstanceController);
+      }
+    }
+
+    const app = new Application();
+    (app as any).providers = [new Provider()];
+    const kernel = new HttpKernel(app);
+    kernel.collectFromProviders();
+    const post = (body: unknown) =>
+      kernel.raw().request("/instances", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+    const bad = await post({ driver_key: "s3", config: {} });
+    expect(bad.status).toBe(422);
+    expect(await bad.json()).toMatchObject({
+      errors: { "config.bucket": ["The bucket field is required."] },
+    });
+    expect(order).not.toContain("handle");
+
+    order.length = 0;
+    const good = await post({ driver_key: "s3", config: { bucket: "backups" } });
+    expect(good.status).toBe(201);
+    expect(order.indexOf("passed")).toBeLessThan(order.indexOf("handle"));
+  });
+
   it("runs prepareForValidation() exactly once even though validate() also asks for it", async () => {
     let prepares = 0;
 

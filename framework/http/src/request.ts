@@ -1043,6 +1043,53 @@ export class Request {
   }
 
   /**
+   * Hook for a SECOND validation pass, run once `rules()` has passed and
+   * `validated()` is readable (Laravel's `passedValidation()`). Does not
+   * run when the field rules failed, there is nothing to validate
+   * against yet.
+   *
+   * This is the extension point for a check whose schema is not known
+   * until another field has been read, the case `rules()` structurally
+   * cannot express:
+   *
+   *   override async passedValidation(): Promise<void> {
+   *     const { driver_key, config } = this.validated();
+   *     // throws ValidationException, keyed "config.*", on a bad field
+   *     this.mergeValidated({ config: await driverFields(driver_key).check(config) });
+   *   }
+   *
+   * Report failures by throwing `ValidationException`: its errors are
+   * merged into this request's bag, so `validate()` returns `false`,
+   * `errors()` reports them alongside any field errors, and
+   * `validateOrFail()` (and therefore the controller pipeline) 422s. Any
+   * other error propagates untouched, so a pass that needs to 403 or 404
+   * can throw an `HttpError` instead.
+   */
+  passedValidation(): void | Promise<void> {
+    // Override for a validation pass that depends on an already-validated field.
+  }
+
+  /**
+   * Overlay `values` onto the validated payload, for a
+   * `passedValidation()` pass that coerces or narrows a field it just
+   * checked. A shallow assign, so a key not named is left as the rules
+   * produced it.
+   *
+   * Throws when validation has not produced a payload: there is nothing
+   * to merge into, and silently creating one would hand `validated()`
+   * keys that were never checked.
+   */
+  mergeValidated(values: Record<string, unknown>): this {
+    if (this.validatedPayload === undefined) {
+      throw new Error("mergeValidated() was called before a successful validate().");
+    }
+
+    this.validatedPayload = { ...this.validatedPayload, ...values };
+
+    return this;
+  }
+
+  /**
    * Run `prepareForValidation()` exactly once, whoever asks first.
    *
    * The controller pipeline calls this before `authorize()` (Laravel's
@@ -1072,7 +1119,7 @@ export class Request {
       this.errorBag = {};
       this.validateRan = true;
 
-      return true;
+      return await this.runPassedValidation();
     }
 
     const validator = new Validator(this.all(), this.allFiles(), rules);
@@ -1085,7 +1132,45 @@ export class Request {
 
     this.validateRan = true;
 
-    return passed;
+    return passed ? await this.runPassedValidation() : false;
+  }
+
+  /**
+   * Run `passedValidation()`, folding a `ValidationException` it throws
+   * into this request's error bag.
+   *
+   * Caught rather than propagated because `validate()` reports failure as
+   * a `false` return, not a throw: letting the second pass throw out of
+   * it would make `fails()` itself throw, and would skip the memoized
+   * error bag that `errors()` and `validateOrFail()` both read. The
+   * exception becomes the same 422 one step later, from
+   * `validateOrFail()`.
+   *
+   * Called after `validateRan` is set, so a `passedValidation()` that
+   * reaches back through `validate()` (or `passes()`/`fails()`) hits the
+   * memoized result instead of recursing.
+   */
+  private async runPassedValidation(): Promise<boolean> {
+    try {
+      await this.passedValidation();
+    } catch (error) {
+      if (!(error instanceof ValidationException)) {
+        throw error;
+      }
+
+      for (const [field, messages] of Object.entries(error.errors)) {
+        this.errorBag[field] = [...(this.errorBag[field] ?? []), ...messages];
+      }
+
+      // The payload was built from rules that passed, but the request as
+      // a whole did not. Dropping it keeps `validated()`'s guarantee:
+      // what it hands back has been fully checked.
+      this.validatedPayload = undefined;
+
+      return false;
+    }
+
+    return true;
   }
 
   async passes(): Promise<boolean> {

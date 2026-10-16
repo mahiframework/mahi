@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Model } from "@mahiframework/database";
+import { rule, ValidationException } from "@mahiframework/validation";
 import { HttpError } from "../src/http-error.js";
 import { Request, requestFromContext } from "../src/request.js";
 import { toHonoMiddleware } from "../src/middleware/pipeline-middleware.js";
@@ -190,6 +191,177 @@ describe("Request validation", () => {
     expect(await ok.validate()).toBe(true);
     expect(ok.validated().name).toBe("Ada");
     expect(ok.validated().age).toBeUndefined();
+  });
+});
+
+describe("Request.passedValidation()", () => {
+  /**
+   * The two-pass case the hook exists for: `config`'s schema is not known
+   * until `driver_key` has been validated, so `rules()` cannot express it.
+   */
+  class CreateInstanceRequest extends Request {
+    seen: unknown;
+
+    rules() {
+      return {
+        driver_key: rule().string().required().in(["s3", "local"]),
+        config: rule().object().optional(),
+      } as const;
+    }
+
+    override passedValidation(): void {
+      const { driver_key: driverKey, config } = this.validated();
+      this.seen = config;
+
+      if (
+        driverKey === "s3" &&
+        (config as Record<string, unknown> | undefined)?.bucket === undefined
+      ) {
+        throw new ValidationException({ "config.bucket": ["The bucket field is required."] });
+      }
+
+      this.mergeValidated({ config: { ...(config ?? {}), driver: driverKey } });
+    }
+  }
+
+  it("runs after the rules pass, with validated() readable", async () => {
+    const request = new CreateInstanceRequest({
+      driver_key: "s3",
+      config: { bucket: "backups" },
+    });
+
+    expect(await request.validate()).toBe(true);
+    expect(request.seen).toEqual({ bucket: "backups" });
+    expect(request.validated().config).toEqual({ bucket: "backups", driver: "s3" });
+  });
+
+  it("does not run when the field rules failed", async () => {
+    const request = new CreateInstanceRequest({ driver_key: "ftp" });
+
+    expect(await request.validate()).toBe(false);
+    expect(request.seen).toBeUndefined();
+    expect(request.errors().driver_key).toBeTruthy();
+  });
+
+  it("a ValidationException it throws fails validation and lands in errors()", async () => {
+    const request = new CreateInstanceRequest({ driver_key: "s3", config: {} });
+
+    expect(await request.validate()).toBe(false);
+    expect(request.errors()["config.bucket"]).toEqual(["The bucket field is required."]);
+    expect(() => request.validated()).toThrow(/before a successful validate/);
+  });
+
+  it("merges its errors alongside the field errors rather than replacing them", async () => {
+    class BothFailRequest extends Request {
+      rules() {
+        return { name: rule().string().required() } as const;
+      }
+
+      override passedValidation(): void {
+        throw new ValidationException({ name: ["And it is reserved."] });
+      }
+    }
+
+    const request = new BothFailRequest({ name: "Ada" });
+
+    expect(await request.validate()).toBe(false);
+    expect(request.errors().name).toEqual(["And it is reserved."]);
+
+    const failingField = new BothFailRequest({});
+    expect(await failingField.validate()).toBe(false);
+    // The field rules failed, so the second pass never ran: the one
+    // message here is the rule's, not the hook's.
+    expect(failingField.errors().name).toHaveLength(1);
+  });
+
+  it("validateOrFail() 422s on a second-pass failure", async () => {
+    const request = new CreateInstanceRequest({ driver_key: "s3", config: {} });
+
+    await expect(request.validateOrFail()).rejects.toMatchObject({
+      status: 422,
+      errors: { "config.bucket": ["The bucket field is required."] },
+    });
+  });
+
+  it("propagates a non-ValidationException untouched", async () => {
+    class ForbiddenRequest extends Request {
+      rules() {
+        return { name: rule().string().required() } as const;
+      }
+
+      override passedValidation(): void {
+        throw HttpError.forbidden();
+      }
+    }
+
+    await expect(new ForbiddenRequest({ name: "Ada" }).validate()).rejects.toMatchObject({
+      status: 403,
+    });
+  });
+
+  it("runs for a request with no rules, where validated() is {}", async () => {
+    let ran = false;
+
+    class NoRulesRequest extends Request {
+      override passedValidation(): void {
+        ran = true;
+        expect(this.validated()).toEqual({});
+      }
+    }
+
+    expect(await new NoRulesRequest({}).validate()).toBe(true);
+    expect(ran).toBe(true);
+  });
+
+  it("runs once, with validate()", async () => {
+    let calls = 0;
+
+    class CountingRequest extends Request {
+      rules() {
+        return { name: rule().string().required() } as const;
+      }
+
+      override passedValidation(): void {
+        calls++;
+      }
+    }
+
+    const request = new CountingRequest({ name: "Ada" });
+    expect(await request.validate()).toBe(true);
+    expect(await request.validate()).toBe(true);
+    await request.validateOrFail();
+    expect(calls).toBe(1);
+  });
+
+  it("does not recurse when it reaches back through validate()", async () => {
+    let calls = 0;
+
+    class ReentrantRequest extends Request {
+      rules() {
+        return { name: rule().string().required() } as const;
+      }
+
+      override async passedValidation(): Promise<void> {
+        calls++;
+        // The memoized result, not a second pass.
+        expect(await this.validate()).toBe(true);
+      }
+    }
+
+    expect(await new ReentrantRequest({ name: "Ada" }).validate()).toBe(true);
+    expect(calls).toBe(1);
+  });
+
+  it("mergeValidated() throws before a successful validate()", () => {
+    class PlainRequest extends Request {
+      rules() {
+        return { name: rule().string().required() } as const;
+      }
+    }
+
+    expect(() => new PlainRequest({ name: "Ada" }).mergeValidated({ name: "Grace" })).toThrow(
+      /before a successful validate/,
+    );
   });
 });
 

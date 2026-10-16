@@ -484,16 +484,61 @@ input; a request that merges a tenant id or the current user and then
 authorizes against it works as written. `validate()` also ensures it has
 run, and it runs **once** either way.
 
+### `passedValidation()`
+
+A hook for a **second validation pass**, run once `rules()` has passed
+and `validated()` is readable. It does not run when the field rules
+failed, there is nothing to validate against yet.
+
+This is the extension point for a check whose schema isn't known until
+another field has been read, which `rules()` structurally cannot express:
+
+```ts
+export class CreateInstanceRequest extends Request {
+  rules() {
+    return {
+      driver_key: rule().string().required().in(installedDriverKeys()),
+      config: rule().object().optional(),
+    } as const;
+  }
+
+  override async passedValidation(): Promise<void> {
+    const { driver_key, config } = this.validated();
+    // throws ValidationException keyed "config.<field>" on a bad field
+    this.mergeValidated({ config: await checkDriverConfig(driver_key, config) });
+  }
+}
+```
+
+Report failures by throwing `ValidationException`. Its errors are
+**merged** into the request's bag, so `validate()` returns `false`,
+`errors()` reports them alongside any field errors, and `validateOrFail()`
+(and therefore the controller pipeline) 422s. The validated payload is
+dropped, so `validated()` throws rather than hand back a half-checked
+object.
+
+Any **other** error propagates untouched, so a pass that needs to 403 or
+404 can throw an `HttpError` instead.
+
+`mergeValidated(values)` shallow-assigns onto the validated payload, for
+a pass that coerces or narrows a field it just checked. Keys you don't
+name are left as the rules produced them. It throws when validation
+hasn't produced a payload yet.
+
+May be sync or async, and runs **once**: `validate()` is memoized, so a
+second call (or a later `validateOrFail()`) doesn't re-run it.
+
 ### Running validation
 
 | Method | Behaviour |
 |---|---|
 | `prepareInput()` | Runs `prepareForValidation()` once. Called by the controller pipeline and by `validate()`. |
-| `validate()` | Prepares, then runs the rules. Returns `Promise<boolean>`. **Memoized**. A second call returns the first result without re-running. |
+| `validate()` | Prepares, runs the rules, then `passedValidation()`. Returns `Promise<boolean>`. **Memoized**. A second call returns the first result without re-running. |
 | `passes()` | Alias for `validate()` |
 | `fails()` | `!(await validate())` |
 | `validateOrFail()` | `validate()`, throwing `ValidationException(errors)` on failure. Returns `this`. |
 | `validated()` | The typed, validated payload. **Synchronous.** |
+| `mergeValidated(values)` | Shallow-assign onto the validated payload. Fluent. For `passedValidation()`. |
 | `errors()` | `Record<string, string[]>`: empty until `validate()` runs |
 
 > **`validated()` throws before a successful `validate()`**, but only
