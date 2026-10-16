@@ -615,8 +615,8 @@ importers:
         specifier: ^3.5.13
         version: 3.5.13
       smtp-server:
-        specifier: ^3.19.10
-        version: 3.19.10
+        specifier: ^3.19.18
+        version: 3.19.18
       typescript:
         specifier: ^6.0.3
         version: 6.0.3
@@ -2496,8 +2496,8 @@ packages:
     resolution: {integrity: sha512-He9XskOFms62SyAKkLu8CcGcYHAo+BSHSsORI8s4PJH8qZgZY4L4lDfvyN0twvmbpyG+eGrxpyBlskj9d9rJ8A==}
     engines: {node: '>=20.0.0'}
 
-  nodemailer@10.0.3:
-    resolution: {integrity: sha512-h5c8ypcMoOIh44bIcVROvTDbjRdOJX8AXTkxMht2C92HlSjkG+/8kjoqmNPypfjQaVNaUHWyZ3tqs5I3K91F3g==}
+  nodemailer@10.0.16:
+    resolution: {integrity: sha512-VL9xKErxN+el77o8eBOuYKUPMyEx7F9hfnDCuiUKJRp9v3wnWMOudYgP/SWbwSHy8rUL4cylobuXtki1LpQS7A==}
     engines: {node: '>=20.0.0'}
 
   obug@2.1.4:
@@ -2655,8 +2655,8 @@ packages:
     resolution: {integrity: sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A==}
     engines: {node: '>=8'}
 
-  smtp-server@3.19.10:
-    resolution: {integrity: sha512-uN0dx/iwSmsD46Ew4yXuwZF1g7OumBg2GXDykWZ1w7rHVNzrrfxHEg5HmVW2iFGa93QbknS7CLi1p2rlZdacEQ==}
+  smtp-server@3.19.18:
+    resolution: {integrity: sha512-wEkfCcY7VepMUr6mT/7HwLtgJz88yE/612yrMgXiNN9L33iZxPdblVIHjUfpKBXzh1WwdHIVfdqMyJSnszhGUw==}
     engines: {node: '>=20.0.0'}
 
   source-map-js@1.2.2:
@@ -4015,7 +4015,7 @@ snapshots:
 
   nodemailer@10.0.10: {}
 
-  nodemailer@10.0.3: {}
+  nodemailer@10.0.16: {}
 
   obug@2.1.4: {}
 
@@ -4187,10 +4187,10 @@ snapshots:
 
   shebang-regex@3.0.0: {}
 
-  smtp-server@3.19.10:
+  smtp-server@3.19.18:
     dependencies:
       ipv6-normalize: 1.0.1
-      nodemailer: 10.0.3
+      nodemailer: 10.0.16
       punycode.js: 2.3.1
 
   source-map-js@1.2.2: {}
