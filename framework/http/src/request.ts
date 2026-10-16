@@ -968,6 +968,18 @@ export class Request {
    * row doesn't exist. Cached on this instance so authorize + handle don't
    * double-fetch.
    *
+   * A missing **param** also logs a `debug` line naming the resolved name
+   * and the params the route actually has. Both failures are a 404, but
+   * only one of them is a bug: a missing row is the ordinary outcome of
+   * asking for an id that isn't there, while a param the route never
+   * declares means the binding is mis-wired and *every* request to the
+   * endpoint 404s. They are indistinguishable at the call site, so the
+   * one that is always a wiring error gets its own observability. The
+   * usual cause is a two-word model, whose default binding name is a
+   * single lowercase run (`ParsedItem` → `"parseditem"`) while the route
+   * param is camelCase (`{parsedItem}`); override `routeParamName()` on
+   * the model, or pass `param` here.
+   *
    * Structural (not `typeof Model`) so concrete models with a typed `Row`
    * remain assignable, `Collection` variance otherwise rejects them.
    */
@@ -992,6 +1004,8 @@ export class Request {
     const id = this.route(param);
 
     if (id === undefined) {
+      this.logMissingRouteParam(ModelClass.table, param);
+
       throw HttpError.notFound();
     }
 
@@ -1004,6 +1018,29 @@ export class Request {
     this.modelCache.set(cacheKey, row);
 
     return row as Resolved;
+  }
+
+  /**
+   * Name the mis-wired binding that `model()` is about to 404 on, so the
+   * cause is one grep rather than a read of `routeParamName()` against
+   * the route by hand.
+   *
+   * Best-effort: resolving the logger needs a container, and a
+   * unit-constructed request often has none. A diagnostic that throws
+   * would turn a wiring bug into a 500 and lose the 404 it was explaining.
+   */
+  protected logMissingRouteParam(table: string, param: string): void {
+    try {
+      app().logger.debug("http: route-model binding found no matching route param.", {
+        table,
+        param,
+        routeParams: Object.keys(this.paramBag),
+        routePattern: this.matchedRoutePattern,
+        path: this.path(),
+      });
+    } catch {
+      // No container, nothing to log to. The 404 still happens.
+    }
   }
 
   share(key: string, value: unknown): this {

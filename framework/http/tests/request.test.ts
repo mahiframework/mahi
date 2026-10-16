@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Model } from "@mahiframework/database";
+import { Application, clearCurrentApp, setCurrentApp } from "@mahiframework/core";
 import { rule, ValidationException } from "@mahiframework/validation";
 import { HttpError } from "../src/http-error.js";
 import { Request, requestFromContext } from "../src/request.js";
@@ -379,6 +380,68 @@ describe("request.model()", () => {
     vi.spyOn(Post, "find").mockResolvedValue(undefined);
     const request = Request.create("/posts/missing", "GET", {}, { params: { post: "missing" } });
     await expect(request.model(Post)).rejects.toBeInstanceOf(HttpError);
+    await expect(request.model(Post)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("logs a debug line naming the binding when the param is missing", async () => {
+    const app = new Application();
+    const debug = vi.spyOn(app.logger, "debug");
+    setCurrentApp(app);
+
+    try {
+      // The classic mis-wiring: a two-word model's default binding name
+      // is one lowercase run, while the route param is camelCase.
+      class ParsedItem extends Model<PostAttributes>()({
+        table: "parsed_items",
+        primaryKey: "id",
+        timestamps: false,
+        morphName: "ParsedItem",
+      }) {}
+
+      expect(ParsedItem.routeParamName()).toBe("parseditem");
+
+      const request = Request.create(
+        "/parsed-items/abc",
+        "GET",
+        {},
+        { params: { parsedItem: "abc" } },
+      );
+      await expect(request.model(ParsedItem)).rejects.toMatchObject({ status: 404 });
+
+      expect(debug).toHaveBeenCalledWith(
+        "http: route-model binding found no matching route param.",
+        expect.objectContaining({
+          table: "parsed_items",
+          param: "parseditem",
+          routeParams: ["parsedItem"],
+          path: "/parsed-items/abc",
+        }),
+      );
+    } finally {
+      clearCurrentApp(app);
+    }
+  });
+
+  it("does not log when the param resolved and only the row was missing", async () => {
+    const app = new Application();
+    const debug = vi.spyOn(app.logger, "debug");
+    setCurrentApp(app);
+
+    try {
+      vi.spyOn(Post, "find").mockResolvedValue(undefined);
+      const request = Request.create("/posts/missing", "GET", {}, { params: { post: "missing" } });
+      await expect(request.model(Post)).rejects.toMatchObject({ status: 404 });
+
+      // A missing row is the ordinary 404, not a wiring bug.
+      expect(debug).not.toHaveBeenCalled();
+    } finally {
+      clearCurrentApp(app);
+    }
+  });
+
+  it("still 404s with no container to log to", async () => {
+    clearCurrentApp();
+    const request = Request.create("/posts", "GET");
     await expect(request.model(Post)).rejects.toMatchObject({ status: 404 });
   });
 

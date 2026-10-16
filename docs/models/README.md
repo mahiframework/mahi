@@ -446,8 +446,22 @@ static routeParamName(): string {
 
 The default route parameter name for explicit route-model binding.
 `request.model(Post)` reads `{post}`. Derived from `morphName` when set,
-otherwise the lowercased class name. Override for an irregular binding
-name. See [Requests](../requests/).
+otherwise the lowercased class name.
+
+> **A two-word model needs the override.** Lowercasing the whole name
+> gives one unbroken run (`ParsedItem` → `"parseditem"`), while route
+> params are camelCase (`{parsedItem}`), so the binding reads a param the
+> route doesn't have and every request to the endpoint 404s:
+>
+> ```ts
+> static override routeParamName(): string {
+>   return "parsedItem";
+> }
+> ```
+>
+> `model()` logs a `debug` line in that case naming the resolved param
+> and the ones the route actually has. See
+> [route-model binding](../requests/#a-missing-param-is-a-wiring-bug-and-says-so).
 
 ### `fillable` / `guarded` precedence
 

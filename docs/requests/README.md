@@ -362,7 +362,8 @@ You call `model()` where you want the fetch to happen.
   `static morphName` when set (`morphName = "Post"` → `"post"`), else the
   lowercased class name, falling back to `"id"` for classes that don't
   expose one.
-- **404 if the param is missing** (`HttpError.notFound()`).
+- **404 if the param is missing** (`HttpError.notFound()`), plus a
+  `debug` log line, see below.
 - **404 if the row doesn't exist.**
 - **Cached per request**, keyed `${ModelClass.table}:${param}`. So a form
   request's `authorize()` and the controller's `handle()` calling
@@ -371,6 +372,42 @@ You call `model()` where you want the fetch to happen.
 The signature is structural (`{ table, Row, find, routeParamName? }`)
 rather than `typeof Model`, so concrete models with a typed `Row` stay
 assignable, `Collection`'s variance rejects the nominal form.
+
+### A missing param is a wiring bug, and says so
+
+Both failures are a 404, but only one of them is a bug. A missing *row*
+is the ordinary outcome of asking for an id that isn't there. A param the
+route never declares means the binding is mis-wired and **every** request
+to that endpoint 404s, with the row present and the policy method never
+running. So the second logs a `debug` line naming what it looked for:
+
+```
+http: route-model binding found no matching route param.
+{"table":"parsed_items","param":"parseditem","routeParams":["parsedItem"],"path":"/parsed-items/abc"}
+```
+
+The usual cause is a **two-word model**. Paths are kebab-case and params
+are camelCase, but `routeParamName()` lowercases the whole class name, so
+it resolves to one unbroken run:
+
+```ts
+class ParsedItem extends Model<ParsedItemAttributes>()({ morphName: "ParsedItem" }) {}
+
+ParsedItem.routeParamName();   // "parseditem"  — but the route param is {parsedItem}
+```
+
+Fix it on the model, once:
+
+```ts
+static override routeParamName(): string {
+  return "parsedItem";
+}
+```
+
+Or pass the param at the call site: `request.model(ParsedItem, "parsedItem")`.
+
+Logging is best-effort, it needs a container, so a unit-constructed
+request outside an application just 404s.
 
 See [Models](../models/) for `morphName` and `routeParamName`.
 
