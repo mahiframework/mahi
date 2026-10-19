@@ -26,11 +26,11 @@
     "hono": "^4.13.12"
   },
   "devDependencies": {
-    "@types/node": "^26.6.4",
+    "@types/node": "^26.6.5",
     "@types/ws": "^8.18.1",
-    "typescript": "^6.0.3",
-    "vite": "^8.3.3",
-    "vitest": "^5.0.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.4",
     "ws": "^8.21.3"
   },
   "license": "MIT",
