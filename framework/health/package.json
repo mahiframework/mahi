@@ -20,7 +20,7 @@
     "@mahiframework/cli": "workspace:*",
     "@mahiframework/core": "workspace:*",
     "@mahiframework/tui": "workspace:*",
-    "commander": "^12.1.0"
+    "commander": "^15.0.0"
   },
   "devDependencies": {
     "@mahiframework/cache": "workspace:*",
