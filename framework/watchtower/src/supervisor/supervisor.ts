@@ -264,10 +264,17 @@ export class Supervisor {
 
     const timeoutSeconds = this.watchtower.configuration().supervisor.shutdownTimeoutSeconds;
 
+    // Cleared once the race settles, because a pending timer keeps the
+    // event loop alive: a fleet that drained in a second would otherwise
+    // hold the process open for the rest of the window.
+    let window: NodeJS.Timeout | undefined;
+
     const drained = await Promise.race([
       Promise.all(children.map((child) => child.whenExited())).then(() => true),
-      sleep(timeoutSeconds * 1000).then(() => false),
-    ]);
+      new Promise<boolean>((resolve) => {
+        window = setTimeout(() => resolve(false), timeoutSeconds * 1000);
+      }),
+    ]).finally(() => clearTimeout(window));
 
     if (drained) {
       this.app.logger.info("watchtower: every worker finished its job and exited.");

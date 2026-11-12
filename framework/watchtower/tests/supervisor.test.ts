@@ -309,6 +309,33 @@ describe("Supervisor shutdown", () => {
     await shutdown;
   });
 
+  it("leaves no timer behind once every child has exited", async () => {
+    const supervisor = await supervisorFor({
+      supervisor: { shutdownTimeoutSeconds: 60 },
+    });
+
+    await supervisor.tick();
+
+    vi.useFakeTimers();
+
+    try {
+      const shutdown = supervisor.shutdown("SIGTERM");
+
+      for (const child of children) {
+        child.signalCode = null;
+        exitChild(child, 0);
+      }
+
+      await shutdown;
+
+      // A pending window timer would hold the process open for the rest
+      // of the 60 seconds after the fleet had already drained.
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("kills a child that outstays the shutdown window", async () => {
     const supervisor = await supervisorFor({
       supervisor: { shutdownTimeoutSeconds: 1 },
