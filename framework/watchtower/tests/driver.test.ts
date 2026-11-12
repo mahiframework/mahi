@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Job, type PushOptions, type QueuedJob } from "@mahiframework/queue";
+import { QUEUE_TOKEN } from "@mahiframework/core";
+import { Job, QueueManager, type PushOptions, type QueuedJob } from "@mahiframework/queue";
+import { watchtowerConnectionDriver } from "../src/drivers/connection-driver.js";
 import {
   WatchtowerQueueDriver,
   isWatchtowerJob,
@@ -470,6 +472,46 @@ describe("WatchtowerQueueDriver", () => {
       // worker from cycling forever.
       expect(reclaimed?.id).toBe(first?.id);
       expect(reclaimed?.attempts).toBe(1);
+    });
+  });
+
+  describe("built from the connection config", () => {
+    /** Swap in a queue manager carrying `connections.watchtower`. */
+    function configure(watchtower: Record<string, unknown>): void {
+      harness.app.instance(
+        QUEUE_TOKEN,
+        new QueueManager(harness.app, { default: "watchtower", connections: { watchtower } }),
+      );
+    }
+
+    it("a worker's driver reclaims on the connection's retryAfter, not the default", async () => {
+      harness = await createHarness();
+      configure({ retryAfter: 1 });
+
+      // Built the way a worker child builds its own: with process options,
+      // which must layer over the connection's rather than replace them.
+      const driver = watchtowerConnectionDriver(harness.app, { fifo: true });
+
+      await driver.push("app.jobs.sync", {});
+      const first = await driver.pop();
+
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+
+      // Under the 90-second default this would still be reserved.
+      expect((await driver.pop())?.id).toBe(first?.id);
+      expect(driver.fifo).toBe(true);
+    });
+
+    it("pushes to the connection's default queue", async () => {
+      harness = await createHarness();
+      configure({ queue: "imports" });
+
+      const driver = watchtowerConnectionDriver(harness.app);
+
+      await driver.push("app.jobs.sync", {});
+
+      expect(await driver.size("imports")).toBe(1);
+      expect(await driver.size("default")).toBe(0);
     });
   });
 

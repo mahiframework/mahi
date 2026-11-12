@@ -1,10 +1,5 @@
 import { QUEUE_TOKEN, ServiceProvider } from "@mahiframework/core";
-import {
-  DATABASE_TOKEN,
-  type AnyModelClass,
-  type DatabaseManager,
-  type RegisteredMigration,
-} from "@mahiframework/database";
+import type { AnyModelClass, RegisteredMigration } from "@mahiframework/database";
 import type { ListenerRegistration } from "@mahiframework/events";
 import type { Router } from "@mahiframework/http";
 import {
@@ -23,7 +18,7 @@ import { watchtowerGate } from "./http/gate.js";
 import { resolveConfig, type WatchtowerConfig } from "./watchtower-config.js";
 import { configErrors } from "./validate-config.js";
 import { WatchtowerConfigError } from "./errors.js";
-import { WatchtowerQueueDriver } from "./drivers/watchtower-queue-driver.js";
+import { watchtowerConnectionDriver } from "./drivers/connection-driver.js";
 import { WatchtowerCheckCommand } from "./commands/watchtower-check.js";
 import { WatchtowerWorkCommand } from "./commands/watchtower-work.js";
 import { WatchtowerWorkerCommand } from "./commands/watchtower-worker.js";
@@ -40,21 +35,6 @@ import createWatchtowerJobsTable from "./migrations/0002_create_watchtower_jobs_
 import { WATCHTOWER_CONNECTION, WATCHTOWER_TOKEN } from "./tokens.js";
 
 export { WATCHTOWER_TOKEN };
-
-/** `connections.watchtower` in `config/queue.ts`. */
-interface WatchtowerConnectionConfig {
-  /** Which *database* connection holds `watchtower_jobs`. The app's default when omitted. */
-  connection?: string;
-  /** The default named queue this connection pushes to. Default `"default"`. */
-  queue?: string;
-  /**
-   * Seconds before a reserved job is presumed abandoned. Must exceed the
-   * longest a job can run, including its own timeout. Default 90.
-   */
-  retryAfter?: number;
-  /** Candidate rows read per `pop()` on SQLite. Default 10. */
-  popBatchSize?: number;
-}
 
 /**
  * Registers the `WatchtowerManager` singleton, the run-history models and
@@ -127,23 +107,7 @@ export class WatchtowerServiceProvider extends ServiceProvider {
 
     const queue = this.app.make<QueueManager>(QUEUE_TOKEN);
 
-    queue.extend(WATCHTOWER_CONNECTION, (app) => {
-      const settings = (queue.connectionConfig(WATCHTOWER_CONNECTION) ??
-        {}) as WatchtowerConnectionConfig;
-      const database = app.make<DatabaseManager>(DATABASE_TOKEN);
-      // A named `connection` points this at a database other than the
-      // app's default, for a dedicated queue database.
-      const driver = database.driver(settings.connection);
-
-      // The dialect — which selects the reservation strategy — is read
-      // from the connection itself by the driver, so it cannot drift.
-      return new WatchtowerQueueDriver(driver.kysely, {
-        queue: settings.queue ?? "default",
-        retryAfterSeconds: settings.retryAfter ?? 90,
-        ...(settings.popBatchSize !== undefined ? { popBatchSize: settings.popBatchSize } : {}),
-        connectionName: WATCHTOWER_CONNECTION,
-      });
-    });
+    queue.extend(WATCHTOWER_CONNECTION, (app) => watchtowerConnectionDriver(app));
   }
 
   /**

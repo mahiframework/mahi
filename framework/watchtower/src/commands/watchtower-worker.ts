@@ -12,12 +12,12 @@ import {
   supportsDeferral,
   WatchtowerQueueDriver,
 } from "../drivers/watchtower-queue-driver.js";
+import { watchtowerConnectionDriver } from "../drivers/connection-driver.js";
 import { DeferralUnsupportedError } from "../errors.js";
 import { isSharedStore } from "../deferral.js";
 import { WATCHTOWER_CONNECTION, WATCHTOWER_TOKEN } from "../tokens.js";
 import type { WatchtowerManager } from "../watchtower-manager.js";
 import type { ResolvedProcessConfig } from "../watchtower-config.js";
-import { DATABASE_TOKEN, type DatabaseManager } from "@mahiframework/database";
 
 /** Env var marking a supervised child, so it cannot supervise itself. */
 export const WORKER_ENV = "MAHI_WATCHTOWER_WORKER";
@@ -163,10 +163,7 @@ export class WatchtowerWorkerCommand extends QueueWorkCommand {
    * call, bound to this process's configuration.
    */
   private buildDriver(config: ResolvedProcessConfig): WatchtowerQueueDriver {
-    const database = this.app.make<DatabaseManager>(DATABASE_TOKEN);
-
-    return new WatchtowerQueueDriver(database.driver().kysely, {
-      connectionName: WATCHTOWER_CONNECTION,
+    return watchtowerConnectionDriver(this.app, {
       fifo: config.fifo,
       onDefer: async (seconds) => {
         await this.watchtower?.store().defer(config.name, seconds);
@@ -264,11 +261,7 @@ export class WatchtowerWorkerCommand extends QueueWorkCommand {
 
   /** A non-fifo driver, for the `maxDeferrals` fallback. */
   private ordinaryDriver(): WatchtowerQueueDriver {
-    const database = this.app.make<DatabaseManager>(DATABASE_TOKEN);
-
-    return new WatchtowerQueueDriver(database.driver().kysely, {
-      connectionName: WATCHTOWER_CONNECTION,
-    });
+    return watchtowerConnectionDriver(this.app);
   }
 
   /**
