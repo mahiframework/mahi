@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DATABASE_TOKEN, type DatabaseManager } from "@mahiframework/database";
+import { DATABASE_TOKEN, Relation, type DatabaseManager } from "@mahiframework/database";
 import { Activity } from "../src/activity-facade.js";
+import { ActivityLog } from "../src/models/activity-log.model.js";
 import { createHarness, Post, Widget, type Harness } from "./__fixtures__/test-app.js";
 
 /** Make the next activity write fail for a reason the package cannot control. */
@@ -212,6 +213,41 @@ describe("resource listener", () => {
       await makePost();
 
       expect(await harness.rows()).toEqual([]);
+    });
+  });
+
+  describe("under an enforced morph map", () => {
+    beforeEach(() => {
+      // `Widget` deliberately left out: an app's model nobody audits.
+      Relation.enforceMorphMap({ Post: () => Post, ActivityLog: () => ActivityLog });
+    });
+
+    afterEach(() => Relation.resetMorphMap());
+
+    it("a save of an unregistered model nobody audits succeeds and writes nothing", async () => {
+      harness = await createHarness({ resources: { Post: "full" }, throwOnFailure: true });
+
+      await expect(
+        Widget.create({ id: "w-1", name: "Gear", internal: "x" }),
+      ).resolves.toBeDefined();
+      expect(await harness.rows()).toEqual([]);
+    });
+
+    it("a save under no configured resources never resolves an alias", async () => {
+      harness = await createHarness({ resources: {}, throwOnFailure: true });
+
+      await expect(
+        Widget.create({ id: "w-1", name: "Gear", internal: "x" }),
+      ).resolves.toBeDefined();
+    });
+
+    it("an audited model that was never registered still fails loudly", async () => {
+      harness = await createHarness({ resources: { Widget: "full" }, throwOnFailure: true });
+
+      // Its audit trail would otherwise be silently empty.
+      await expect(Widget.create({ id: "w-1", name: "Gear", internal: "x" })).rejects.toThrow(
+        /No morph alias is registered for \[Widget\]/,
+      );
     });
   });
 

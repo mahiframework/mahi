@@ -1,6 +1,7 @@
 import type { Application } from "@mahiframework/core";
 import type { Listener } from "@mahiframework/events";
 import {
+  ClassMorphViolationError,
   ModelCreated,
   ModelDeleted,
   ModelRestored,
@@ -23,6 +24,8 @@ import { ActivityLog } from "../models/activity-log.model.js";
 
 /** The static surface the listener reads off an event's model class. */
 interface ModelClassLike {
+  name: string;
+  morphName?: string | undefined;
   morphAlias(): string;
   primaryKeyColumn: string;
   softDeleteColumn?: string | undefined;
@@ -82,7 +85,11 @@ export class ResourceActivityListener implements Listener<ModelLifecycleEvent> {
       return;
     }
 
-    const alias = modelClass.morphAlias();
+    const alias = this.aliasOf(modelClass, logger);
+
+    if (alias === null) {
+      return;
+    }
 
     // A row written by this package must never itself be logged: the
     // first mutation would recurse until the stack blew. A hard guard,
@@ -113,6 +120,38 @@ export class ResourceActivityListener implements Listener<ModelLifecycleEvent> {
     await logger.resource(action, alias, modelId, data, actor);
 
     await this.recordEmailChange(logger, event, payload, modelId, actor);
+  }
+
+  /**
+   * The alias resources are keyed by, or null when the model cannot be one.
+   *
+   * Every model event in the app reaches this listener, audited or not, and
+   * under `Relation.enforceMorphMap()` resolving the alias of an unregistered
+   * model throws. Nothing configured means nothing to look up, and a model
+   * with no alias whose name no resource uses is simply not audited. A
+   * resource configured for a model that was never registered still throws,
+   * because that audit trail would otherwise be silently empty.
+   */
+  private aliasOf(modelClass: ModelClassLike, logger: ActivityLogger): string | null {
+    const resources = logger.settings.resources;
+
+    if (resources.size === 0) {
+      return null;
+    }
+
+    try {
+      return modelClass.morphAlias();
+    } catch (error) {
+      const configured =
+        resources.has(modelClass.name) ||
+        (modelClass.morphName !== undefined && resources.has(modelClass.morphName));
+
+      if (error instanceof ClassMorphViolationError && !configured) {
+        return null;
+      }
+
+      throw error;
+    }
   }
 
   /**
