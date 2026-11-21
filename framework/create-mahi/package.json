@@ -1,6 +1,6 @@
 {
   "name": "create-mahi",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Scaffold a new Mahi application.",
   "type": "module",
   "bin": {
