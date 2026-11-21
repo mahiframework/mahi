@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { parseNestedQuery } from "../src/query-parser.js";
+import { afterEach, describe, expect, it } from "vitest";
+import { parseNestedEntries, parseNestedQuery } from "../src/query-parser.js";
 
 describe("parseNestedQuery()", () => {
   it("parses plain pairs", () => {
@@ -68,5 +68,52 @@ describe("parseNestedQuery()", () => {
 
   it("resolves a scalar/container conflict in favour of the container", () => {
     expect(parseNestedQuery("a=1&a[b]=2")).toEqual({ a: { b: "2" } });
+  });
+
+  describe("prototype pollution", () => {
+    afterEach(() => {
+      for (const key of ["polluted", "headers", "nested"]) {
+        delete (Object.prototype as Record<string, unknown>)[key];
+      }
+    });
+
+    it("never writes through __proto__ at the root", () => {
+      expect(parseNestedQuery("__proto__[polluted]=yes")).toEqual({});
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    });
+
+    it("never writes through __proto__ below the root", () => {
+      expect(parseNestedQuery("a[__proto__][polluted]=yes&a[ok]=1")).toEqual({ a: { ok: "1" } });
+      expect(parseNestedQuery("a[b][__proto__][nested][deep]=yes")).toEqual({});
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+      expect(({} as Record<string, unknown>).nested).toBeUndefined();
+    });
+
+    it("drops constructor and prototype segments", () => {
+      expect(parseNestedQuery("constructor[prototype][polluted]=yes")).toEqual({});
+      expect(parseNestedQuery("a[constructor][prototype][polluted]=yes")).toEqual({});
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    });
+
+    it("drops a plain unsafe key", () => {
+      const parsed = parseNestedQuery("__proto__=x&constructor=y&a=1");
+
+      expect(parsed).toEqual({ a: "1" });
+      expect(Object.getPrototypeOf(parsed)).toBe(Object.prototype);
+    });
+
+    it("guards form entries the same way", () => {
+      expect(parseNestedEntries([["__proto__[headers][x]", "1"]])).toEqual({});
+      expect(parseNestedEntries([["a[__proto__][polluted]", "1"]])).toEqual({});
+      expect(({} as Record<string, unknown>).headers).toBeUndefined();
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    });
+
+    it("descends only through own properties", () => {
+      expect(parseNestedQuery("toString[a]=1&hasOwnProperty[]=2")).toEqual({
+        toString: { a: "1" },
+        hasOwnProperty: ["2"],
+      });
+    });
   });
 });

@@ -51,6 +51,15 @@ const PUSH = Symbol("push");
 type Segment = string | typeof PUSH;
 
 /**
+ * Keys that reach an object's prototype. Writing through `__proto__` from a
+ * query string mutates `Object.prototype` for the whole process, so any key
+ * holding one of these, at any depth, is dropped.
+ */
+function isUnsafeKey(key: string): boolean {
+  return key === "__proto__" || key === "constructor" || key === "prototype";
+}
+
+/**
  * Split a bracket-notation key into path segments, or return `undefined`
  * when the key is not bracket notation (or is malformed) and should be
  * used verbatim.
@@ -114,7 +123,9 @@ function assign(root: Node, path: Segment[], value: string): void {
 
   for (let i = 0; i < path.length - 1; i++) {
     const key = segmentKey(node, path[i]!);
-    const existing = node[key];
+    // Own properties only. An inherited value is never a node to descend
+    // into, it belongs to the prototype.
+    const existing = Object.hasOwn(node, key) ? node[key] : undefined;
 
     if (!isNode(existing)) {
       node[key] = {};
@@ -201,6 +212,10 @@ export function parseNestedEntries(entries: Iterable<[string, string]>): Record<
 
   for (const [key, value] of entries) {
     const path = parseKeyPath(key);
+
+    if (path === undefined ? isUnsafeKey(key) : path.some((s) => s !== PUSH && isUnsafeKey(s))) {
+      continue;
+    }
 
     if (path === undefined) {
       // Plain key. Last occurrence wins, as PHP's `parse_str` does.

@@ -34,7 +34,7 @@
     "@mahiframework/redis": "^0.2.4",
     "@mahiframework/schedule": "^0.2.4",
     "@mahiframework/storage": "^0.2.4",
-    "zod": "^4.6.5"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@mahiframework/testing": "^0.2.4",
